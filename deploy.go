@@ -22,7 +22,9 @@ type deployOptions struct {
 	gpuModel     string
 	maxPrice     float64
 	provider     string
+	showSecrets  bool
 	out          io.Writer
+	errOut       io.Writer
 	pollInterval time.Duration
 	timeout      time.Duration
 	now          func() time.Time
@@ -44,14 +46,16 @@ func deploy(args []string) error {
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
-	if err := fs.Parse(args); err != nil {
+	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
 	// Allow the snapshot as a positional arg too: `aq deploy ext-42`.
 	source := *snapshot
-	if source == "" && fs.NArg() > 0 {
-		source = fs.Arg(0)
+	if source == "" && len(positional) > 0 {
+		source = positional[0]
 	}
 	if source == "" {
 		return errors.New("a snapshot is required — pass --snapshot <id> (or `aq deploy <id>`)")
@@ -83,14 +87,16 @@ func deploy(args []string) error {
 	}
 
 	return runDeploy(deployOptions{
-		cred:     cred,
-		snapshot: source,
-		template: template,
-		gpuModel: *gpu,
-		maxPrice: *maxPrice,
-		provider: *provider,
-		out:      os.Stdout,
-		now:      time.Now,
+		cred:        cred,
+		snapshot:    source,
+		template:    template,
+		gpuModel:    *gpu,
+		maxPrice:    *maxPrice,
+		provider:    *provider,
+		showSecrets: *showSecrets,
+		out:         os.Stdout,
+		errOut:      os.Stderr,
+		now:         time.Now,
 	})
 }
 
@@ -99,6 +105,9 @@ func deploy(args []string) error {
 func runDeploy(opts deployOptions) error {
 	if opts.out == nil {
 		opts.out = os.Stdout
+	}
+	if opts.errOut == nil {
+		opts.errOut = os.Stderr
 	}
 	if opts.now == nil {
 		opts.now = time.Now
@@ -149,7 +158,7 @@ func runDeploy(opts deployOptions) error {
 	if opts.template == "" {
 		return waitForActive(client, res.DeploymentID, opts.out, opts.pollInterval, opts.timeout, opts.now)
 	}
-	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.pollInterval, opts.timeout, opts.now)
+	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.pollInterval, opts.timeout, opts.now)
 }
 
 // waitForActive polls a deployment until it reaches a running state (a

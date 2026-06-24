@@ -34,19 +34,55 @@ func TestRunStatusReadyShowsURLAndCreds(t *testing.T) {
 	defer srv.Close()
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
-	var out bytes.Buffer
-	if err := runStatus(statusOptions{cred: cred, target: "4242", out: &out}); err != nil {
+	var out, errOut bytes.Buffer
+	if err := runStatus(statusOptions{cred: cred, target: "4242", out: &out, errOut: &errOut}); err != nil {
 		t.Fatalf("runStatus error: %v", err)
 	}
 
 	got := out.String()
-	for _, want := range []string{"ACTIVE", "https://comfy.box.aquanode.io", "admin", "s3cr3t"} {
+	for _, want := range []string{"ACTIVE", "https://comfy.box.aquanode.io", "admin"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status output missing %q; got:\n%s", want, got)
 		}
 	}
+	// Password must not be echoed to stdout by default (ticket #204).
+	if strings.Contains(got, "s3cr3t") {
+		t.Errorf("password leaked into stdout; got:\n%s", got)
+	}
+	if !strings.Contains(errOut.String(), "--show-secrets") {
+		t.Errorf("stderr missing the --show-secrets pointer; got:\n%s", errOut.String())
+	}
 	if gotAPIKey != "aq_sk_test" || gotTeamID != "team-1" {
 		t.Errorf("auth headers not sent: key=%q team=%q", gotAPIKey, gotTeamID)
+	}
+}
+
+func TestRunStatusShowSecretsEchoesPassword(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/4242/status", func(w http.ResponseWriter, r *http.Request) {
+		dep := map[string]any{
+			"id":     4242,
+			"status": "ACTIVE",
+			"service_credentials": map[string]any{
+				"template": "comfyui",
+				"url":      "https://comfy.box.aquanode.io",
+				"username": "admin",
+				"password": "s3cr3t",
+				"status":   "running",
+			},
+		}
+		writeData(w, map[string]any{"deploymentId": 4242, "status": "ACTIVE", "deployment": dep})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	if err := runStatus(statusOptions{cred: cred, target: "4242", showSecrets: true, out: &out, errOut: &errOut}); err != nil {
+		t.Fatalf("runStatus error: %v", err)
+	}
+	if !strings.Contains(out.String(), "s3cr3t") {
+		t.Errorf("--show-secrets should echo the password to stdout; got:\n%s", out.String())
 	}
 }
 
