@@ -26,7 +26,7 @@ func TestRunDownRequestsClose(t *testing.T) {
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
 	var out bytes.Buffer
-	if err := runDown(downOptions{cred: cred, deploymentID: 4242, out: &out}); err != nil {
+	if err := runDown(downOptions{cred: cred, target: "4242", out: &out}); err != nil {
 		t.Fatalf("runDown error: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func TestRunDownSurfacesAPIError(t *testing.T) {
 	defer srv.Close()
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
-	err := runDown(downOptions{cred: cred, deploymentID: 999, out: &bytes.Buffer{}})
+	err := runDown(downOptions{cred: cred, target: "999", out: &bytes.Buffer{}})
 	if err == nil || !strings.Contains(err.Error(), "Deployment not found") {
 		t.Fatalf("expected not-found error, got: %v", err)
 	}

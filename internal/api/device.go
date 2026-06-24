@@ -120,7 +120,7 @@ func (c *Client) do(req *http.Request, out any) error {
 
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return fmt.Errorf("unexpected response (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nonJSONError(resp.StatusCode, raw)
 	}
 	if !env.Success {
 		msg := env.Error
@@ -135,6 +135,43 @@ func (c *Client) do(req *http.Request, out any) error {
 		}
 	}
 	return nil
+}
+
+// maxBodySnippet bounds how much of a non-JSON error body is echoed to the user,
+// so a full HTML error page (a proxy/load-balancer 5xx in front of the
+// orchestrator) is reduced to a readable snippet instead of flooding the terminal.
+const maxBodySnippet = 200
+
+// nonJSONError renders the error for a response whose body isn't the JSON
+// envelope. The common case is a gateway 5xx (502/503/504) served as an HTML
+// page by a proxy in front of the orchestrator: those get a short, actionable
+// message instead of the raw page. Anything else is truncated to a snippet so a
+// large/HTML body doesn't swamp the CLI output (#209).
+func nonJSONError(status int, raw []byte) error {
+	switch status {
+	case http.StatusBadGateway:
+		return fmt.Errorf("the Aquanode server is temporarily unreachable (HTTP 502 Bad Gateway) — please retry in a moment")
+	case http.StatusServiceUnavailable:
+		return fmt.Errorf("the Aquanode server is temporarily unavailable (HTTP 503 Service Unavailable) — please retry in a moment")
+	case http.StatusGatewayTimeout:
+		return fmt.Errorf("the Aquanode server took too long to respond (HTTP 504 Gateway Timeout) — please retry in a moment")
+	}
+	return fmt.Errorf("unexpected response (HTTP %d): %s", status, snippet(raw))
+}
+
+// snippet collapses a response body to a single bounded line: it joins
+// whitespace-separated fields (so a multi-line HTML page becomes one line) and
+// truncates to maxBodySnippet runes, appending an ellipsis when it cut content.
+func snippet(raw []byte) string {
+	flat := strings.Join(strings.Fields(string(raw)), " ")
+	if flat == "" {
+		return "(empty body)"
+	}
+	r := []rune(flat)
+	if len(r) <= maxBodySnippet {
+		return flat
+	}
+	return string(r[:maxBodySnippet]) + "…"
 }
 
 // APIError carries a non-success orchestrator response.

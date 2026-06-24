@@ -1,6 +1,9 @@
 package api
 
-import "strconv"
+import (
+	"net/url"
+	"strconv"
+)
 
 // Funnel control endpoints used by `aq up`: SSH-key registration, the one-command
 // `up` deploy, and deployment status polling. All require an authenticated Client
@@ -111,6 +114,19 @@ type DeploymentStatusResult struct {
 func (c *Client) DeploymentStatus(deploymentID int) (*DeploymentStatusResult, error) {
 	var out DeploymentStatusResult
 	path := "/deployments/" + strconv.Itoa(deploymentID) + "/status"
+	if err := c.getJSON(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetProjectDeployment returns the current (active or paused) deployment under a
+// project, via GET /deployments/project/:projectId. `aq down`/`aq status` use it
+// to accept a project id (the UUID in the console URL) in place of the numeric
+// deployment id (#209). A project with no live deployment yields a 404 APIError.
+func (c *Client) GetProjectDeployment(projectID string) (*Deployment, error) {
+	var out Deployment
+	path := "/deployments/project/" + url.PathEscape(projectID)
 	if err := c.getJSON(path, &out); err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,7 +35,7 @@ func TestRunStatusReadyShowsURLAndCreds(t *testing.T) {
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
 	var out bytes.Buffer
-	if err := runStatus(statusOptions{cred: cred, deploymentID: 4242, out: &out}); err != nil {
+	if err := runStatus(statusOptions{cred: cred, target: "4242", out: &out}); err != nil {
 		t.Fatalf("runStatus error: %v", err)
 	}
 
@@ -60,7 +61,7 @@ func TestRunStatusStillProvisioning(t *testing.T) {
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
 	var out bytes.Buffer
-	if err := runStatus(statusOptions{cred: cred, deploymentID: 7, out: &out}); err != nil {
+	if err := runStatus(statusOptions{cred: cred, target: "7", out: &out}); err != nil {
 		t.Fatalf("runStatus error: %v", err)
 	}
 	got := out.String()
@@ -77,11 +78,47 @@ func TestStatusRequiresDeploymentID(t *testing.T) {
 	}
 }
 
-func TestStatusRejectsNonNumericID(t *testing.T) {
-	t.Setenv("AQ_CONFIG_DIR", t.TempDir())
-	err := status([]string{"abc"})
-	if err == nil || !strings.Contains(err.Error(), "invalid deployment id") {
-		t.Fatalf("expected invalid-id error, got: %v", err)
+// TestRunStatusResolvesProjectID is the #209 fix: a non-numeric token is treated
+// as a project id and resolved to its current deployment via the project route,
+// then status is fetched for the resolved deployment id.
+func TestRunStatusResolvesProjectID(t *testing.T) {
+	const projectID = "11111111-2222-3333-4444-555555555555"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/project/"+projectID, func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"id": 4242, "status": "ACTIVE"})
+	})
+	mux.HandleFunc("/deployments/4242/status", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 4242, "status": "PENDING",
+			"deployment": map[string]any{"id": 4242, "status": "PENDING"}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	if err := runStatus(statusOptions{cred: cred, target: projectID, out: &out}); err != nil {
+		t.Fatalf("runStatus error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Deployment #4242") {
+		t.Errorf("expected resolved deployment #4242; got:\n%s", out.String())
+	}
+}
+
+// TestRunStatusUnknownProjectIDExplains checks that an unresolvable token yields
+// a message pointing the user at the numeric deployment id (#209).
+func TestRunStatusUnknownProjectIDExplains(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/project/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "not found"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	err := runStatus(statusOptions{cred: cred, target: "not-a-real-id", out: &bytes.Buffer{}})
+	if err == nil || !strings.Contains(err.Error(), "numeric deployment id") {
+		t.Fatalf("expected numeric-deployment-id hint, got: %v", err)
 	}
 }
 

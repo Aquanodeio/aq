@@ -20,6 +20,7 @@ type deployServer struct {
 	statusReadyAt int32
 	statusPolls   int32
 	lastTeamID    string
+	appURL        string // app_url on the deployment row once ACTIVE (e.g. http://ip:22)
 }
 
 type DeployBodyCapture struct {
@@ -60,6 +61,7 @@ func (s *deployServer) handler() http.Handler {
 		dep := map[string]any{"id": 5151, "status": "PENDING", "app_url": ""}
 		if n >= s.statusReadyAt {
 			dep["status"] = "ACTIVE"
+			dep["app_url"] = s.appURL
 			dep["service_credentials"] = map[string]any{
 				"template": "comfyui",
 				"url":      "https://comfy.box.aquanode.io",
@@ -124,6 +126,7 @@ func TestRunDeployRestoreOnlyReportsActive(t *testing.T) {
 	server := &deployServer{
 		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
 		statusReadyAt: 1,
+		appURL:        "http://203.0.113.7:22",
 	}
 	srv := httptest.NewServer(server.handler())
 	defer srv.Close()
@@ -144,8 +147,13 @@ func TestRunDeployRestoreOnlyReportsActive(t *testing.T) {
 	if server.deployBody.Template != "" {
 		t.Errorf("expected no template for restore-only deploy, got %q", server.deployBody.Template)
 	}
-	if !strings.Contains(out.String(), "restored onto deployment #5151") {
-		t.Errorf("expected restore-only ready message; got:\n%s", out.String())
+	got := out.String()
+	if !strings.Contains(got, "restored onto deployment #5151") {
+		t.Errorf("expected restore-only ready message; got:\n%s", got)
+	}
+	// #209: a restore-only deploy prints the box IP + ssh line after ACTIVE.
+	if !strings.Contains(got, "203.0.113.7") || !strings.Contains(got, "ssh root@203.0.113.7") {
+		t.Errorf("expected IP + ssh connection info; got:\n%s", got)
 	}
 }
 
