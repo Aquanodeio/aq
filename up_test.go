@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
@@ -95,25 +96,32 @@ func str(v any) string {
 	return s
 }
 
-// writeFakePubKey drops an id_ed25519.pub under $HOME/.ssh so readLocalPublicKey
-// finds something to register.
-func writeFakePubKey(t *testing.T) {
+// writeFakePubKey drops an id_ed25519.pub holding content under $HOME/.ssh so
+// readLocalPublicKey finds a deterministic local key. Tests set $HOME to a temp
+// dir first so this never touches the real machine's keys.
+func writeFakePubKey(t *testing.T, content string) {
 	t.Helper()
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir .ssh: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "id_ed25519.pub"), []byte("ssh-ed25519 AAAAFAKE laptop\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "id_ed25519.pub"), []byte(content+"\n"), 0o600); err != nil {
 		t.Fatalf("write pubkey: %v", err)
 	}
 }
 
 func TestRunUpHappyPath(t *testing.T) {
-	srv := httptest.NewServer((&upServer{
+	t.Setenv("HOME", t.TempDir())
+	// The local key matches the registered one (comment differs) — aq should
+	// reuse the registered key, not register a duplicate.
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	server := &upServer{
 		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
 		statusReadyAt: 2,
-	}).handler())
+	}
+	srv := httptest.NewServer(server.handler())
 	defer srv.Close()
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
@@ -132,7 +140,16 @@ func TestRunUpHappyPath(t *testing.T) {
 		t.Fatalf("runUp error: %v", err)
 	}
 
+	if server.created != nil {
+		t.Errorf("should reuse the matching registered key, but registered a new one: %v", server.created)
+	}
+	if server.upBody.SSHKeyID != "key-existing" {
+		t.Errorf("up should reuse the matching key id, got %q", server.upBody.SSHKeyID)
+	}
 	got := out.String()
+	if !strings.Contains(got, "Using your registered SSH key") {
+		t.Errorf("output should report which key was used; got:\n%s", got)
+	}
 	if !strings.Contains(got, "https://comfy.box.aquanode.io") {
 		t.Errorf("output missing HTTPS URL; got:\n%s", got)
 	}
@@ -141,10 +158,48 @@ func TestRunUpHappyPath(t *testing.T) {
 	}
 }
 
+// TestRunUpRegistersWhenNoRegisteredKeyMatches is the #203 regression: the
+// account already has a key, but it isn't the user's — aq must register the
+// local key instead of provisioning the box with an unusable one.
+func TestRunUpRegistersWhenNoRegisteredKeyMatches(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAAMINE me@laptop")
+
+	server := &upServer{
+		// A teammate's key — present but not the user's.
+		keys:          []map[string]any{{"id": "key-teammate", "name": "alice", "public_key": "ssh-ed25519 AAAATHEIRS alice@box"}},
+		statusReadyAt: 1,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		out:          &out,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runUp error: %v", err)
+	}
+	if server.created == nil {
+		t.Fatal("expected the local key to be registered, but none was")
+	}
+	if got := str(server.created["public_key"]); got != "ssh-ed25519 AAAAMINE me@laptop" {
+		t.Errorf("registered the wrong key body: %q", got)
+	}
+	if server.upBody.SSHKeyID != "key-new" {
+		t.Errorf("up should use the newly-registered key id, not the teammate's; got %q", server.upBody.SSHKeyID)
+	}
+}
+
 func TestRunUpRegistersSSHKeyWhenNoneExist(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	// Seed a local public key under the fake HOME.
-	writeFakePubKey(t)
+	writeFakePubKey(t, "ssh-ed25519 AAAAFAKE laptop")
 
 	server := &upServer{keys: []map[string]any{}, statusReadyAt: 1}
 	srv := httptest.NewServer(server.handler())
@@ -177,6 +232,9 @@ func TestRunUpRegistersSSHKeyWhenNoneExist(t *testing.T) {
 }
 
 func TestRunUpFailsWhenDeploymentCloses(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
@@ -201,6 +259,26 @@ func TestRunUpFailsWhenDeploymentCloses(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "FAILED") {
 		t.Fatalf("expected failure error, got: %v", err)
+	}
+}
+
+func TestMatchRegisteredKey(t *testing.T) {
+	registered := []api.SSHKey{
+		{ID: "a", Name: "alice", PublicKey: "ssh-ed25519 AAAATHEIRS alice@box"},
+		{ID: "b", Name: "mine", PublicKey: "ssh-ed25519 AAAAMINE me@old-comment"},
+	}
+
+	// Matches on body even though the comment differs.
+	if m, ok := matchRegisteredKey("ssh-ed25519 AAAAMINE me@new-laptop", registered); !ok || m.ID != "b" {
+		t.Errorf("expected match on key b ignoring comment, got %+v ok=%v", m, ok)
+	}
+	// No body match → no reuse.
+	if _, ok := matchRegisteredKey("ssh-ed25519 AAAAUNKNOWN me@laptop", registered); ok {
+		t.Error("expected no match for an unregistered key body")
+	}
+	// Malformed local key never matches.
+	if _, ok := matchRegisteredKey("garbage", registered); ok {
+		t.Error("expected no match for a malformed key")
 	}
 }
 
