@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +66,103 @@ func TestSaveLoadClearRoundTrip(t *testing.T) {
 	// Clearing again is a no-op.
 	if existed, _ := Clear(); existed {
 		t.Errorf("second Clear reported a file existed")
+	}
+}
+
+// TestSaveTightensLooseExistingFile ensures Save repairs a credentials file that
+// already exists with world-readable perms — WriteFile alone won't chmod it.
+func TestSaveTightensLooseExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AQ_CONFIG_DIR", dir)
+
+	path := filepath.Join(dir, "credentials.json")
+	if err := os.WriteFile(path, []byte(`{"token":"old"}`), 0o644); err != nil {
+		t.Fatalf("seed loose file: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod loose file: %v", err)
+	}
+
+	if err := Save(&Credential{Token: "new"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("loose file not tightened: perm = %o, want 600", perm)
+	}
+}
+
+// TestSaveTightensLooseExistingDir ensures Save repairs a config dir that already
+// exists with group/world perms — MkdirAll leaves an existing dir's mode alone.
+func TestSaveTightensLooseExistingDir(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "aq")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("seed loose dir: %v", err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("chmod loose dir: %v", err)
+	}
+	t.Setenv("AQ_CONFIG_DIR", dir)
+
+	if err := Save(&Credential{Token: "new"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("loose dir not tightened: perm = %o, want 700", perm)
+	}
+}
+
+// TestSaveWarnsOnExposedParent ensures Save surfaces a warning when the config
+// dir's parent is group/world-accessible.
+func TestSaveWarnsOnExposedParent(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o755); err != nil {
+		t.Fatalf("chmod parent: %v", err)
+	}
+	dir := filepath.Join(parent, "aq")
+	t.Setenv("AQ_CONFIG_DIR", dir)
+
+	var buf bytes.Buffer
+	orig := warnOut
+	warnOut = &buf
+	t.Cleanup(func() { warnOut = orig })
+
+	if err := Save(&Credential{Token: "new"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !strings.Contains(buf.String(), "accessible to other users") {
+		t.Errorf("expected exposed-parent warning, got %q", buf.String())
+	}
+}
+
+// TestSaveQuietOnPrivateParent ensures Save does not warn when the parent is 0700.
+func TestSaveQuietOnPrivateParent(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatalf("chmod parent: %v", err)
+	}
+	dir := filepath.Join(parent, "aq")
+	t.Setenv("AQ_CONFIG_DIR", dir)
+
+	var buf bytes.Buffer
+	orig := warnOut
+	warnOut = &buf
+	t.Cleanup(func() { warnOut = orig })
+
+	if err := Save(&Credential{Token: "new"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("unexpected warning on private parent: %q", buf.String())
 	}
 }
