@@ -70,6 +70,63 @@ func TestRunStatusStillProvisioning(t *testing.T) {
 	}
 }
 
+// TestRunStatusActiveRestoreOnlyShowsConnectionInfo is the #213 fix: an
+// ACTIVE/RUNNING box with no service credentials (a restore-only deploy) reports
+// as ready with the box IP + ssh line instead of "Still provisioning" forever.
+func TestRunStatusActiveRestoreOnlyShowsConnectionInfo(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/909/status", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 909, "status": "ACTIVE",
+			"deployment": map[string]any{"id": 909, "status": "ACTIVE", "app_url": "http://203.0.113.7:22"}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	if err := runStatus(statusOptions{cred: cred, target: "909", out: &out}); err != nil {
+		t.Fatalf("runStatus error: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "Still provisioning") {
+		t.Errorf("active restore-only box should not say still provisioning; got:\n%s", got)
+	}
+	for _, want := range []string{"is ready", "203.0.113.7", "ssh root@203.0.113.7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status output missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// TestRunStatusActiveRestoreOnlyNoAppURL covers an ACTIVE box whose row has no
+// app_url yet: it still reports ready (no provisioning message) but omits the
+// connection lines rather than printing a blank IP.
+func TestRunStatusActiveRestoreOnlyNoAppURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/910/status", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 910, "status": "RUNNING",
+			"deployment": map[string]any{"id": 910, "status": "RUNNING"}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	if err := runStatus(statusOptions{cred: cred, target: "910", out: &out}); err != nil {
+		t.Fatalf("runStatus error: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "Still provisioning") {
+		t.Errorf("active box should not say still provisioning; got:\n%s", got)
+	}
+	if !strings.Contains(got, "is ready") {
+		t.Errorf("expected ready message; got:\n%s", got)
+	}
+	if strings.Contains(got, "ssh root@") {
+		t.Errorf("expected no ssh line without app_url; got:\n%s", got)
+	}
+}
+
 func TestStatusRequiresDeploymentID(t *testing.T) {
 	t.Setenv("AQ_CONFIG_DIR", t.TempDir())
 	err := status(nil)

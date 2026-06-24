@@ -262,6 +262,17 @@ func isClosedStatus(status string) bool {
 	}
 }
 
+// isActiveStatus reports whether a deployment is up and running, matching the
+// ACTIVE/RUNNING check `aq deploy` uses to detect a restored box.
+func isActiveStatus(status string) bool {
+	switch status {
+	case "ACTIVE", "RUNNING":
+		return true
+	default:
+		return false
+	}
+}
+
 func printReady(out io.Writer, label string, creds *api.ServiceCredentials) {
 	fmt.Fprintf(out, "\n✓ %s is live:\n\n    %s\n\n", label, creds.URL)
 	if creds.Username != "" {
