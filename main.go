@@ -34,6 +34,8 @@ func main() {
 		run(login(args))
 	case "up":
 		run(up(args))
+	case "deploy":
+		run(deploy(args))
 	case "logout":
 		run(logout(args))
 	case "whoami":
@@ -62,6 +64,7 @@ Usage:
 Commands:
   login      Pair this CLI to your Aquanode account (device login)
   up         Rent the cheapest matching GPU and bring up a working env
+  deploy     Restore a snapshot onto a freshly-rented Aquanode GPU box
   logout     Remove the stored CLI credential
   whoami     Show the current login state
   version    Print the aq version
@@ -70,6 +73,15 @@ Commands:
 up flags:
   --comfyui          Bring up ComfyUI (default)
   --jupyter          Bring up Torch + Jupyter
+  --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
+  --max-price <n>    Only rent GPUs at or below this hourly price
+  --provider <name>  Restrict to a single provider (e.g. massecompute)
+
+deploy flags:
+  --snapshot <id>    Snapshot to deploy (id from aq / the console, e.g. ext-42)
+  --comfyui          Relaunch ComfyUI on the restored data (default)
+  --jupyter          Relaunch Torch + Jupyter on the restored data
+  --no-app           Restore only — do not relaunch an app
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)

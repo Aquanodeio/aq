@@ -116,27 +116,41 @@ func runUp(opts upOptions) error {
 	fmt.Fprintf(opts.out, "Deployment #%d created. Provisioning (this can take a few minutes)...\n", res.DeploymentID)
 
 	// 3. Poll until the template service URL is live.
-	deadline := opts.now().Add(opts.timeout)
+	return waitForServiceURL(client, res.DeploymentID, label, opts.out, opts.pollInterval, opts.timeout, opts.now)
+}
+
+// waitForServiceURL polls a deployment until its template service URL is live,
+// the deployment ends (failed/closed), or the timeout elapses. Shared by
+// `aq up` and `aq deploy`.
+func waitForServiceURL(
+	client *api.Client,
+	deploymentID int,
+	label string,
+	out io.Writer,
+	pollInterval, timeout time.Duration,
+	now func() time.Time,
+) error {
+	deadline := now().Add(timeout)
 	for {
-		if opts.now().After(deadline) {
-			fmt.Fprintf(opts.out, "\nStill provisioning after %s. Check status with:\n    aq status %d\n", opts.timeout, res.DeploymentID)
+		if now().After(deadline) {
+			fmt.Fprintf(out, "\nStill provisioning after %s. Check status with:\n    aq status %d\n", timeout, deploymentID)
 			return errors.New("timed out waiting for the env to come up")
 		}
-		time.Sleep(opts.pollInterval)
+		time.Sleep(pollInterval)
 
-		status, err := client.DeploymentStatus(res.DeploymentID)
+		status, err := client.DeploymentStatus(deploymentID)
 		if err != nil {
 			// Transient status errors shouldn't kill the wait; keep polling.
 			continue
 		}
 
 		if isClosedStatus(status.Deployment.Status) {
-			return fmt.Errorf("deployment %d ended with status %q before coming up", res.DeploymentID, status.Deployment.Status)
+			return fmt.Errorf("deployment %d ended with status %q before coming up", deploymentID, status.Deployment.Status)
 		}
 
 		creds := status.Deployment.ServiceCredentials
 		if creds != nil && creds.URL != "" {
-			printReady(opts.out, label, creds)
+			printReady(out, label, creds)
 			return nil
 		}
 	}

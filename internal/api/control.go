@@ -59,6 +59,29 @@ func (c *Client) Up(req UpRequest) (*UpResult, error) {
 	return &out, nil
 }
 
+// DeployRequest is the body of POST /deployments/deploy-snapshot — the
+// OSS→compute bridge. It rents the cheapest matching GPU and restores a snapshot
+// onto it, optionally relaunching an app template on the restored data (#180).
+type DeployRequest struct {
+	// SnapshotSource is a numeric deployment id or a synthetic `ext-<backupId>`
+	// for a standalone-CLI snapshot (#177).
+	SnapshotSource string  `json:"snapshotSource"`
+	SSHKeyID       string  `json:"sshKeyId"`
+	Template       string  `json:"template,omitempty"`
+	GPUModel       string  `json:"gpuModel,omitempty"`
+	MaxPrice       float64 `json:"maxPrice,omitempty"`
+	Provider       string  `json:"provider,omitempty"`
+}
+
+// Deploy rents the cheapest matching GPU and restores the given snapshot onto it.
+func (c *Client) Deploy(req DeployRequest) (*UpResult, error) {
+	var out UpResult
+	if err := c.postJSON("/deployments/deploy-snapshot", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ServiceCredentials is the running template service's reachable URL + auth, as
 // surfaced on the deployment row once ogre has started the service.
 type ServiceCredentials struct {
