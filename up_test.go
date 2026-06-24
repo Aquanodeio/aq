@@ -214,12 +214,13 @@ func TestRunUpHappyPath(t *testing.T) {
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
 
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	err := runUp(upOptions{
 		cred:         cred,
 		template:     templateComfyUI,
 		gpuModel:     "RTX 4090",
 		out:          &out,
+		errOut:       &errOut,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 		now:          time.Now,
@@ -241,8 +242,49 @@ func TestRunUpHappyPath(t *testing.T) {
 	if !strings.Contains(got, "https://comfy.box.aquanode.io") {
 		t.Errorf("output missing HTTPS URL; got:\n%s", got)
 	}
-	if !strings.Contains(got, "s3cr3t") || !strings.Contains(got, "admin") {
-		t.Errorf("output missing credentials; got:\n%s", got)
+	if !strings.Contains(got, "admin") {
+		t.Errorf("output missing username; got:\n%s", got)
+	}
+	// The password must NOT be echoed to stdout by default — it would land in
+	// scrollback / CI logs / tee files (ticket #204). stderr gets a pointer.
+	if strings.Contains(got, "s3cr3t") {
+		t.Errorf("password leaked into stdout; got:\n%s", got)
+	}
+	if !strings.Contains(errOut.String(), "--show-secrets") {
+		t.Errorf("stderr missing the --show-secrets pointer; got:\n%s", errOut.String())
+	}
+}
+
+func TestRunUpShowSecretsEchoesPassword(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// The local key matches the registered one (comment differs) so ensureSSHKey
+	// reuses it instead of failing on a missing ~/.ssh key in a clean CI HOME.
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	srv := httptest.NewServer((&upServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 1,
+	}).handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+
+	var out, errOut bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		showSecrets:  true,
+		out:          &out,
+		errOut:       &errOut,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+		now:          time.Now,
+	})
+	if err != nil {
+		t.Fatalf("runUp error: %v", err)
+	}
+	if !strings.Contains(out.String(), "s3cr3t") {
+		t.Errorf("--show-secrets should echo the password to stdout; got:\n%s", out.String())
 	}
 }
 

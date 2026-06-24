@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,30 @@ import (
 
 	"github.com/Aquanodeio/aq/internal/config"
 )
+
+func TestParseInterspersedFlagAfterPositional(t *testing.T) {
+	// `aq status 4242 --show-secrets` — flag after the positional id. The stdlib
+	// flag package stops at the first positional, so parseInterspersed must keep
+	// going to pick up the trailing flag (ticket #204).
+	cases := [][]string{
+		{"4242", "--show-secrets"},
+		{"--show-secrets", "4242"},
+	}
+	for _, args := range cases {
+		fs := flag.NewFlagSet("status", flag.ContinueOnError)
+		show := fs.Bool("show-secrets", false, "")
+		positional, err := parseInterspersed(fs, args)
+		if err != nil {
+			t.Fatalf("parseInterspersed(%v): %v", args, err)
+		}
+		if !*show {
+			t.Errorf("parseInterspersed(%v): --show-secrets not parsed", args)
+		}
+		if len(positional) != 1 || positional[0] != "4242" {
+			t.Errorf("parseInterspersed(%v): positional = %v, want [4242]", args, positional)
+		}
+	}
+}
 
 func TestRunDownRequestsClose(t *testing.T) {
 	mux := http.NewServeMux()

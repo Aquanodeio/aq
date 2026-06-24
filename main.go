@@ -82,6 +82,7 @@ up flags:
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
+  --show-secrets     Echo the service password to stdout (hidden by default)
 
 deploy flags:
   --snapshot <id>    Snapshot to deploy (id from aq / the console, e.g. ext-42)
@@ -91,9 +92,11 @@ deploy flags:
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
+  --show-secrets     Echo the service password to stdout (hidden by default)
 
 status / down:
   aq status <deploymentId>   Re-check a provisioning or running env
+                             (add --show-secrets to print the password)
   aq down <deploymentId>     Tear the env down and stop billing
 
 Environment:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,9 +14,11 @@ import (
 // statusOptions configures runStatus. status() fills in the real environment;
 // tests inject a base URL and a buffer writer.
 type statusOptions struct {
-	cred   *config.Credential
-	target string // numeric deployment id or a project id (resolved by runStatus)
-	out    io.Writer
+	cred        *config.Credential
+	target      string // numeric deployment id or a project id (resolved by runStatus)
+	showSecrets bool
+	out         io.Writer
+	errOut      io.Writer
 }
 
 // status parses the deployment target and wires the real environment into runStatus.
@@ -23,7 +26,14 @@ type statusOptions struct {
 // `aq status <deploymentId>` re-checks a deployment started by `aq up` — useful
 // when `aq up` hits its provisioning timeout and tells the user to come back.
 func status(args []string) error {
-	target, err := parseDeploymentTarget(args, "status")
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+
+	target, err := parseDeploymentTarget(positional, "status")
 	if err != nil {
 		return err
 	}
@@ -34,9 +44,11 @@ func status(args []string) error {
 	}
 
 	return runStatus(statusOptions{
-		cred:   cred,
-		target: target,
-		out:    os.Stdout,
+		cred:        cred,
+		target:      target,
+		showSecrets: *showSecrets,
+		out:         os.Stdout,
+		errOut:      os.Stderr,
 	})
 }
 
@@ -45,6 +57,9 @@ func status(args []string) error {
 func runStatus(opts statusOptions) error {
 	if opts.out == nil {
 		opts.out = os.Stdout
+	}
+	if opts.errOut == nil {
+		opts.errOut = os.Stderr
 	}
 
 	client := newControlClient(opts.cred)
@@ -71,12 +86,7 @@ func runStatus(opts statusOptions) error {
 	creds := res.Deployment.ServiceCredentials
 	if creds != nil && creds.URL != "" {
 		fmt.Fprintf(opts.out, "\n%s is live:\n\n    %s\n\n", templateLabel(creds.Template), creds.URL)
-		if creds.Username != "" {
-			fmt.Fprintf(opts.out, "  Username: %s\n", creds.Username)
-		}
-		if creds.Password != "" {
-			fmt.Fprintf(opts.out, "  Password: %s\n", creds.Password)
-		}
+		printServiceCredentials(opts.out, opts.errOut, creds, opts.showSecrets, deploymentID)
 		return nil
 	}
 

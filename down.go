@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,26 @@ func newControlClient(cred *config.Credential) *api.Client {
 		apiURL = config.APIURL()
 	}
 	return api.NewAuthed(apiURL, cred.Token, cred.TeamID)
+}
+
+// parseInterspersed parses fs while allowing flags and positional arguments to
+// appear in any order. The stdlib flag package stops at the first non-flag
+// token, so `aq status 4242 --show-secrets` would otherwise leave the flag
+// unparsed; this collects positionals and keeps parsing the remainder.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return nil, err
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		positional = append(positional, rest[0])
+		rest = rest[1:]
+	}
 }
 
 // parseDeploymentTarget reads a single positional `aq <verb> <id>` token. It is

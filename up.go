@@ -27,7 +27,9 @@ type upOptions struct {
 	gpuModel     string
 	maxPrice     float64
 	provider     string
+	showSecrets  bool
 	out          io.Writer
+	errOut       io.Writer
 	pollInterval time.Duration
 	timeout      time.Duration
 	now          func() time.Time
@@ -41,6 +43,7 @@ func up(args []string) error {
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
+	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -62,13 +65,15 @@ func up(args []string) error {
 	}
 
 	return runUp(upOptions{
-		cred:     cred,
-		template: template,
-		gpuModel: *gpu,
-		maxPrice: *maxPrice,
-		provider: *provider,
-		out:      os.Stdout,
-		now:      time.Now,
+		cred:        cred,
+		template:    template,
+		gpuModel:    *gpu,
+		maxPrice:    *maxPrice,
+		provider:    *provider,
+		showSecrets: *showSecrets,
+		out:         os.Stdout,
+		errOut:      os.Stderr,
+		now:         time.Now,
 	})
 }
 
@@ -77,6 +82,9 @@ func up(args []string) error {
 func runUp(opts upOptions) error {
 	if opts.out == nil {
 		opts.out = os.Stdout
+	}
+	if opts.errOut == nil {
+		opts.errOut = os.Stderr
 	}
 	if opts.now == nil {
 		opts.now = time.Now
@@ -117,7 +125,7 @@ func runUp(opts upOptions) error {
 	fmt.Fprintf(opts.out, "Deployment #%d created. Provisioning (this can take a few minutes)...\n", res.DeploymentID)
 
 	// 3. Poll until the template service URL is live.
-	return waitForServiceURL(client, res.DeploymentID, label, opts.out, opts.pollInterval, opts.timeout, opts.now)
+	return waitForServiceURL(client, res.DeploymentID, label, opts.out, opts.errOut, opts.showSecrets, opts.pollInterval, opts.timeout, opts.now)
 }
 
 // waitForServiceURL polls a deployment until its template service URL is live,
@@ -127,7 +135,8 @@ func waitForServiceURL(
 	client *api.Client,
 	deploymentID int,
 	label string,
-	out io.Writer,
+	out, errOut io.Writer,
+	showSecrets bool,
 	pollInterval, timeout time.Duration,
 	now func() time.Time,
 ) error {
@@ -156,7 +165,7 @@ func waitForServiceURL(
 
 		creds := status.Deployment.ServiceCredentials
 		if creds != nil && creds.URL != "" {
-			printReady(out, label, creds)
+			printReady(out, errOut, label, creds, showSecrets, deploymentID)
 			return nil
 		}
 	}
@@ -273,13 +282,27 @@ func isActiveStatus(status string) bool {
 	}
 }
 
-func printReady(out io.Writer, label string, creds *api.ServiceCredentials) {
+func printReady(out, errOut io.Writer, label string, creds *api.ServiceCredentials, showSecrets bool, deploymentID int) {
 	fmt.Fprintf(out, "\n✓ %s is live:\n\n    %s\n\n", label, creds.URL)
+	printServiceCredentials(out, errOut, creds, showSecrets, deploymentID)
+	fmt.Fprintln(out, "\nManage it in the console or run `aq whoami` to confirm your login.")
+}
+
+// printServiceCredentials prints the service username to stdout and gates the
+// password behind --show-secrets. By default the password is NOT echoed to
+// stdout — it would otherwise land in shell scrollback, CI logs, and tee'd
+// files (ticket #204). Instead a pointer to where it lives is written to errOut
+// (stderr), so a piped/redirected stdout never captures the secret.
+func printServiceCredentials(out, errOut io.Writer, creds *api.ServiceCredentials, showSecrets bool, deploymentID int) {
 	if creds.Username != "" {
 		fmt.Fprintf(out, "  Username: %s\n", creds.Username)
 	}
-	if creds.Password != "" {
-		fmt.Fprintf(out, "  Password: %s\n", creds.Password)
+	if creds.Password == "" {
+		return
 	}
-	fmt.Fprintln(out, "\nManage it in the console or run `aq whoami` to confirm your login.")
+	if showSecrets {
+		fmt.Fprintf(out, "  Password: %s\n", creds.Password)
+		return
+	}
+	fmt.Fprintf(errOut, "  Password: (hidden) — re-run `aq status %d --show-secrets` to print it, or view it in the console.\n", deploymentID)
 }
