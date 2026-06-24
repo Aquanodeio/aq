@@ -7,9 +7,14 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
+
+// warnOut receives non-fatal permission warnings from Save. It defaults to
+// stderr; tests override it to assert on the message.
+var warnOut io.Writer = os.Stderr
 
 // DefaultAPIURL is the Aquanode API base used when AQ_API_URL is unset.
 const DefaultAPIURL = "https://server.aquanode.io/api/v1"
@@ -56,7 +61,10 @@ func credentialPath() (string, error) {
 	return filepath.Join(dir, "credentials.json"), nil
 }
 
-// Save writes the credential to disk with 0600 perms (0700 dir).
+// Save writes the credential to disk with 0600 perms (0700 dir). If the config
+// dir or credential file already exist with looser permissions, Save repairs
+// them so a token written by an older aq (or another tool) can't linger as
+// group/world-readable.
 func Save(cred *Credential) error {
 	dir, err := Dir()
 	if err != nil {
@@ -64,6 +72,11 @@ func Save(cred *Credential) error {
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
+	}
+	// MkdirAll leaves an already-existing dir's mode untouched, so tighten it
+	// explicitly in case it was created loosely by an older aq or another tool.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("tighten config dir perms: %w", err)
 	}
 	path := filepath.Join(dir, "credentials.json")
 	data, err := json.MarshalIndent(cred, "", "  ")
@@ -74,7 +87,27 @@ func Save(cred *Credential) error {
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("write credentials: %w", err)
 	}
+	// WriteFile only applies its mode when creating the file; an existing file
+	// keeps its old (possibly loose) perms, so chmod it explicitly.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("tighten credentials perms: %w", err)
+	}
+	warnIfParentExposed(dir)
 	return nil
+}
+
+// warnIfParentExposed prints a one-line warning when the config dir's parent is
+// group- or world-accessible. The dir itself is 0700 so the token stays safe,
+// but a loose parent is worth surfacing to the user.
+func warnIfParentExposed(dir string) {
+	parent := filepath.Dir(dir)
+	info, err := os.Stat(parent)
+	if err != nil {
+		return
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		fmt.Fprintf(warnOut, "warning: %s is accessible to other users (mode %#o); your aq credentials dir is 0700, but consider tightening its parent.\n", parent, perm)
+	}
 }
 
 // Load reads the stored credential, or returns (nil, nil) if none exists.
