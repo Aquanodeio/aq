@@ -113,6 +113,71 @@ func TestRunLoginApprovedPersistsCredential(t *testing.T) {
 	}
 }
 
+// TestRunLoginHonorsServerInterval proves the poll loop adopts a larger
+// server-advertised interval and treats `slow_down` as backoff, not a failure.
+func TestRunLoginHonorsServerInterval(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api-keys/device/start", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{
+			"deviceCode": "dev-secret-123",
+			"userCode":   "WDJB-MFXK",
+			"interval":   2, // server's initial cadence
+			"expiresIn":  600,
+		})
+	})
+	var polls int32
+	mux.HandleFunc("/api-keys/device/token", func(w http.ResponseWriter, r *http.Request) {
+		switch atomic.AddInt32(&polls, 1) {
+		case 1:
+			// Ask the CLI to slow down and widen to 7s.
+			writeData(w, map[string]any{"status": "slow_down", "interval": 7})
+		case 2:
+			// Advertise a larger cadence on a normal pending poll.
+			writeData(w, map[string]any{"status": "pending", "interval": 9})
+		default:
+			writeData(w, map[string]any{
+				"status": "approved", "token": "aq_sk_test_token",
+				"teamId": "team-xyz", "keyName": "aq CLI · testbox",
+			})
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("AQ_CONFIG_DIR", t.TempDir())
+
+	// Record the cadence the loop sleeps at instead of actually waiting.
+	var slept []time.Duration
+	err := runLogin(loginOptions{
+		apiURL: srv.URL,
+		out:    &bytes.Buffer{},
+		now:    time.Now,
+		sleep:  func(d time.Duration) { slept = append(slept, d) },
+	})
+	if err != nil {
+		t.Fatalf("slow_down should not be fatal; got: %v", err)
+	}
+	cred, _ := config.Load()
+	if cred == nil || cred.Token != "aq_sk_test_token" {
+		t.Fatalf("credential not saved after backoff: %+v", cred)
+	}
+	// Sleep #1 uses the start cadence (2s); after slow_down it must widen by at
+	// least 5s and adopt the larger advertised 9s — strictly non-decreasing.
+	if len(slept) < 3 {
+		t.Fatalf("expected at least 3 polls, slept=%v", slept)
+	}
+	if slept[0] != 2*time.Second {
+		t.Errorf("first poll should use server interval 2s, got %v", slept[0])
+	}
+	for i := 1; i < len(slept); i++ {
+		if slept[i] < slept[i-1] {
+			t.Errorf("interval shrank: %v then %v", slept[i-1], slept[i])
+		}
+	}
+	if last := slept[len(slept)-1]; last < 9*time.Second {
+		t.Errorf("final interval should honor advertised 9s, got %v", last)
+	}
+}
+
 func TestRunLoginDenied(t *testing.T) {
 	srv := httptest.NewServer((&deviceServer{approveAfter: 0, finalStatus: "denied"}).handler())
 	defer srv.Close()

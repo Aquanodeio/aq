@@ -71,11 +71,14 @@ type DeviceStart struct {
 
 // DevicePoll is the result of POST /api-keys/device/token.
 type DevicePoll struct {
-	Status  string   `json:"status"` // pending | approved | denied | expired | consumed
-	Token   string   `json:"token"`
-	Scopes  []string `json:"scopes"`
-	TeamID  string   `json:"teamId"`
-	KeyName string   `json:"keyName"`
+	Status string `json:"status"` // pending | approved | denied | expired | consumed | slow_down
+	// Interval, when > 0, is the cadence (seconds) the server wants the CLI to
+	// poll at from now on (RFC 8628 §3.5). The CLI only ever slows down to it.
+	Interval int      `json:"interval"`
+	Token    string   `json:"token"`
+	Scopes   []string `json:"scopes"`
+	TeamID   string   `json:"teamId"`
+	KeyName  string   `json:"keyName"`
 }
 
 func (c *Client) postJSON(path string, body any, out any) error {
