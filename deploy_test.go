@@ -180,6 +180,39 @@ func TestRunDeployFailsWhenDeploymentCloses(t *testing.T) {
 	}
 }
 
+// TestRunDeployAbortsOnPermanentStatusError is the #208 regression for the
+// restore-only (waitForActive) path: a permanent hard 4xx aborts fast instead of
+// spinning until the timeout.
+func TestRunDeployAbortsOnPermanentStatusError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
+	})
+	mux.HandleFunc("/deployments/deploy-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 5151, "projectId": "p", "status": "PENDING"})
+	})
+	mux.HandleFunc("/deployments/5151/status", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not found")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	err := runDeploy(deployOptions{
+		cred:         cred,
+		snapshot:     "ext-1",
+		template:     "", // restore only → waitForActive
+		out:          &bytes.Buffer{},
+		pollInterval: 2 * time.Millisecond,
+		timeout:      time.Hour,
+	})
+	if err == nil || !strings.Contains(err.Error(), "could not check deployment 5151 status") {
+		t.Fatalf("expected fast abort on permanent 4xx, got: %v", err)
+	}
+}
+
 func TestDeployRequiresSnapshot(t *testing.T) {
 	t.Setenv("AQ_CONFIG_DIR", t.TempDir())
 	_ = config.Save(&config.Credential{APIURL: "http://x", Token: "aq_sk", TeamID: "t"})
