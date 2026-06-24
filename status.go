@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
@@ -84,8 +85,35 @@ func runStatus(opts statusOptions) error {
 		return nil
 	}
 
+	// A restore-only deploy (`aq deploy --no-app`) never publishes service
+	// credentials, so an ACTIVE/RUNNING box would otherwise fall through to the
+	// provisioning message forever. Report it as ready with connection info
+	// pulled from the deployment app URL instead, mirroring `aq deploy --no-app`
+	// (#213, #209).
+	if isActiveStatus(state) {
+		printStatusReady(opts.out, deploymentID, res.Deployment)
+		return nil
+	}
+
 	fmt.Fprintf(opts.out, "\nStill provisioning — re-run `aq status %d` in a minute.\n", deploymentID)
 	return nil
+}
+
+// printStatusReady reports an ACTIVE/RUNNING box that has no service credentials
+// (a restore-only deploy) as ready. When the deployment row carries a reachable
+// endpoint it prints the box IP and an `ssh root@…` line so the user can connect
+// right away instead of waiting on a provisioning message that never clears.
+func printStatusReady(out io.Writer, deploymentID int, dep api.Deployment) {
+	fmt.Fprintf(out, "\n✓ Deployment #%d is ready.\n", deploymentID)
+	if host, port, ok := sshEndpoint(dep.AppURL); ok {
+		fmt.Fprintf(out, "\n  IP:  %s\n", host)
+		if port == "" || port == "22" {
+			fmt.Fprintf(out, "  SSH: ssh root@%s\n", host)
+		} else {
+			fmt.Fprintf(out, "  SSH: ssh -p %s root@%s\n", port, host)
+		}
+	}
+	fmt.Fprintf(out, "\nManage it in the console or run `aq whoami` to confirm your login.\n")
 }
 
 // requireLogin loads the stored credential, erroring if the CLI is not paired.
