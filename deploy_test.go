@@ -75,6 +75,8 @@ func (s *deployServer) handler() http.Handler {
 }
 
 func TestRunDeployHappyPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop")
 	server := &deployServer{
 		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
 		statusReadyAt: 2,
@@ -117,6 +119,8 @@ func TestRunDeployHappyPath(t *testing.T) {
 }
 
 func TestRunDeployRestoreOnlyReportsActive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
 	server := &deployServer{
 		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
 		statusReadyAt: 1,
@@ -146,6 +150,8 @@ func TestRunDeployRestoreOnlyReportsActive(t *testing.T) {
 }
 
 func TestRunDeployFailsWhenDeploymentCloses(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
@@ -201,6 +207,8 @@ func TestDeployRejectsConflictingTemplateFlags(t *testing.T) {
 }
 
 func TestDeployAcceptsPositionalSnapshot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
 	server := &deployServer{
 		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
 		statusReadyAt: 1,

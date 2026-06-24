@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
@@ -156,21 +157,32 @@ func waitForServiceURL(
 	}
 }
 
-// ensureSSHKey returns the id of an SSH key to use, registering the laptop's
-// local public key if the account has none yet.
+// ensureSSHKey returns the id of an SSH key the user can actually SSH in with:
+// it reuses a registered key ONLY when one matches the laptop's local public
+// key, otherwise it registers the local key. Reusing an arbitrary account key
+// (e.g. a teammate's, on a shared account) silently breaks the own-key promise —
+// the box comes up with a key the user has no private half for (#203).
 func ensureSSHKey(client *api.Client, out io.Writer) (string, error) {
-	keys, err := client.ListSSHKeys()
-	if err != nil {
-		return "", fmt.Errorf("could not list SSH keys: %w", err)
-	}
-	if len(keys) > 0 {
-		return keys[0].ID, nil
-	}
-
 	path, pubKey, err := readLocalPublicKey()
 	if err != nil {
 		return "", err
 	}
+
+	keys, err := client.ListSSHKeys()
+	if err != nil {
+		return "", fmt.Errorf("could not list SSH keys: %w", err)
+	}
+
+	// Reuse only the registered key whose content matches the local key, so the
+	// provisioned box accepts the user's private key.
+	if match, ok := matchRegisteredKey(pubKey, keys); ok {
+		fmt.Fprintf(out, "Using your registered SSH key %q (%s).\n", match.Name, path)
+		return match.ID, nil
+	}
+
+	// No registered key matches the laptop's key — register it so the user can
+	// SSH in. This covers a fresh laptop and a shared/team account whose only
+	// keys belong to someone else.
 	host, _ := os.Hostname()
 	name := host
 	if name == "" {
@@ -182,6 +194,33 @@ func ensureSSHKey(client *api.Client, out io.Writer) (string, error) {
 	}
 	fmt.Fprintf(out, "Registered your SSH key (%s).\n", path)
 	return created.ID, nil
+}
+
+// matchRegisteredKey returns the registered key whose public-key content matches
+// the local key, comparing only the algorithm + base64 body so a differing
+// trailing comment (e.g. user@laptop vs user@ci) doesn't defeat the match.
+func matchRegisteredKey(local string, keys []api.SSHKey) (api.SSHKey, bool) {
+	want := publicKeyBody(local)
+	if want == "" {
+		return api.SSHKey{}, false
+	}
+	for _, k := range keys {
+		if publicKeyBody(k.PublicKey) == want {
+			return k, true
+		}
+	}
+	return api.SSHKey{}, false
+}
+
+// publicKeyBody reduces an OpenSSH public key to "<algorithm> <base64>", dropping
+// the optional trailing comment, so two keys that differ only by comment compare
+// equal. Returns "" if the input isn't a well-formed key line.
+func publicKeyBody(key string) string {
+	fields := strings.Fields(key)
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[0] + " " + fields[1]
 }
 
 func templateLabel(template string) string {
