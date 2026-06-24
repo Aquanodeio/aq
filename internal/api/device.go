@@ -13,9 +13,15 @@ import (
 )
 
 // Client talks to the Aquanode API base (e.g. https://server.aquanode.io/api/v1).
+//
+// The device-login endpoints are public; the funnel endpoints (`up`, status,
+// ssh-keys) require auth. When APIKey/TeamID are set they are sent as the
+// `x-api-key` / `x-team-id` headers the orchestrator expects.
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
+	APIKey  string // x-api-key (the aq_sk_… token from `aq login`)
+	TeamID  string // x-team-id (required by team-scoped routes like /deployments)
 }
 
 // New returns a Client for the given base URL with a sane default timeout.
@@ -23,6 +29,25 @@ func New(baseURL string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		HTTP:    &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// NewAuthed returns a Client that sends the API key + team id on every request.
+func NewAuthed(baseURL, apiKey, teamID string) *Client {
+	c := New(baseURL)
+	c.APIKey = apiKey
+	c.TeamID = teamID
+	return c
+}
+
+// setAuth attaches the auth headers when the client is authenticated. Sending
+// them on the public device endpoints is harmless (they are ignored there).
+func (c *Client) setAuth(req *http.Request) {
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	if c.TeamID != "" {
+		req.Header.Set("x-team-id", c.TeamID)
 	}
 }
 
@@ -63,6 +88,21 @@ func (c *Client) postJSON(path string, body any, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, out)
+}
+
+func (c *Client) getJSON(path string, out any) error {
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	return c.do(req, out)
+}
+
+// do sends a prepared request (attaching auth + JSON content type) and decodes
+// the orchestrator's `{success,data,error}` envelope into out.
+func (c *Client) do(req *http.Request, out any) error {
+	c.setAuth(req)
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
