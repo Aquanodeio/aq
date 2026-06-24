@@ -1,0 +1,80 @@
+version: 2
+
+# This pipeline produces the standalone `aq` artifact — a single static binary
+# (one per OS/arch) packaged as a tarball + checksums.txt, published as a GitHub
+# Release on Aquanodeio/aq and installed via `curl … | sh` (scripts/install.sh).
+#
+# aq is a laptop control CLI: pure Go, no cgo, no on-box supervisor. It cross-
+# compiles cleanly to linux/darwin × amd64/arm64. (Contrast ogre, which is a
+# cgo on-box agent shipped Linux-x86_64-only with a systemd unit.)
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: aq
+    main: .
+    binary: aq
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # version is the only ldflag var aq exposes (main.version); -s -w strips
+    # the symbol table / DWARF for a smaller binary.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    # e.g. aq_Linux_x86_64.tar.gz, aq_Darwin_arm64.tar.gz — install.sh matches
+    # the asset by the "{OS}_{arch}.tar.gz" suffix it computes from uname.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+# SHA-256 checksums.txt — the curl|sh installer verifies the tarball against it
+# before installing and refuses to install if it is missing.
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: Aquanodeio
+    name: aq
+  prerelease: auto
+  mode: replace
+  replace_existing_artifacts: true
+  make_latest: auto
+  # Ship the installer alongside the binaries so a fresh laptop can fetch it
+  # straight from the release (no clone needed).
+  extra_files:
+    - glob: ./scripts/install.sh
+
+  footer: >-
+
+    ---
+
+    ## Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/Aquanodeio/aq/main/scripts/install.sh | sh
+    ```
+
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
