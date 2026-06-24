@@ -116,3 +116,19 @@ func (c *Client) DeploymentStatus(deploymentID int) (*DeploymentStatusResult, er
 	}
 	return &out, nil
 }
+
+// CloseResult mirrors POST /deployments/close.
+type CloseResult struct {
+	Status string `json:"status"`
+}
+
+// CloseDeployment requests termination of a deployment (`aq down`). The
+// orchestrator validates team ownership and tears the box down asynchronously.
+func (c *Client) CloseDeployment(deploymentID int) (*CloseResult, error) {
+	var out CloseResult
+	body := map[string]int{"deploymentId": deploymentID}
+	if err := c.postJSON("/deployments/close", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

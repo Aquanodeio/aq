@@ -36,6 +36,10 @@ func main() {
 		run(up(args))
 	case "deploy":
 		run(deploy(args))
+	case "status":
+		run(status(args))
+	case "down":
+		run(down(args))
 	case "logout":
 		run(logout(args))
 	case "whoami":
@@ -65,6 +69,8 @@ Commands:
   login      Pair this CLI to your Aquanode account (device login)
   up         Rent the cheapest matching GPU and bring up a working env
   deploy     Restore a snapshot onto a freshly-rented Aquanode GPU box
+  status     Show a deployment's status, HTTPS URL, and credentials
+  down       Tear down a deployment (stop the rented GPU box)
   logout     Remove the stored CLI credential
   whoami     Show the current login state
   version    Print the aq version
@@ -85,6 +91,10 @@ deploy flags:
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
+
+status / down:
+  aq status <deploymentId>   Re-check a provisioning or running env
+  aq down <deploymentId>     Tear the env down and stop billing
 
 Environment:
   AQ_API_URL      Aquanode API base (default https://server.aquanode.io/api/v1)
