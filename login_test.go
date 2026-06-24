@@ -129,9 +129,13 @@ func TestRunLoginHonorsServerInterval(t *testing.T) {
 	mux.HandleFunc("/api-keys/device/token", func(w http.ResponseWriter, r *http.Request) {
 		switch atomic.AddInt32(&polls, 1) {
 		case 1:
+			// First poll is immediate (#207); reply pending so the start cadence
+			// (2s) is what the loop sleeps at before the next poll.
+			writeData(w, map[string]any{"status": "pending"})
+		case 2:
 			// Ask the CLI to slow down and widen to 7s.
 			writeData(w, map[string]any{"status": "slow_down", "interval": 7})
-		case 2:
+		case 3:
 			// Advertise a larger cadence on a normal pending poll.
 			writeData(w, map[string]any{"status": "pending", "interval": 9})
 		default:
@@ -175,6 +179,37 @@ func TestRunLoginHonorsServerInterval(t *testing.T) {
 	}
 	if last := slept[len(slept)-1]; last < 9*time.Second {
 		t.Errorf("final interval should honor advertised 9s, got %v", last)
+	}
+}
+
+// TestRunLoginFirstPollIsImmediate proves the poll loop checks status before it
+// ever sleeps, so the first poll has no needless interval of latency (#207).
+func TestRunLoginFirstPollIsImmediate(t *testing.T) {
+	// approveAfter:1 → poll #1 is pending (forcing one sleep), poll #2 approves.
+	ds := &deviceServer{approveAfter: 1, finalStatus: "approved"}
+	srv := httptest.NewServer(ds.handler())
+	defer srv.Close()
+	t.Setenv("AQ_CONFIG_DIR", t.TempDir())
+
+	pollsAtFirstSleep := int32(-1)
+	err := runLogin(loginOptions{
+		apiURL:       srv.URL,
+		out:          &bytes.Buffer{},
+		pollInterval: 5 * time.Millisecond,
+		now:          time.Now,
+		sleep: func(time.Duration) {
+			if pollsAtFirstSleep < 0 {
+				pollsAtFirstSleep = atomic.LoadInt32(&ds.polls)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("runLogin returned error: %v", err)
+	}
+	// One poll must have completed before the loop's first sleep. A value of 0
+	// means it slept before polling — the regression this ticket removes.
+	if pollsAtFirstSleep != 1 {
+		t.Errorf("first poll should be immediate; polls before first sleep = %d, want 1", pollsAtFirstSleep)
 	}
 }
 

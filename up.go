@@ -141,12 +141,18 @@ func waitForServiceURL(
 	now func() time.Time,
 ) error {
 	deadline := now().Add(timeout)
+	first := true
 	for {
 		if now().After(deadline) {
 			fmt.Fprintf(out, "\nStill provisioning after %s. Check status with:\n    aq status %d\n", timeout, deploymentID)
 			return errors.New("timed out waiting for the env to come up")
 		}
-		time.Sleep(pollInterval)
+		// Check status immediately on the first iteration; only sleep *between*
+		// polls so we don't add a full interval of latency up front (#207).
+		if !first {
+			time.Sleep(pollInterval)
+		}
+		first = false
 
 		status, err := client.DeploymentStatus(deploymentID)
 		if err != nil {

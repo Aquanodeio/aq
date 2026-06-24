@@ -93,11 +93,17 @@ func runLogin(opts loginOptions) error {
 	}
 	deadline := opts.now().Add(time.Duration(expiresIn) * time.Second)
 
+	first := true
 	for {
 		if opts.now().After(deadline) {
 			return errors.New("login timed out before approval — run `aq login` again")
 		}
-		opts.sleep(interval)
+		// Poll immediately on the first iteration; only sleep *between* polls so we
+		// don't add a full interval of latency before the first status check (#207).
+		if !first {
+			opts.sleep(interval)
+		}
+		first = false
 
 		poll, err := client.PollDevice(start.DeviceCode)
 		if err != nil {
