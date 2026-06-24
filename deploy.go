@@ -171,6 +171,11 @@ func waitForActive(
 
 		status, err := client.DeploymentStatus(deploymentID)
 		if err != nil {
+			// Abort fast on a permanent hard-4xx failure; keep polling through
+			// transport errors and transient 5xx hiccups (#208).
+			if isPermanentStatusError(err) {
+				return fmt.Errorf("could not check deployment %d status: %w", deploymentID, err)
+			}
 			continue
 		}
 		if isClosedStatus(status.Deployment.Status) {

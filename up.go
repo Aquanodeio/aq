@@ -141,7 +141,12 @@ func waitForServiceURL(
 
 		status, err := client.DeploymentStatus(deploymentID)
 		if err != nil {
-			// Transient status errors shouldn't kill the wait; keep polling.
+			// A permanent failure (hard 4xx — auth/forbidden/not-found) will never
+			// resolve, so abort fast with a diagnostic instead of spinning until the
+			// timeout. Transport errors and transient 5xx hiccups keep polling (#208).
+			if isPermanentStatusError(err) {
+				return fmt.Errorf("could not check deployment %d status: %w", deploymentID, err)
+			}
 			continue
 		}
 
@@ -230,6 +235,20 @@ func templateLabel(template string) string {
 	default:
 		return "ComfyUI"
 	}
+}
+
+// isPermanentStatusError reports whether a status-poll error is a permanent
+// client-side failure — a hard 4xx (401/403/404) that retrying cannot fix — as
+// opposed to a transient transport error or a 5xx server hiccup during
+// provisioning. Polling aborts on a permanent error instead of spinning until
+// the timeout with no diagnostic; it mirrors `aq login`'s abort-on-APIError but
+// keeps polling through transient 5xx (#208).
+func isPermanentStatusError(err error) bool {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Status >= 400 && apiErr.Status < 500
+	}
+	return false
 }
 
 // isClosedStatus reports whether a deployment status is terminal (failed/closed),

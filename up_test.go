@@ -96,6 +96,94 @@ func str(v any) string {
 	return s
 }
 
+// writeError writes the orchestrator's `{success:false,error}` envelope with the
+// given HTTP status, so tests can simulate a hard 4xx or a transient 5xx.
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": msg})
+}
+
+// TestRunUpAbortsOnPermanentStatusError is the #208 regression: a permanent hard
+// 4xx from the status endpoint must abort the wait fast with a diagnostic, not
+// spin until the timeout.
+func TestRunUpAbortsOnPermanentStatusError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
+	})
+	mux.HandleFunc("/deployments/up", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 9, "projectId": "p", "status": "PENDING"})
+	})
+	mux.HandleFunc("/deployments/9/status", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusForbidden, "forbidden")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		out:          &bytes.Buffer{},
+		pollInterval: 2 * time.Millisecond,
+		// A long timeout proves we abort on the 4xx rather than waiting it out.
+		timeout: time.Hour,
+	})
+	if err == nil || !strings.Contains(err.Error(), "could not check deployment 9 status") {
+		t.Fatalf("expected fast abort on permanent 4xx, got: %v", err)
+	}
+}
+
+// TestRunUpKeepsPollingThroughTransient5xx verifies a transient 5xx hiccup does
+// not kill the wait — polling continues until the service URL appears.
+func TestRunUpKeepsPollingThroughTransient5xx(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+
+	var polls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
+	})
+	mux.HandleFunc("/deployments/up", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 10, "projectId": "p", "status": "PENDING"})
+	})
+	mux.HandleFunc("/deployments/10/status", func(w http.ResponseWriter, r *http.Request) {
+		// First poll hiccups with a 503; the next one comes up live.
+		if atomic.AddInt32(&polls, 1) == 1 {
+			writeError(w, http.StatusServiceUnavailable, "temporarily unavailable")
+			return
+		}
+		writeData(w, map[string]any{"deploymentId": 10, "status": "ACTIVE", "deployment": map[string]any{
+			"id": 10, "status": "ACTIVE", "service_credentials": map[string]any{
+				"template": "comfyui", "url": "https://comfy.box.aquanode.io", "status": "running",
+			},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		out:          &out,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("transient 5xx should not abort the wait, got: %v", err)
+	}
+	if !strings.Contains(out.String(), "https://comfy.box.aquanode.io") {
+		t.Errorf("expected the service URL after recovering from a 5xx; got:\n%s", out.String())
+	}
+}
+
 // writeFakePubKey drops an id_ed25519.pub holding content under $HOME/.ssh so
 // readLocalPublicKey finds a deterministic local key. Tests set $HOME to a temp
 // dir first so this never touches the real machine's keys.
