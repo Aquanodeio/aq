@@ -5,10 +5,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
+)
+
+const (
+	// defaultPollInterval is the cadence used when the server advertises none.
+	defaultPollInterval = 5 * time.Second
+	// slowDownIncrement is how much each `slow_down` response widens the poll
+	// interval (RFC 8628 §3.5: back off by at least 5 seconds).
+	slowDownIncrement = 5 * time.Second
 )
 
 // loginOptions configures runLogin. Defaults are filled in by login() so tests
@@ -18,8 +27,9 @@ type loginOptions struct {
 	clientName   string
 	out          io.Writer
 	openBrowser  bool
-	pollInterval time.Duration // 0 → use the server-advertised interval
-	now          func() time.Time
+	pollInterval time.Duration       // 0 → use (and honor) the server-advertised interval
+	now          func() time.Time    // nil → time.Now
+	sleep        func(time.Duration) // nil → time.Sleep (injectable so tests don't really wait)
 }
 
 // login wires the real environment (stdout, hostname, browser) into runLogin.
@@ -43,6 +53,9 @@ func runLogin(opts loginOptions) error {
 	if opts.now == nil {
 		opts.now = time.Now
 	}
+	if opts.sleep == nil {
+		opts.sleep = time.Sleep
+	}
 
 	client := api.New(opts.apiURL)
 	start, err := client.StartDevice(opts.clientName, nil)
@@ -65,9 +78,12 @@ func runLogin(opts loginOptions) error {
 
 	interval := time.Duration(start.Interval) * time.Second
 	if interval <= 0 {
-		interval = 5 * time.Second
+		interval = defaultPollInterval
 	}
-	if opts.pollInterval > 0 {
+	// A pinned pollInterval (tests) overrides everything and is never widened by
+	// the server; otherwise the cadence is server-driven and may only grow.
+	serverDriven := opts.pollInterval <= 0
+	if !serverDriven {
 		interval = opts.pollInterval
 	}
 
@@ -81,7 +97,7 @@ func runLogin(opts loginOptions) error {
 		if opts.now().After(deadline) {
 			return errors.New("login timed out before approval — run `aq login` again")
 		}
-		time.Sleep(interval)
+		opts.sleep(interval)
 
 		poll, err := client.PollDevice(start.DeviceCode)
 		if err != nil {
@@ -89,6 +105,12 @@ func runLogin(opts loginOptions) error {
 			// unless the server explicitly rejected the device code.
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) {
+				// Some servers signal "poll slower" (RFC 8628 §3.5) as a 4xx
+				// error rather than a status — that's backoff, not a failure.
+				if isSlowDown(apiErr.Message) {
+					interval = backoffInterval(interval, 0, serverDriven)
+					continue
+				}
 				return fmt.Errorf("login failed: %s", apiErr.Message)
 			}
 			continue
@@ -96,6 +118,11 @@ func runLogin(opts loginOptions) error {
 
 		switch poll.Status {
 		case "pending":
+			// Honor a larger server-advertised cadence on every poll.
+			interval = adoptInterval(interval, poll.Interval, serverDriven)
+			continue
+		case "slow_down":
+			interval = backoffInterval(interval, poll.Interval, serverDriven)
 			continue
 		case "approved":
 			cred := &config.Credential{
@@ -125,6 +152,36 @@ func runLogin(opts loginOptions) error {
 			return fmt.Errorf("unexpected pairing status %q", poll.Status)
 		}
 	}
+}
+
+// adoptInterval widens the poll cadence to a larger server-advertised interval
+// (seconds). It only ever slows down, and never overrides a pinned test cadence.
+func adoptInterval(current time.Duration, advertised int, serverDriven bool) time.Duration {
+	if !serverDriven || advertised <= 0 {
+		return current
+	}
+	if d := time.Duration(advertised) * time.Second; d > current {
+		return d
+	}
+	return current
+}
+
+// backoffInterval applies a `slow_down` backoff (RFC 8628 §3.5): the cadence
+// grows by at least slowDownIncrement, and adopts a larger advertised interval
+// if the server sent one. A pinned test cadence is left untouched.
+func backoffInterval(current time.Duration, advertised int, serverDriven bool) time.Duration {
+	if !serverDriven {
+		return current
+	}
+	next := current + slowDownIncrement
+	return adoptInterval(next, advertised, serverDriven)
+}
+
+// isSlowDown reports whether a server message is the RFC 8628 "poll slower"
+// signal rather than a real failure.
+func isSlowDown(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "slow_down") || strings.Contains(m, "slow down")
 }
 
 // logout removes the stored credential.
