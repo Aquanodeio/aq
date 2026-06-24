@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"time"
 
@@ -182,8 +183,39 @@ func waitForActive(
 			return fmt.Errorf("deployment %d ended with status %q before coming up", deploymentID, status.Deployment.Status)
 		}
 		if status.Deployment.Status == "ACTIVE" || status.Deployment.Status == "RUNNING" {
-			fmt.Fprintf(out, "\n✓ Your snapshot was restored onto deployment #%d.\n\nManage it in the console or run `aq whoami` to confirm your login.\n", deploymentID)
+			printRestored(out, deploymentID, status.Deployment)
 			return nil
 		}
 	}
+}
+
+// printRestored reports a restore-only (`aq deploy --no-app`) box as ready. When
+// the deployment row carries a reachable endpoint it also prints the box IP and
+// an `ssh root@…` line, so the user can connect right away instead of opening
+// the console to find the address (#209).
+func printRestored(out io.Writer, deploymentID int, dep api.Deployment) {
+	fmt.Fprintf(out, "\n✓ Your snapshot was restored onto deployment #%d.\n", deploymentID)
+	if host, port, ok := sshEndpoint(dep.AppURL); ok {
+		fmt.Fprintf(out, "\n  IP:  %s\n", host)
+		if port == "" || port == "22" {
+			fmt.Fprintf(out, "  SSH: ssh root@%s\n", host)
+		} else {
+			fmt.Fprintf(out, "  SSH: ssh -p %s root@%s\n", port, host)
+		}
+	}
+	fmt.Fprintf(out, "\nManage it in the console or run `aq whoami` to confirm your login.\n")
+}
+
+// sshEndpoint pulls the host and port from a deployment app URL like
+// `http://1.2.3.4:22`. It returns ok=false for an empty or unparseable URL so
+// the caller can simply omit the connection line.
+func sshEndpoint(appURL string) (host, port string, ok bool) {
+	if appURL == "" {
+		return "", "", false
+	}
+	u, err := url.Parse(appURL)
+	if err != nil || u.Hostname() == "" {
+		return "", "", false
+	}
+	return u.Hostname(), u.Port(), true
 }

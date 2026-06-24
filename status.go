@@ -6,24 +6,23 @@ import (
 	"io"
 	"os"
 
-	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
 // statusOptions configures runStatus. status() fills in the real environment;
 // tests inject a base URL and a buffer writer.
 type statusOptions struct {
-	cred         *config.Credential
-	deploymentID int
-	out          io.Writer
+	cred   *config.Credential
+	target string // numeric deployment id or a project id (resolved by runStatus)
+	out    io.Writer
 }
 
-// status parses the deployment id and wires the real environment into runStatus.
+// status parses the deployment target and wires the real environment into runStatus.
 //
 // `aq status <deploymentId>` re-checks a deployment started by `aq up` — useful
 // when `aq up` hits its provisioning timeout and tells the user to come back.
 func status(args []string) error {
-	deploymentID, err := parseDeploymentID(args, "status")
+	target, err := parseDeploymentTarget(args, "status")
 	if err != nil {
 		return err
 	}
@@ -34,9 +33,9 @@ func status(args []string) error {
 	}
 
 	return runStatus(statusOptions{
-		cred:         cred,
-		deploymentID: deploymentID,
-		out:          os.Stdout,
+		cred:   cred,
+		target: target,
+		out:    os.Stdout,
 	})
 }
 
@@ -47,15 +46,16 @@ func runStatus(opts statusOptions) error {
 		opts.out = os.Stdout
 	}
 
-	apiURL := opts.cred.APIURL
-	if apiURL == "" {
-		apiURL = config.APIURL()
-	}
-	client := api.NewAuthed(apiURL, opts.cred.Token, opts.cred.TeamID)
+	client := newControlClient(opts.cred)
 
-	res, err := client.DeploymentStatus(opts.deploymentID)
+	deploymentID, err := resolveDeploymentID(client, opts.target, "status")
 	if err != nil {
-		return fmt.Errorf("could not fetch status for deployment #%d: %w", opts.deploymentID, err)
+		return err
+	}
+
+	res, err := client.DeploymentStatus(deploymentID)
+	if err != nil {
+		return fmt.Errorf("could not fetch status for deployment #%d: %w", deploymentID, err)
 	}
 
 	state := res.Deployment.Status
@@ -65,7 +65,7 @@ func runStatus(opts statusOptions) error {
 	if state == "" {
 		state = "UNKNOWN"
 	}
-	fmt.Fprintf(opts.out, "Deployment #%d: %s\n", opts.deploymentID, state)
+	fmt.Fprintf(opts.out, "Deployment #%d: %s\n", deploymentID, state)
 
 	creds := res.Deployment.ServiceCredentials
 	if creds != nil && creds.URL != "" {
@@ -84,7 +84,7 @@ func runStatus(opts statusOptions) error {
 		return nil
 	}
 
-	fmt.Fprintf(opts.out, "\nStill provisioning — re-run `aq status %d` in a minute.\n", opts.deploymentID)
+	fmt.Fprintf(opts.out, "\nStill provisioning — re-run `aq status %d` in a minute.\n", deploymentID)
 	return nil
 }
 
