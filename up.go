@@ -33,6 +33,9 @@ type upOptions struct {
 	pollInterval time.Duration
 	timeout      time.Duration
 	now          func() time.Time
+	// probe reports whether the published app URL is actually serving. Tests
+	// inject a deterministic stub; runUp defaults it to httpAppReady (#234).
+	probe func(string) bool
 }
 
 // up parses flags and wires the real environment into runUp.
@@ -95,6 +98,9 @@ func runUp(opts upOptions) error {
 	if opts.timeout <= 0 {
 		opts.timeout = 15 * time.Minute
 	}
+	if opts.probe == nil {
+		opts.probe = httpAppReady
+	}
 
 	apiURL := opts.cred.APIURL
 	if apiURL == "" {
@@ -125,7 +131,7 @@ func runUp(opts upOptions) error {
 	fmt.Fprintf(opts.out, "Deployment #%d created. Provisioning (this can take a few minutes)...\n", res.DeploymentID)
 
 	// 3. Poll until the template service URL is live.
-	return waitForServiceURL(client, res.DeploymentID, label, opts.out, opts.errOut, opts.showSecrets, opts.pollInterval, opts.timeout, opts.now)
+	return waitForServiceURL(client, res.DeploymentID, label, opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
 }
 
 // waitForServiceURL polls a deployment until its template service URL is live,
@@ -137,11 +143,16 @@ func waitForServiceURL(
 	label string,
 	out, errOut io.Writer,
 	showSecrets bool,
+	probe func(string) bool,
 	pollInterval, timeout time.Duration,
 	now func() time.Time,
 ) error {
+	if probe == nil {
+		probe = httpAppReady
+	}
 	deadline := now().Add(timeout)
 	first := true
+	announcedURL := false
 	for {
 		if now().After(deadline) {
 			fmt.Fprintf(out, "\nStill provisioning after %s. Check status with:\n    aq status %d\n", timeout, deploymentID)
@@ -183,6 +194,18 @@ func waitForServiceURL(
 
 		creds := status.Deployment.ServiceCredentials
 		if creds != nil && creds.URL != "" {
+			// ACTIVE + a published service URL does NOT mean the app is reachable:
+			// the orchestrator surfaces the URL before the app binds its port, so
+			// reporting "ready" here makes the user click a URL that 'connection
+			// refused's. Gate the ready message on an HTTP probe that the app
+			// actually answers, mirroring an app-port health check (#234).
+			if !probe(creds.URL) {
+				if !announcedURL {
+					fmt.Fprintf(out, "Service URL published — waiting for %s to start serving...\n", label)
+					announcedURL = true
+				}
+				continue
+			}
 			printReady(out, errOut, label, creds, showSecrets, deploymentID)
 			return nil
 		}
