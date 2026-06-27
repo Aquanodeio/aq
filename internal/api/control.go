@@ -101,6 +101,11 @@ type Deployment struct {
 	Status             string              `json:"status"`
 	AppURL             string              `json:"app_url"`
 	ServiceCredentials *ServiceCredentials `json:"service_credentials"`
+	// RestoreStatus/RestoreError carry the server-side snapshot restore outcome
+	// for `aq deploy` (#235): SUCCESS / PARTIAL / FAILED, plus a detail string.
+	// Empty for a plain `aq up` (no restore) or a backend that predates the field.
+	RestoreStatus string `json:"restore_status"`
+	RestoreError  string `json:"restore_error"`
 }
 
 // DeploymentStatusResult mirrors GET /deployments/:id/status.
