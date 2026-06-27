@@ -197,7 +197,14 @@ func waitForActive(
 		if isClosedStatus(status.Deployment.Status) {
 			return fmt.Errorf("deployment %d ended with status %q before coming up", deploymentID, status.Deployment.Status)
 		}
-		if status.Deployment.Status == "ACTIVE" || status.Deployment.Status == "RUNNING" {
+		if isActiveStatus(status.Deployment.Status) {
+			// The box is up — but that alone does NOT mean the restore worked. A
+			// failed server-side restore (e.g. ogre "repository does not exist")
+			// still leaves the deployment ACTIVE, so check the recorded restore
+			// outcome before claiming success (#235).
+			if err := restoreOutcomeError(status.Deployment); err != nil {
+				return fmt.Errorf("deployment %d is up but %w", deploymentID, err)
+			}
 			printRestored(out, deploymentID, status.Deployment)
 			return nil
 		}

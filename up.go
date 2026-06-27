@@ -169,6 +169,18 @@ func waitForServiceURL(
 			return fmt.Errorf("deployment %d ended with status %q before coming up", deploymentID, status.Deployment.Status)
 		}
 
+		// Once the box is up, a failed/partial server-side restore is terminal:
+		// `aq deploy` would otherwise relaunch the app on missing data and the
+		// template URL may never appear (the orchestrator skips the app start on a
+		// failed restore). Surface it now rather than spinning out the timeout
+		// (#235). A plain `aq up` never restores, so restore_status is blank and
+		// this is a no-op for it.
+		if isActiveStatus(status.Deployment.Status) {
+			if err := restoreOutcomeError(status.Deployment); err != nil {
+				return fmt.Errorf("deployment %d is up but %w", deploymentID, err)
+			}
+		}
+
 		creds := status.Deployment.ServiceCredentials
 		if creds != nil && creds.URL != "" {
 			printReady(out, errOut, label, creds, showSecrets, deploymentID)
@@ -285,6 +297,42 @@ func isActiveStatus(status string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// Server-side restore outcomes the orchestrator records on the deployment row
+// once a snapshot restore finishes (#235).
+const (
+	restoreStatusSuccess = "SUCCESS"
+	restoreStatusPartial = "PARTIAL"
+	restoreStatusFailed  = "FAILED"
+)
+
+// restoreOutcomeError reports whether the deployment row says the server-side
+// snapshot restore did NOT fully succeed, returning a user-facing error if so.
+//
+// `aq deploy` must report restore truth: the box reaching ACTIVE means the VM is
+// up, NOT that the restore worked — a failed restore (e.g. ogre "repository does
+// not exist") still leaves the box ACTIVE (#235). A blank restore_status means
+// "nothing to report": a plain `aq up` never restores, and a backend that
+// predates the field can't tell us — both must keep working, so only an explicit
+// non-success status is treated as an error.
+func restoreOutcomeError(dep api.Deployment) error {
+	switch dep.RestoreStatus {
+	case "", restoreStatusSuccess:
+		return nil
+	case restoreStatusPartial:
+		msg := "the snapshot restore was incomplete — some data may be missing"
+		if dep.RestoreError != "" {
+			msg += " (" + dep.RestoreError + ")"
+		}
+		return errors.New(msg)
+	default: // FAILED, or any unrecognized non-success status — fail closed
+		msg := "the snapshot restore failed on the server"
+		if dep.RestoreError != "" {
+			msg += " (" + dep.RestoreError + ")"
+		}
+		return errors.New(msg)
 	}
 }
 
