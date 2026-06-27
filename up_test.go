@@ -96,6 +96,12 @@ func str(v any) string {
 	return s
 }
 
+// alwaysReady is a probe stub for tests that exercise the URL-publishing path
+// without a real app to GET: it reports the published URL as serving immediately
+// so the wait reaches printReady. Tests that specifically exercise the readiness
+// probe (#234) inject their own stub instead.
+func alwaysReady(string) bool { return true }
+
 // writeError writes the orchestrator's `{success:false,error}` envelope with the
 // given HTTP status, so tests can simulate a hard 4xx or a transient 5xx.
 func writeError(w http.ResponseWriter, status int, msg string) {
@@ -173,6 +179,7 @@ func TestRunUpKeepsPollingThroughTransient5xx(t *testing.T) {
 		cred:         cred,
 		template:     templateComfyUI,
 		out:          &out,
+		probe:        alwaysReady,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 	})
@@ -221,6 +228,7 @@ func TestRunUpHappyPath(t *testing.T) {
 		gpuModel:     "RTX 4090",
 		out:          &out,
 		errOut:       &errOut,
+		probe:        alwaysReady,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 		now:          time.Now,
@@ -255,6 +263,91 @@ func TestRunUpHappyPath(t *testing.T) {
 	}
 }
 
+// TestRunUpWaitsForAppPortBeforeReady is the #234 regression: the deployment can
+// be ACTIVE with a published service URL before the app inside the box has bound
+// its port. `aq up` must NOT print the URL as live until an HTTP probe to it
+// succeeds — otherwise the user clicks a URL that connection-refuses.
+func TestRunUpWaitsForAppPortBeforeReady(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	server := &upServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 1, // URL is published from the very first poll...
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	// ...but the app isn't serving yet: the probe fails twice, then succeeds.
+	var probes int32
+	notReadyUntil := int32(3)
+	probe := func(u string) bool {
+		if u != "https://comfy.box.aquanode.io" {
+			t.Errorf("probe got unexpected URL %q", u)
+		}
+		return atomic.AddInt32(&probes, 1) >= notReadyUntil
+	}
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		out:          &out,
+		errOut:       &errOut,
+		probe:        probe,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runUp error: %v", err)
+	}
+	if got := atomic.LoadInt32(&probes); got < notReadyUntil {
+		t.Errorf("expected the URL to be probed until it answered (>=%d), got %d", notReadyUntil, got)
+	}
+	gotOut := out.String()
+	// While the app wasn't serving, the user sees a "waiting" line, not "is live".
+	if !strings.Contains(gotOut, "waiting for ComfyUI to start serving") {
+		t.Errorf("expected a 'waiting for the app to serve' message; got:\n%s", gotOut)
+	}
+	// "is live" must come only after the probe finally succeeded.
+	if !strings.Contains(gotOut, "is live") || !strings.Contains(gotOut, "https://comfy.box.aquanode.io") {
+		t.Errorf("expected the live URL once the probe succeeded; got:\n%s", gotOut)
+	}
+}
+
+// TestRunUpTimesOutWhenAppNeverServes: the URL is published but the app never
+// binds its port, so the probe never succeeds — the wait must time out rather
+// than falsely report the URL live (#234).
+func TestRunUpTimesOutWhenAppNeverServes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	server := &upServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 1,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		out:          &out,
+		probe:        func(string) bool { return false }, // app never serves
+		pollInterval: 2 * time.Millisecond,
+		timeout:      30 * time.Millisecond,
+	})
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected a timeout when the app never serves, got: %v", err)
+	}
+	if strings.Contains(out.String(), "is live") {
+		t.Errorf("must not report the URL live when the probe never succeeds; got:\n%s", out.String())
+	}
+}
+
 func TestRunUpShowSecretsEchoesPassword(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	// The local key matches the registered one (comment differs) so ensureSSHKey
@@ -276,6 +369,7 @@ func TestRunUpShowSecretsEchoesPassword(t *testing.T) {
 		showSecrets:  true,
 		out:          &out,
 		errOut:       &errOut,
+		probe:        alwaysReady,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 		now:          time.Now,
@@ -309,6 +403,7 @@ func TestRunUpRegistersWhenNoRegisteredKeyMatches(t *testing.T) {
 		cred:         cred,
 		template:     templateComfyUI,
 		out:          &out,
+		probe:        alwaysReady,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 	})
@@ -341,6 +436,7 @@ func TestRunUpRegistersSSHKeyWhenNoneExist(t *testing.T) {
 		cred:         cred,
 		template:     templateJupyter,
 		out:          &out,
+		probe:        alwaysReady,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 	})

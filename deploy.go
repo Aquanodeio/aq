@@ -28,6 +28,9 @@ type deployOptions struct {
 	pollInterval time.Duration
 	timeout      time.Duration
 	now          func() time.Time
+	// probe reports whether the published app URL is actually serving. Tests
+	// inject a deterministic stub; runDeploy defaults it to httpAppReady (#234).
+	probe func(string) bool
 }
 
 // deploy parses flags and wires the real environment into runDeploy.
@@ -118,6 +121,9 @@ func runDeploy(opts deployOptions) error {
 	if opts.timeout <= 0 {
 		opts.timeout = 15 * time.Minute
 	}
+	if opts.probe == nil {
+		opts.probe = httpAppReady
+	}
 
 	apiURL := opts.cred.APIURL
 	if apiURL == "" {
@@ -158,7 +164,7 @@ func runDeploy(opts deployOptions) error {
 	if opts.template == "" {
 		return waitForActive(client, res.DeploymentID, opts.out, opts.pollInterval, opts.timeout, opts.now)
 	}
-	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.pollInterval, opts.timeout, opts.now)
+	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
 }
 
 // waitForActive polls a deployment until it reaches a running state (a

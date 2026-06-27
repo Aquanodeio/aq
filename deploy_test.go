@@ -108,6 +108,7 @@ func TestRunDeployHappyPath(t *testing.T) {
 		snapshot:     "ext-42",
 		template:     templateComfyUI,
 		out:          &out,
+		probe:        alwaysReady,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 		now:          time.Now,
@@ -415,6 +416,7 @@ func TestDeployAcceptsPositionalSnapshot(t *testing.T) {
 		snapshot:     "ext-99",
 		template:     templateJupyter,
 		out:          &out,
+		probe:        alwaysReady,
 		pollInterval: 2 * time.Millisecond,
 		timeout:      5 * time.Second,
 	})
