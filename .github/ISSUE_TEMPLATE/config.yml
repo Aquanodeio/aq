@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report (private)
+    url: https://github.com/Aquanodeio/aq/security/advisories/new
+    about: Do NOT open a public issue for a vulnerability — report it privately here.
+  - name: ogre (the on-box agent)
+    url: https://github.com/Aquanodeio/ogre
+    about: Snapshot/restore behavior lives in ogre. File on-box issues there.
