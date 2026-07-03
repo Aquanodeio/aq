@@ -43,6 +43,11 @@ type UpRequest struct {
 	GPUModel string  `json:"gpuModel,omitempty"`
 	MaxPrice float64 `json:"maxPrice,omitempty"`
 	Provider string  `json:"provider,omitempty"`
+	// Name sets the deployment's display name. When empty the orchestrator
+	// falls back to a generated "<Adjective> <GPU> from <Region>" name. Passing
+	// a stable `ticket-<N>-<label>` here lets the session-scoped reaper attribute
+	// and clean up a throwaway box that would otherwise bill as an orphan (#310).
+	Name string `json:"name,omitempty"`
 }
 
 // UpResult is the data returned by POST /deployments/up.
@@ -74,6 +79,9 @@ type DeployRequest struct {
 	GPUModel       string  `json:"gpuModel,omitempty"`
 	MaxPrice       float64 `json:"maxPrice,omitempty"`
 	Provider       string  `json:"provider,omitempty"`
+	// Name sets the deployment's display name; empty → orchestrator-generated.
+	// A stable `ticket-<N>-<label>` makes the throwaway box reapable (#310).
+	Name string `json:"name,omitempty"`
 }
 
 // Deploy rents the cheapest matching GPU and restores the given snapshot onto it.

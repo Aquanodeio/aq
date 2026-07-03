@@ -24,6 +24,7 @@ const (
 type upOptions struct {
 	cred         *config.Credential
 	template     string
+	name         string
 	gpuModel     string
 	maxPrice     float64
 	provider     string
@@ -46,6 +47,7 @@ func up(args []string) error {
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
+	name := fs.String("name", "", "Set the deployment's display name (default: an auto-generated name)")
 	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -70,6 +72,7 @@ func up(args []string) error {
 	return runUp(upOptions{
 		cred:        cred,
 		template:    template,
+		name:        strings.TrimSpace(*name),
 		gpuModel:    *gpu,
 		maxPrice:    *maxPrice,
 		provider:    *provider,
@@ -121,6 +124,7 @@ func runUp(opts upOptions) error {
 	res, err := client.Up(api.UpRequest{
 		Template: opts.template,
 		SSHKeyID: sshKeyID,
+		Name:     opts.name,
 		GPUModel: opts.gpuModel,
 		MaxPrice: opts.maxPrice,
 		Provider: opts.provider,

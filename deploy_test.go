@@ -35,6 +35,7 @@ type DeployBodyCapture struct {
 	Template       string
 	GPUModel       string
 	Provider       string
+	Name           string
 }
 
 func (s *deployServer) handler() http.Handler {
@@ -54,6 +55,7 @@ func (s *deployServer) handler() http.Handler {
 			Template:       str(body["template"]),
 			GPUModel:       str(body["gpuModel"]),
 			Provider:       str(body["provider"]),
+			Name:           str(body["name"]),
 		}
 		writeData(w, map[string]any{
 			"deploymentId": 5151,
@@ -132,6 +134,40 @@ func TestRunDeployHappyPath(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "https://comfy.box.aquanode.io") {
 		t.Errorf("output missing HTTPS URL; got:\n%s", got)
+	}
+}
+
+// TestRunDeployThreadsName is the #310 regression: `aq deploy --name` must send
+// the deployment name so the reaper can attribute and clean up the box.
+func TestRunDeployThreadsName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop")
+	server := &deployServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 2,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+
+	var out bytes.Buffer
+	err := runDeploy(deployOptions{
+		cred:         cred,
+		snapshot:     "ext-42",
+		template:     templateComfyUI,
+		name:         "ticket-310-restore",
+		out:          &out,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+		now:          time.Now,
+	})
+	if err != nil {
+		t.Fatalf("runDeploy error: %v", err)
+	}
+	if server.deployBody.Name != "ticket-310-restore" {
+		t.Errorf("deploy should send the --name in the request body, got %q", server.deployBody.Name)
 	}
 }
 
