@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
@@ -19,6 +20,7 @@ type deployOptions struct {
 	cred         *config.Credential
 	snapshot     string
 	template     string // "" → restore only, no app relaunch
+	name         string
 	gpuModel     string
 	maxPrice     float64
 	provider     string
@@ -49,6 +51,7 @@ func deploy(args []string) error {
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
+	name := fs.String("name", "", "Set the deployment's display name (default: an auto-generated name)")
 	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -93,6 +96,7 @@ func deploy(args []string) error {
 		cred:        cred,
 		snapshot:    source,
 		template:    template,
+		name:        strings.TrimSpace(*name),
 		gpuModel:    *gpu,
 		maxPrice:    *maxPrice,
 		provider:    *provider,
@@ -147,6 +151,7 @@ func runDeploy(opts deployOptions) error {
 		SnapshotSource: opts.snapshot,
 		SSHKeyID:       sshKeyID,
 		Template:       opts.template,
+		Name:           opts.name,
 		GPUModel:       opts.gpuModel,
 		MaxPrice:       opts.maxPrice,
 		Provider:       opts.provider,

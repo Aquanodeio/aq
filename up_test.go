@@ -32,6 +32,7 @@ type UpBodyCapture struct {
 	SSHKeyID string
 	GPUModel string
 	Provider string
+	Name     string
 }
 
 func (s *upServer) handler() http.Handler {
@@ -64,6 +65,7 @@ func (s *upServer) handler() http.Handler {
 			SSHKeyID: str(body["sshKeyId"]),
 			GPUModel: str(body["gpuModel"]),
 			Provider: str(body["provider"]),
+			Name:     str(body["name"]),
 		}
 		writeData(w, map[string]any{
 			"deploymentId": 4242,
@@ -203,6 +205,42 @@ func writeFakePubKey(t *testing.T, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "id_ed25519.pub"), []byte(content+"\n"), 0o600); err != nil {
 		t.Fatalf("write pubkey: %v", err)
+	}
+}
+
+// TestRunUpThreadsName is the #310 regression: `aq up --name` must send the
+// deployment name in the request body so the session-scoped reaper can attribute
+// and clean up the box (a generic auto-name is skipped and bills as an orphan).
+func TestRunUpThreadsName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	server := &upServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 2,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+
+	var out, errOut bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		name:         "ticket-310-smoke",
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+		now:          time.Now,
+	})
+	if err != nil {
+		t.Fatalf("runUp error: %v", err)
+	}
+	if server.upBody.Name != "ticket-310-smoke" {
+		t.Errorf("up should send the --name in the request body, got %q", server.upBody.Name)
 	}
 }
 
