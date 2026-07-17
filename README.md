@@ -11,15 +11,16 @@ one-command Aquanode deploys.
 It is a thin orchestration wrapper over `ogre` + the Aquanode API. It does **not**
 reimplement ogre.
 
-## Status
+## Capabilities
 
-Scaffold. Subcommands are built out by the funnel tickets:
+`aq` is a complete, production-ready CLI for managing Aquanode GPU deployments:
 
-- `aq login` — device-login pairing the CLI to an Aquanode account
-- `aq up`    — rent a GPU + provision ogre + bring up a working env, one command
-- `aq deploy` — restore an `ogre` snapshot onto a freshly-rented Aquanode box
-- `aq status <id>` — re-check a deployment's status, HTTPS URL, and credentials
-- `aq down <id>` — tear a deployment down (stop the rented GPU box + billing)
+- **`aq login`** — pair the CLI to your Aquanode account via device-login
+- **`aq up`** — rent the cheapest matching GPU, provision the ogre agent, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
+- **`aq deploy`** — restore an `ogre` snapshot onto a freshly-rented Aquanode GPU box
+- **`aq status <id>`** — check a deployment's status, provisioning progress, HTTPS URL, and credentials
+- **`aq down <id>`** — tear down a deployment and stop billing
+- **`aq logout` / `aq whoami`** — manage authentication state
 
 ## Install
 
