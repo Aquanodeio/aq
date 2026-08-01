@@ -57,7 +57,7 @@ changelog:
 release:
   github:
     owner: Aquanodeio
-    name: aq
+    name: aq-releases
   prerelease: auto
   mode: replace
   replace_existing_artifacts: true
@@ -74,7 +74,7 @@ release:
     ## Install
 
     ```sh
-    curl -fsSL https://raw.githubusercontent.com/Aquanodeio/aq/main/scripts/install.sh | sh
+    curl -fsSL https://github.com/Aquanodeio/aq-releases/releases/latest/download/install.sh | sh
     ```
 
     Released by [GoReleaser](https://github.com/goreleaser/goreleaser).

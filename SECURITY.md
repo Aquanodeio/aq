@@ -9,13 +9,11 @@ us keep it and its users safe.
 **Please do not report security vulnerabilities through public GitHub issues, discussions,
 or pull requests.**
 
-Report privately through GitHub's security advisories:
+Email **hi@aquanode.io** with the details. The `aq` source repository is currently
+private, so GitHub security advisories are not reachable from outside the Aquanode
+org — email is the reporting channel.
 
-- **[Open a private security advisory](https://github.com/Aquanodeio/aq/security/advisories/new)**
-  (Security → Advisories → *Report a vulnerability*).
-
-If you cannot use GitHub advisories, email **hi@aquanode.io** instead. Please do **not**
-disclose the issue publicly until we have shipped a fix.
+Please do **not** disclose the issue publicly until we have shipped a fix.
 
 Include as much as you can so we can reproduce and triage quickly:
 

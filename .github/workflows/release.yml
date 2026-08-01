@@ -32,6 +32,7 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          # Publishing to this same repo, so the default GITHUB_TOKEN is enough
-          # (no PAT needed — unlike ogre, which cross-publishes to Aquanodeio/releases).
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Publishing to Aquanodeio/aq-releases (a DIFFERENT repo), so the
+          # default GITHUB_TOKEN is not enough — it is scoped to this repo only.
+          # RELEASES_PAT needs contents:write on Aquanodeio/aq-releases.
+          GITHUB_TOKEN: ${{ secrets.RELEASES_PAT }}

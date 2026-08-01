@@ -26,11 +26,11 @@ reimplement ogre.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Aquanodeio/aq/main/scripts/install.sh | sh
+curl -fsSL https://github.com/Aquanodeio/aq-releases/releases/latest/download/install.sh | sh
 ```
 
 This downloads the right binary for your OS/arch from the latest
-[GitHub Release](https://github.com/Aquanodeio/aq/releases), verifies its
+[GitHub Release](https://github.com/Aquanodeio/aq-releases/releases), verifies its
 SHA-256 checksum, and installs `aq` to `/usr/local/bin` (or `~/.local/bin` if
 that isn't writable). Then:
 
