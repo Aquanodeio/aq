@@ -5,6 +5,9 @@
 *.test
 *.out
 
+# Benchmark/spike output (belongs under root logs/, never a sub-repo)
+/bench-out/
+
 # Go
 /vendor/
 go.work
