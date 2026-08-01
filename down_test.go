@@ -38,6 +38,7 @@ func TestParseInterspersedFlagAfterPositional(t *testing.T) {
 
 func TestRunDownRequestsClose(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	var gotBody map[string]any
 	var gotAPIKey, gotTeamID string
 	mux.HandleFunc("/deployments/close", func(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +70,7 @@ func TestRunDownRequestsClose(t *testing.T) {
 
 func TestRunDownSurfacesAPIError(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/deployments/close", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "Deployment not found"})

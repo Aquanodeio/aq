@@ -83,10 +83,14 @@ func runStatus(opts statusOptions) error {
 	}
 	fmt.Fprintf(opts.out, "Deployment #%d: %s\n", deploymentID, state)
 
-	creds := res.Deployment.ServiceCredentials
+	dep := withID(res.Deployment, deploymentID)
+
+	creds := dep.ServiceCredentials
 	if creds != nil && creds.URL != "" {
 		fmt.Fprintf(opts.out, "\n%s is live:\n\n    %s\n\n", templateLabel(creds.Template), creds.URL)
 		printServiceCredentials(opts.out, opts.errOut, creds, opts.showSecrets, deploymentID)
+		syncManagedConfigQuiet(client, opts.errOut, []api.Deployment{dep}, 0)
+		printConnection(opts.out, dep)
 		return nil
 	}
 
@@ -101,7 +105,8 @@ func runStatus(opts statusOptions) error {
 	// pulled from the deployment app URL instead, mirroring `aq deploy --no-app`
 	// (#213, #209).
 	if isActiveStatus(state) {
-		printStatusReady(opts.out, deploymentID, res.Deployment)
+		syncManagedConfigQuiet(client, opts.errOut, []api.Deployment{dep}, 0)
+		printStatusReady(opts.out, dep)
 		return nil
 	}
 
@@ -110,19 +115,11 @@ func runStatus(opts statusOptions) error {
 }
 
 // printStatusReady reports an ACTIVE/RUNNING box that has no service credentials
-// (a restore-only deploy) as ready. When the deployment row carries a reachable
-// endpoint it prints the box IP and an `ssh root@…` line so the user can connect
-// right away instead of waiting on a provisioning message that never clears.
-func printStatusReady(out io.Writer, deploymentID int, dep api.Deployment) {
-	fmt.Fprintf(out, "\n✓ Deployment #%d is ready.\n", deploymentID)
-	if host, port, ok := sshEndpoint(dep.AppURL); ok {
-		fmt.Fprintf(out, "\n  IP:  %s\n", host)
-		if port == "" || port == "22" {
-			fmt.Fprintf(out, "  SSH: ssh root@%s\n", host)
-		} else {
-			fmt.Fprintf(out, "  SSH: ssh -p %s root@%s\n", port, host)
-		}
-	}
+// (a restore-only deploy) as ready, with the connection details so the user can
+// get a shell instead of waiting on a provisioning message that never clears.
+func printStatusReady(out io.Writer, dep api.Deployment) {
+	fmt.Fprintf(out, "\n✓ Deployment #%d is ready.\n", dep.ID)
+	printConnection(out, dep)
 	fmt.Fprintf(out, "\nManage it in the console or run `aq whoami` to confirm your login.\n")
 }
 

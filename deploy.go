@@ -167,7 +167,7 @@ func runDeploy(opts deployOptions) error {
 	// URL, so report the box as ready as soon as it is provisioned rather than
 	// waiting out the timeout.
 	if opts.template == "" {
-		return waitForActive(client, res.DeploymentID, opts.out, opts.pollInterval, opts.timeout, opts.now)
+		return waitForActive(client, res.DeploymentID, opts.out, opts.errOut, opts.pollInterval, opts.timeout, opts.now)
 	}
 	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
 }
@@ -178,7 +178,7 @@ func runDeploy(opts deployOptions) error {
 func waitForActive(
 	client *api.Client,
 	deploymentID int,
-	out io.Writer,
+	out, errOut io.Writer,
 	pollInterval, timeout time.Duration,
 	now func() time.Time,
 ) error {
@@ -216,26 +216,20 @@ func waitForActive(
 			if err := restoreOutcomeError(status.Deployment); err != nil {
 				return fmt.Errorf("deployment %d is up but %w", deploymentID, err)
 			}
-			printRestored(out, deploymentID, status.Deployment)
+			dep := withID(status.Deployment, deploymentID)
+			syncManagedConfigQuiet(client, errOut, []api.Deployment{dep}, 0)
+			printRestored(out, dep)
 			return nil
 		}
 	}
 }
 
-// printRestored reports a restore-only (`aq deploy --no-app`) box as ready. When
-// the deployment row carries a reachable endpoint it also prints the box IP and
-// an `ssh root@…` line, so the user can connect right away instead of opening
-// the console to find the address (#209).
-func printRestored(out io.Writer, deploymentID int, dep api.Deployment) {
-	fmt.Fprintf(out, "\n✓ Your snapshot was restored onto deployment #%d.\n", deploymentID)
-	if host, port, ok := sshEndpoint(dep.AppURL); ok {
-		fmt.Fprintf(out, "\n  IP:  %s\n", host)
-		if port == "" || port == "22" {
-			fmt.Fprintf(out, "  SSH: ssh root@%s\n", host)
-		} else {
-			fmt.Fprintf(out, "  SSH: ssh -p %s root@%s\n", port, host)
-		}
-	}
+// printRestored reports a restore-only (`aq deploy --no-app`) box as ready,
+// with the connection details so the user can get a shell right away instead of
+// opening the console to find the address (#209).
+func printRestored(out io.Writer, dep api.Deployment) {
+	fmt.Fprintf(out, "\n✓ Your snapshot was restored onto deployment #%d.\n", dep.ID)
+	printConnection(out, dep)
 	fmt.Fprintf(out, "\nManage it in the console or run `aq whoami` to confirm your login.\n")
 }
 

@@ -36,6 +36,8 @@ func main() {
 		run(up(args))
 	case "deploy":
 		run(deploy(args))
+	case "ssh":
+		run(sshCmd(args))
 	case "status":
 		run(status(args))
 	case "down":
@@ -69,6 +71,7 @@ Commands:
   login      Pair this CLI to your Aquanode account (device login)
   up         Rent the cheapest matching GPU and bring up a working env
   deploy     Restore a snapshot onto a freshly-rented Aquanode GPU box
+  ssh        Open a shell on a deployment (managed key + ~/.ssh/config alias)
   status     Show a deployment's status, HTTPS URL, and credentials
   down       Tear down a deployment (stop the rented GPU box)
   logout     Remove the stored CLI credential
@@ -94,14 +97,30 @@ deploy flags:
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
 
+ssh:
+  aq ssh                     Open a shell on your only live deployment
+  aq ssh <name|id>           Open a shell on a deployment by --name or id
+  aq ssh <name> -- <cmd…>    Run a command on the box instead of opening a shell
+
+  --print            Print the ssh command that would run, and exit
+  -L <spec>          Forward a local port, e.g. 8888:localhost:8888 (repeatable)
+  --user <name>      Override the login user (default: root)
+
+  aq manages ~/.ssh/aquanode.config (included from your ~/.ssh/config) with one
+  "aq-<name>" alias per live box, so ssh, scp, rsync, and VSCode Remote-SSH all
+  work with that alias and no aq involved. If you have no SSH key at all, aq
+  generates a passphrase-less one at ~/.ssh/aquanode_ed25519.
+
 status / down:
-  aq status <deploymentId>   Re-check a provisioning or running env
+  aq status <name|id>        Re-check a provisioning or running env
                              (add --show-secrets to print the password)
-  aq down <deploymentId>     Tear the env down and stop billing
+  aq down <name|id>          Tear the env down and stop billing
 
 Environment:
   AQ_API_URL      Aquanode API base (default https://server.aquanode.io/api/v1)
   AQ_CONFIG_DIR   Credential directory (default <user-config-dir>/aq)
+  AQ_SSH_KEY      Private key to use for box access (default: your ~/.ssh key,
+                  else aq's managed ~/.ssh/aquanode_ed25519)
   AQ_NO_BROWSER   Set to skip auto-opening the approval URL
 `)
 }

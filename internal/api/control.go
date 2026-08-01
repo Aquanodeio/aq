@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // Funnel control endpoints used by `aq up`: SSH-key registration, the one-command
@@ -103,17 +105,75 @@ type ServiceCredentials struct {
 	Status   string `json:"status"`
 }
 
+// SSHPort is the internal logical port a box's sshd is published on. Deployment
+// rows key their service_urls entries by this port on every provider.
+const SSHPort = 22
+
+// ServiceURL is one entry of a deployment's service_urls array: a reachable URL
+// keyed by the internal logical port it maps.
+type ServiceURL struct {
+	URL  string `json:"url"`
+	Port portID `json:"port"`
+}
+
+// portID decodes a service_urls port that arrives as either a JSON number or a
+// JSON string. An undecodable port yields 0 rather than an error: the value is
+// only ever compared against SSHPort to pick an entry, and failing the whole
+// Deployment decode over one odd port would break `aq up` status polling.
+type portID int
+
+func (p *portID) UnmarshalJSON(b []byte) error {
+	n, err := strconv.Atoi(strings.Trim(string(b), `"`))
+	if err != nil {
+		*p = 0
+		return nil
+	}
+	*p = portID(n)
+	return nil
+}
+
 // Deployment is the subset of the deployment row `aq up` polling cares about.
+//
+// Every tag MUST stay in snake_case form. GET /deployments/:id/status runs rows
+// through transformDeploymentData and so carries snake_case *plus* camelCase
+// duplicates, but GET /deployments (the list) does not transform — its rows are
+// snake_case only. A camelCase tag would decode the status endpoint and
+// silently yield zero values for every list row.
 type Deployment struct {
 	ID                 int                 `json:"id"`
+	Name               string              `json:"name"`
 	Status             string              `json:"status"`
 	AppURL             string              `json:"app_url"`
 	ServiceCredentials *ServiceCredentials `json:"service_credentials"`
+	// ServiceURLs stays raw so a malformed or unexpectedly-shaped value (the
+	// column is a free-form Json defaulting to "[]") can never fail the whole
+	// row's decode. SSHServiceURL parses it on demand.
+	ServiceURLs json.RawMessage `json:"service_urls"`
 	// RestoreStatus/RestoreError carry the server-side snapshot restore outcome
 	// for `aq deploy` (#235): SUCCESS / PARTIAL / FAILED, plus a detail string.
 	// Empty for a plain `aq up` (no restore) or a backend that predates the field.
 	RestoreStatus string `json:"restore_status"`
 	RestoreError  string `json:"restore_error"`
+}
+
+// SSHServiceURL returns the deployment's port-22 service URL.
+//
+// This is authoritative for SSH in a way app_url is not: simplepod silently
+// publishes the ogre agent's HTTP port as app_url when the box maps no SSH port,
+// so dialing app_url there reaches an HTTP server rather than sshd. The
+// service_urls entry is keyed by the *internal* port, so port 22 is unambiguous
+// and simply absent on a box with no SSH.
+func (d Deployment) SSHServiceURL() (string, bool) {
+	var urls []ServiceURL
+	if err := json.Unmarshal(d.ServiceURLs, &urls); err != nil {
+		return "", false
+	}
+	for _, u := range urls {
+		if u.Port == SSHPort && u.URL != "" {
+			return u.URL, true
+		}
+	}
+	return "", false
 }
 
 // DeploymentStatusResult mirrors GET /deployments/:id/status.
@@ -144,6 +204,22 @@ func (c *Client) GetProjectDeployment(projectID string) (*Deployment, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ListDeployments returns every deployment on the caller's team, newest first.
+//
+// Two properties of GET /deployments to keep in mind: it takes no filters (the
+// documented `type`/`provider`/`sortByTime` query params are parsed by a schema
+// the controller never reads), and it returns the team's FULL history including
+// CLOSED and FAILED rows. Callers must filter client-side, and should only call
+// it where a list is genuinely needed — on a long-lived team it is a large
+// response.
+func (c *Client) ListDeployments() ([]Deployment, error) {
+	var out []Deployment
+	if err := c.getJSON("/deployments", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // CloseResult mirrors POST /deployments/close.

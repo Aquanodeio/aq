@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -210,10 +211,23 @@ func waitForServiceURL(
 				}
 				continue
 			}
-			printReady(out, errOut, label, creds, showSecrets, deploymentID)
+			dep := withID(status.Deployment, deploymentID)
+			// Write the alias BEFORE the ready message names it, or the first
+			// thing the user copies won't resolve.
+			syncManagedConfigQuiet(client, errOut, []api.Deployment{dep}, 0)
+			printReady(out, errOut, label, dep, showSecrets)
 			return nil
 		}
 	}
+}
+
+// withID backfills a deployment row's id from the id we polled with, so the
+// print helpers can rely on dep.ID rather than threading it separately.
+func withID(dep api.Deployment, deploymentID int) api.Deployment {
+	if dep.ID == 0 {
+		dep.ID = deploymentID
+	}
+	return dep
 }
 
 // ensureSSHKey returns the id of an SSH key the user can actually SSH in with:
@@ -222,10 +236,11 @@ func waitForServiceURL(
 // (e.g. a teammate's, on a shared account) silently breaks the own-key promise —
 // the box comes up with a key the user has no private half for (#203).
 func ensureSSHKey(client *api.Client, out io.Writer) (string, error) {
-	path, pubKey, err := readLocalPublicKey()
+	key, err := resolveLocalKey()
 	if err != nil {
 		return "", err
 	}
+	path, pubKey := key.PublicPath, key.PublicKey
 
 	keys, err := client.ListSSHKeys()
 	if err != nil {
@@ -363,10 +378,35 @@ func restoreOutcomeError(dep api.Deployment) error {
 	}
 }
 
-func printReady(out, errOut io.Writer, label string, creds *api.ServiceCredentials, showSecrets bool, deploymentID int) {
-	fmt.Fprintf(out, "\n✓ %s is live:\n\n    %s\n\n", label, creds.URL)
-	printServiceCredentials(out, errOut, creds, showSecrets, deploymentID)
+func printReady(out, errOut io.Writer, label string, dep api.Deployment, showSecrets bool) {
+	fmt.Fprintf(out, "\n✓ %s is live:\n\n    %s\n\n", label, dep.ServiceCredentials.URL)
+	printServiceCredentials(out, errOut, dep.ServiceCredentials, showSecrets, dep.ID)
+	printConnection(out, dep)
 	fmt.Fprintln(out, "\nManage it in the console or run `aq whoami` to confirm your login.")
+}
+
+// printConnection prints how to get a shell on the box.
+//
+// It names the alias rather than `ssh root@<ip>` deliberately: the alias is what
+// also works with scp, rsync, and VSCode Remote-SSH, so teaching it is what
+// makes those discoverable — while printing a raw IP teaches the copy-paste
+// habit `aq ssh` exists to eliminate.
+func printConnection(out io.Writer, dep api.Deployment) {
+	host, _, ok := sshEndpointFor(dep)
+	if !ok {
+		return
+	}
+	fmt.Fprintf(out, "\n  IP:    %s\n", host)
+	fmt.Fprintf(out, "  SSH:   aq ssh %s\n", sshTarget(dep))
+	fmt.Fprintf(out, "  Alias: %s   (works with ssh, scp, rsync, VSCode Remote-SSH)\n", aliasFor(dep.Name, dep.ID))
+}
+
+// sshTarget is the shortest thing the user can type to reach this box.
+func sshTarget(dep api.Deployment) string {
+	if name := strings.TrimSpace(dep.Name); name != "" {
+		return name
+	}
+	return strconv.Itoa(dep.ID)
 }
 
 // printServiceCredentials prints the service username to stdout and gates the

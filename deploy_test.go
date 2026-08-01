@@ -40,6 +40,7 @@ type DeployBodyCapture struct {
 
 func (s *deployServer) handler() http.Handler {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, s.keys)
@@ -202,9 +203,13 @@ func TestRunDeployRestoreOnlyReportsActive(t *testing.T) {
 	if !strings.Contains(got, "restored onto deployment #5151") {
 		t.Errorf("expected restore-only ready message; got:\n%s", got)
 	}
-	// #209: a restore-only deploy prints the box IP + ssh line after ACTIVE.
-	if !strings.Contains(got, "203.0.113.7") || !strings.Contains(got, "ssh root@203.0.113.7") {
-		t.Errorf("expected IP + ssh connection info; got:\n%s", got)
+	// #209: a restore-only deploy prints connection info after ACTIVE. Since #422
+	// that is the managed alias rather than a raw `ssh root@<ip>` — the alias is
+	// what also works with scp/rsync/VSCode, so it is what we teach.
+	for _, want := range []string{"203.0.113.7", "aq ssh 5151", "aq-5151"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected connection info to include %q; got:\n%s", want, got)
+		}
 	}
 }
 
@@ -349,6 +354,7 @@ func TestRunDeployFailsWhenDeploymentCloses(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeFakePubKey(t, "ssh-ed25519 AAAA x")
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
 	})
@@ -383,6 +389,7 @@ func TestRunDeployAbortsOnPermanentStatusError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeFakePubKey(t, "ssh-ed25519 AAAA x")
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
 	})
