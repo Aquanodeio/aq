@@ -13,6 +13,7 @@ import (
 
 func TestRunStatusReadyShowsURLAndCreds(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	var gotAPIKey, gotTeamID string
 	mux.HandleFunc("/deployments/4242/status", func(w http.ResponseWriter, r *http.Request) {
 		gotAPIKey = r.Header.Get("x-api-key")
@@ -59,6 +60,7 @@ func TestRunStatusReadyShowsURLAndCreds(t *testing.T) {
 
 func TestRunStatusShowSecretsEchoesPassword(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/deployments/4242/status", func(w http.ResponseWriter, r *http.Request) {
 		dep := map[string]any{
 			"id":     4242,
@@ -88,6 +90,7 @@ func TestRunStatusShowSecretsEchoesPassword(t *testing.T) {
 
 func TestRunStatusStillProvisioning(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/deployments/7/status", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, map[string]any{"deploymentId": 7, "status": "PENDING",
 			"deployment": map[string]any{"id": 7, "status": "PENDING"}})
@@ -111,6 +114,7 @@ func TestRunStatusStillProvisioning(t *testing.T) {
 // as ready with the box IP + ssh line instead of "Still provisioning" forever.
 func TestRunStatusActiveRestoreOnlyShowsConnectionInfo(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/deployments/909/status", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, map[string]any{"deploymentId": 909, "status": "ACTIVE",
 			"deployment": map[string]any{"id": 909, "status": "ACTIVE", "app_url": "http://203.0.113.7:22"}})
@@ -127,7 +131,7 @@ func TestRunStatusActiveRestoreOnlyShowsConnectionInfo(t *testing.T) {
 	if strings.Contains(got, "Still provisioning") {
 		t.Errorf("active restore-only box should not say still provisioning; got:\n%s", got)
 	}
-	for _, want := range []string{"is ready", "203.0.113.7", "ssh root@203.0.113.7"} {
+	for _, want := range []string{"is ready", "203.0.113.7", "aq ssh 909", "aq-909"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status output missing %q; got:\n%s", want, got)
 		}
@@ -139,6 +143,7 @@ func TestRunStatusActiveRestoreOnlyShowsConnectionInfo(t *testing.T) {
 // connection lines rather than printing a blank IP.
 func TestRunStatusActiveRestoreOnlyNoAppURL(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/deployments/910/status", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, map[string]any{"deploymentId": 910, "status": "RUNNING",
 			"deployment": map[string]any{"id": 910, "status": "RUNNING"}})
@@ -177,6 +182,7 @@ func TestStatusRequiresDeploymentID(t *testing.T) {
 func TestRunStatusResolvesProjectID(t *testing.T) {
 	const projectID = "11111111-2222-3333-4444-555555555555"
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/deployments/project/"+projectID, func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, map[string]any{"id": 4242, "status": "ACTIVE"})
 	})
@@ -201,6 +207,7 @@ func TestRunStatusResolvesProjectID(t *testing.T) {
 // a message pointing the user at the numeric deployment id (#209).
 func TestRunStatusUnknownProjectIDExplains(t *testing.T) {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/deployments/project/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "not found"})

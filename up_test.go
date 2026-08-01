@@ -37,6 +37,7 @@ type UpBodyCapture struct {
 
 func (s *upServer) handler() http.Handler {
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		s.lastAPIKey = r.Header.Get("x-api-key")
@@ -120,6 +121,8 @@ func TestRunUpAbortsOnPermanentStatusError(t *testing.T) {
 	writeFakePubKey(t, "ssh-ed25519 AAAA x")
 
 	mux := http.NewServeMux()
+
+	stubDeploymentList(mux)
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
 	})
@@ -154,6 +157,7 @@ func TestRunUpKeepsPollingThroughTransient5xx(t *testing.T) {
 
 	var polls int32
 	mux := http.NewServeMux()
+	stubDeploymentList(mux)
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
 	})
@@ -193,9 +197,13 @@ func TestRunUpKeepsPollingThroughTransient5xx(t *testing.T) {
 	}
 }
 
-// writeFakePubKey drops an id_ed25519.pub holding content under $HOME/.ssh so
-// readLocalPublicKey finds a deterministic local key. Tests set $HOME to a temp
-// dir first so this never touches the real machine's keys.
+// writeFakePubKey drops an id_ed25519 keypair under $HOME/.ssh so resolveLocalKey
+// finds a deterministic local key. Tests set $HOME to a temp dir first so this
+// never touches the real machine's keys.
+//
+// It writes BOTH halves: since #422 a lone .pub is rejected as an orphan, and a
+// helper that wrote only the public half would make every caller silently
+// exercise the managed-key generation path instead of key reuse.
 func writeFakePubKey(t *testing.T, content string) {
 	t.Helper()
 	home, _ := os.UserHomeDir()
@@ -206,6 +214,19 @@ func writeFakePubKey(t *testing.T, content string) {
 	if err := os.WriteFile(filepath.Join(dir, "id_ed25519.pub"), []byte(content+"\n"), 0o600); err != nil {
 		t.Fatalf("write pubkey: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "id_ed25519"), []byte("PRIVATE KEY STUB\n"), 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+}
+
+// stubDeploymentList answers GET /deployments with an empty list. Every command
+// that prints connection details now regenerates the ssh_config fragment from
+// this endpoint; without it each stub server would emit a 404 warning that has
+// nothing to do with what the test is asserting.
+func stubDeploymentList(mux *http.ServeMux) {
+	mux.HandleFunc("/deployments", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{})
+	})
 }
 
 // TestRunUpThreadsName is the #310 regression: `aq up --name` must send the
@@ -500,6 +521,8 @@ func TestRunUpFailsWhenDeploymentCloses(t *testing.T) {
 	writeFakePubKey(t, "ssh-ed25519 AAAA x")
 
 	mux := http.NewServeMux()
+
+	stubDeploymentList(mux)
 	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}})
 	})
