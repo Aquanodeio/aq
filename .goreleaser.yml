@@ -1,5 +1,11 @@
 version: 2
 
+# Pin the project name. GoReleaser otherwise derives it from the RELEASE TARGET
+# repo (Aquanodeio/aq-releases), which silently renames every artifact to
+# aq-releases_Darwin_arm64.tar.gz — the same confusing naming ogre ended up with
+# (releases_Linux_x86_64.tar.gz). archives.name_template uses {{ .ProjectName }}.
+project_name: aq
+
 # This pipeline produces the standalone `aq` artifact — a single static binary
 # (one per OS/arch) packaged as a tarball + checksums.txt, published as a GitHub
 # Release on Aquanodeio/aq and installed via `curl … | sh` (scripts/install.sh).
@@ -57,7 +63,7 @@ changelog:
 release:
   github:
     owner: Aquanodeio
-    name: aq
+    name: aq-releases
   prerelease: auto
   mode: replace
   replace_existing_artifacts: true
@@ -74,7 +80,7 @@ release:
     ## Install
 
     ```sh
-    curl -fsSL https://raw.githubusercontent.com/Aquanodeio/aq/main/scripts/install.sh | sh
+    curl -fsSL https://github.com/Aquanodeio/aq-releases/releases/latest/download/install.sh | sh
     ```
 
     Released by [GoReleaser](https://github.com/goreleaser/goreleaser).

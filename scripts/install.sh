@@ -1,11 +1,11 @@
 #!/bin/sh
 # aq installer — one-command install of the Aquanode control CLI.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Aquanodeio/aq/main/scripts/install.sh | sh
+#   curl -fsSL https://github.com/Aquanodeio/aq-releases/releases/latest/download/install.sh | sh
 #
 # What it does:
 #   1. Detects OS/arch (linux/darwin × amd64/arm64).
-#   2. Resolves the release on Aquanodeio/aq (latest published, or $AQ_VERSION).
+#   2. Resolves the release on Aquanodeio/aq-releases (latest published, or $AQ_VERSION).
 #   3. Downloads the matching tarball + checksums.txt and VERIFIES the SHA-256
 #      before installing (refuses to install unverified).
 #   4. Installs the single `aq` binary into $AQ_BIN_DIR (default /usr/local/bin),
@@ -17,11 +17,11 @@
 # Environment overrides (all optional):
 #   AQ_VERSION       pin a release tag (e.g. v0.1.0); default = latest published
 #   AQ_BIN_DIR       install dir for the binary (default /usr/local/bin, then ~/.local/bin)
-#   AQ_RELEASES_REPO owner/repo that hosts the release artifacts (default Aquanodeio/aq)
+#   AQ_RELEASES_REPO owner/repo that hosts the release artifacts (default Aquanodeio/aq-releases)
 set -eu
 
 # ----- config -------------------------------------------------------------
-RELEASES_REPO="${AQ_RELEASES_REPO:-Aquanodeio/aq}"
+RELEASES_REPO="${AQ_RELEASES_REPO:-Aquanodeio/aq-releases}"
 # AQ_API overrides the GitHub API base (used by tests / mirrors); default is the
 # public GitHub releases API for $RELEASES_REPO.
 API="${AQ_API:-https://api.github.com/repos/${RELEASES_REPO}/releases}"
