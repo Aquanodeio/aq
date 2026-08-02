@@ -11,7 +11,13 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  # This job never writes to Aquanodeio/aq via the default GITHUB_TOKEN — the
+  # only publish step (GoReleaser, below) supplies its own cross-repo
+  # credential via RELEASES_PAT, targeting the separate Aquanodeio/aq-releases
+  # repo. `contents: read` is enough for actions/checkout. If a release run
+  # ever fails, that's not a reason to "fix" this back to write — trace the
+  # actual failure first.
+  contents: read
 
 jobs:
   release:
