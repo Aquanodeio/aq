@@ -18,7 +18,7 @@ any of the box-side provisioning itself.
 - **`aq up`** — rent the cheapest matching GPU, provision it, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
 - **`aq deploy`** — restore a snapshot onto a freshly-rented Aquanode GPU box
 - **`aq ssh [name]`** — get a shell on a box: managed keypair, managed `~/.ssh/config` alias, zero setup
-- **`aq status <name|id>`** — check a deployment's status, provisioning progress, HTTPS URL, and credentials
+- **`aq status <name|id>`** — check a deployment's status, provisioning state, HTTPS URL, and credentials
 - **`aq down <name|id>`** — tear down a deployment and stop billing
 - **`aq logout` / `aq whoami`** — manage authentication state
 
