@@ -4,7 +4,7 @@
 [![DCO](https://img.shields.io/badge/contributions-DCO%20signed--off-green.svg)](CONTRIBUTING.md)
 
 `aq` is the Aquanode control / funnel CLI. It runs on your laptop and talks to the
-Aquanode API to **rent a GPU, provision the [ogre](https://github.com/Aquanodeio/ogre)
+Aquanode API to **rent a GPU, provision the `ogre` (AGPL-3.0)
 on-box agent, and restore a snapshot** — turning the open-source `ogre` workflow into
 one-command Aquanode deploys.
 
@@ -52,7 +52,7 @@ aq down my-box                    # tear it down and stop billing
 ```
 
 `aq` does the renting and provisioning; the durable snapshot/restore that backs it is
-the open-source [ogre](https://github.com/Aquanodeio/ogre) agent it installs on the box.
+the open-source `ogre` (AGPL-3.0) agent it installs on the box.
 
 ## SSH
 
@@ -108,7 +108,7 @@ linux/darwin × amd64/arm64 binaries and publish the Release.
 
 | | runs where | role | license |
 |---|---|---|---|
-| **ogre** | on the GPU box | OSS on-box agent: snapshot / restore / pause / resume / up | [AGPL-3.0](https://github.com/Aquanodeio/ogre/blob/main/LICENSE) |
+| **ogre** | on the GPU box | OSS on-box agent: snapshot / restore / pause / resume / up | AGPL-3.0 (full license text ships inside the ogre distribution on the box) |
 | **aq**   | your laptop    | control CLI: login / deploy / up (wraps ogre + Aquanode API) | [Apache-2.0](LICENSE) |
 
 `aq` is intentionally **permissive (Apache-2.0)**: it's the convenience layer that drives
@@ -121,13 +121,13 @@ strong-copyleft **AGPL-3.0** so it can never be taken closed.
 - **`aq` stays open and Apache-2.0.** We won't relicense already-released code out from
   under you, and we won't move the open CLI behind a paywall.
 - **You're never locked into `aq`.** `aq` is a convenience wrapper. The durable value —
-  snapshot, restore, BYO-bucket — lives in the open-source [ogre](https://github.com/Aquanodeio/ogre)
+  snapshot, restore, BYO-bucket — lives in the open-source `ogre` (AGPL-3.0)
   agent, which works **standalone on any GPU box** without `aq` or an Aquanode account.
 - **BYO-bucket is forever.** Snapshots taken via this flow go to a bucket *you* own
   (through ogre); any hosted convenience is strictly additive and opt-in.
 
 If we ever add paid services, they sit *on top of* these open primitives, not in place of
-them. (ogre's matching commitment lives in its [README](https://github.com/Aquanodeio/ogre#our-promise--no-rug-pull).)
+them. ogre carries this same no-rug-pull commitment.
 
 ## Contributing
 
