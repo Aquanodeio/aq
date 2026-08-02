@@ -1,8 +1,10 @@
 name: Release
 
 # On a version tag (v*), build the cross-platform `aq` binaries with GoReleaser
-# and publish them as a GitHub Release on this repo. scripts/install.sh then
-# fetches the matching tarball for a `curl … | sh` install.
+# and publish them as a GitHub Release on the SEPARATE public repo
+# Aquanodeio/aq-releases (this repo, Aquanodeio/aq, stays private — see
+# GITHUB_TOKEN below). scripts/install.sh fetches the matching tarball from
+# that same aq-releases repo for a `curl … | sh` install.
 on:
   push:
     tags:
