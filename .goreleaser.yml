@@ -53,12 +53,15 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
 
+# The release workflow always runs `goreleaser release --release-notes
+# <file>` (scripts/release-notes.sh generates the file), which supplies the
+# release body outright and skips this pipe entirely. Disabled explicitly so
+# there's exactly one changelog mechanism rather than two that can disagree —
+# goreleaser's own template-based changelog has no way to strip the `(#N)`
+# PR/issue refs that dangle-link on the public aq-releases repo (ticket #460
+# A4), which is why release-notes.sh exists.
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+  disable: true
 
 release:
   github:

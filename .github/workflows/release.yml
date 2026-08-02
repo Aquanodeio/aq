@@ -1,15 +1,23 @@
 name: Release
 
 # On a version tag (v*), build the cross-platform `aq` binaries with GoReleaser
-# and publish them as a GitHub Release on this repo. scripts/install.sh then
-# fetches the matching tarball for a `curl … | sh` install.
+# and publish them as a GitHub Release on the SEPARATE public repo
+# Aquanodeio/aq-releases (this repo, Aquanodeio/aq, stays private — see
+# GITHUB_TOKEN below). scripts/install.sh fetches the matching tarball from
+# that same aq-releases repo for a `curl … | sh` install.
 on:
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  # This job never writes to Aquanodeio/aq via the default GITHUB_TOKEN — the
+  # only publish step (GoReleaser, below) supplies its own cross-repo
+  # credential via RELEASES_PAT, targeting the separate Aquanodeio/aq-releases
+  # repo. `contents: read` is enough for actions/checkout. If a release run
+  # ever fails, that's not a reason to "fix" this back to write — trace the
+  # actual failure first.
+  contents: read
 
 jobs:
   release:
@@ -25,12 +33,22 @@ jobs:
         with:
           go-version: "1.22"
 
+      - name: Generate release notes
+        # goreleaser's own changelog template has no way to strip the `(#N)`
+        # PR/issue refs from commit subjects (ticket #460 A4) — those refs
+        # dangle-link on the public aq-releases repo since the numbered
+        # issues/PRs live in this (private) repo. Generate the notes
+        # ourselves and hand them to goreleaser via --release-notes, which
+        # skips goreleaser's changelog generation outright (see
+        # .goreleaser.yml's `changelog.disable`).
+        run: ./scripts/release-notes.sh /tmp/release-notes.md
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes /tmp/release-notes.md
         env:
           # Publishing to Aquanodeio/aq-releases (a DIFFERENT repo), so the
           # default GITHUB_TOKEN is not enough — it is scoped to this repo only.
