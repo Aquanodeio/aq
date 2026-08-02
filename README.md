@@ -4,20 +4,19 @@
 [![DCO](https://img.shields.io/badge/contributions-DCO%20signed--off-green.svg)](CONTRIBUTING.md)
 
 `aq` is the Aquanode control / funnel CLI. It runs on your laptop and talks to the
-Aquanode API to **rent a GPU, provision the `ogre` (AGPL-3.0)
-on-box agent, and restore a snapshot** — turning the open-source `ogre` workflow into
-one-command Aquanode deploys.
+Aquanode API to **rent a GPU, provision it, and restore a snapshot** — turning a
+multi-step GPU rental into a one-command Aquanode deploy.
 
-It is a thin orchestration wrapper over `ogre` + the Aquanode API. It does **not**
-reimplement ogre.
+It is a thin orchestration wrapper over the Aquanode API and does not reimplement
+any of the box-side provisioning itself.
 
 ## Capabilities
 
 `aq` is a complete, production-ready CLI for managing Aquanode GPU deployments:
 
 - **`aq login`** — pair the CLI to your Aquanode account via device-login
-- **`aq up`** — rent the cheapest matching GPU, provision the ogre agent, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
-- **`aq deploy`** — restore an `ogre` snapshot onto a freshly-rented Aquanode GPU box
+- **`aq up`** — rent the cheapest matching GPU, provision it, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
+- **`aq deploy`** — restore a snapshot onto a freshly-rented Aquanode GPU box
 - **`aq ssh [name]`** — get a shell on a box: managed keypair, managed `~/.ssh/config` alias, zero setup
 - **`aq status <name|id>`** — check a deployment's status, provisioning progress, HTTPS URL, and credentials
 - **`aq down <name|id>`** — tear down a deployment and stop billing
@@ -45,14 +44,14 @@ Overrides: `AQ_VERSION` pins a release tag, `AQ_BIN_DIR` sets the install dir.
 
 ```sh
 aq login                          # pair this CLI to your Aquanode account (device-login)
-aq up --comfyui --name my-box     # rent a GPU, provision ogre, bring up a working env
+aq up --comfyui --name my-box     # rent a GPU, provision it, bring up a working env
 # → HTTPS URL printed when it's ready
 aq ssh my-box                     # get a shell on it
 aq down my-box                    # tear it down and stop billing
 ```
 
-`aq` does the renting and provisioning; the durable snapshot/restore that backs it is
-the open-source `ogre` (AGPL-3.0) agent it installs on the box.
+`aq` does the renting and provisioning; snapshot/restore is a durable, standalone
+capability of the box itself, so your data outlives any single `aq` session.
 
 ## SSH
 
@@ -104,30 +103,16 @@ Releases are cut by pushing a `v*` tag — `.github/workflows/release.yml` runs
 [GoReleaser](https://goreleaser.com) (`.goreleaser.yml`) to build the
 linux/darwin × amd64/arm64 binaries and publish the Release.
 
-## Relationship to ogre
-
-| | runs where | role | license |
-|---|---|---|---|
-| **ogre** | on the GPU box | OSS on-box agent: snapshot / restore / pause / resume / up | AGPL-3.0 (full license text ships inside the ogre distribution on the box) |
-| **aq**   | your laptop    | control CLI: login / deploy / up (wraps ogre + Aquanode API) | [Apache-2.0](LICENSE) |
-
-`aq` is intentionally **permissive (Apache-2.0)**: it's the convenience layer that drives
-Aquanode deploys, and we want it to be as frictionless to use, fork, and embed as possible.
-The OSS *wedge* — the part with real lock-in risk if it were closed — is `ogre`, which is
-strong-copyleft **AGPL-3.0** so it can never be taken closed.
-
 ## Our promise — no rug-pull
 
-- **`aq` stays open and Apache-2.0.** We won't relicense already-released code out from
-  under you, and we won't move the open CLI behind a paywall.
-- **You're never locked into `aq`.** `aq` is a convenience wrapper. The durable value —
-  snapshot, restore, BYO-bucket — lives in the open-source `ogre` (AGPL-3.0)
-  agent, which works **standalone on any GPU box** without `aq` or an Aquanode account.
-- **BYO-bucket is forever.** Snapshots taken via this flow go to a bucket *you* own
-  (through ogre); any hosted convenience is strictly additive and opt-in.
+- **`aq` stays Apache-2.0.** We won't relicense already-released code out from
+  under you, and we won't move the CLI behind a paywall. The `LICENSE` file ships
+  inside every release tarball alongside the binary.
+- **BYO-bucket is forever.** Snapshots taken via this flow go to a bucket *you* own;
+  any hosted convenience is strictly additive and opt-in.
 
-If we ever add paid services, they sit *on top of* these open primitives, not in place of
-them. ogre carries this same no-rug-pull commitment.
+If we ever add paid services, they sit *on top of* these commitments, not in place of
+them.
 
 ## Contributing
 
