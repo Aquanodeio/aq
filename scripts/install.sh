@@ -16,6 +16,8 @@
 #
 # Environment overrides (all optional):
 #   AQ_VERSION       pin a release tag (e.g. v0.1.0); default = latest published
+#   AQ_PRERELEASE    if set (e.g. 1), select the newest release INCLUDING
+#                     prereleases (-rc/-dev/-beta tags); default = stable only
 #   AQ_BIN_DIR       install dir for the binary (default /usr/local/bin, then ~/.local/bin)
 #   AQ_RELEASES_REPO owner/repo that hosts the release artifacts (default Aquanodeio/aq-releases)
 set -eu
@@ -70,11 +72,51 @@ if [ -n "${AQ_VERSION:-}" ] && [ "${AQ_VERSION}" != "latest" ]; then
   info "resolving aq release ${AQ_VERSION}"
   release_json="$(curl -fsSL "${API}/tags/${AQ_VERSION}")" \
     || err "release tag ${AQ_VERSION} not found in ${RELEASES_REPO}"
-else
-  info "resolving latest aq release from ${RELEASES_REPO}"
-  # Unauthenticated /releases excludes drafts, so per_page=1 = newest PUBLISHED release.
+elif [ -n "${AQ_PRERELEASE:-}" ]; then
+  info "resolving newest aq release (including prereleases) from ${RELEASES_REPO}"
+  # ?per_page=1 orders by creation date and excludes DRAFTS only — it happily
+  # returns a prerelease (-rc/-dev/-beta). That's exactly what AQ_PRERELEASE
+  # opts into, as an explicit escape hatch for testers.
   release_json="$(curl -fsSL "${API}?per_page=1")" \
     || err "could not query releases for ${RELEASES_REPO}"
+else
+  info "resolving latest stable aq release from ${RELEASES_REPO}"
+  # GitHub's /releases/latest excludes BOTH drafts and prereleases — it is the
+  # only endpoint that matches what "latest" means to a stable-install user,
+  # and it's also what the advertised `.../releases/latest/download/install.sh`
+  # URL resolves against, so the two must agree.
+  # It 404s if the repo has no non-prerelease releases at all (e.g. every tag
+  # published so far is an -rc); fall back to ?per_page=1 (newest of ANY kind,
+  # drafts excluded) only in that case, so the installer still works.
+  #
+  # A plain curl failure (network blip, DNS) and a 403 rate-limit or 5xx look
+  # IDENTICAL to a 404 if all we check is curl's exit status — but only a 404
+  # actually means "verifiably no stable release". A rate-limit/5xx/network
+  # error means "could not determine", and that must NOT fall into the same
+  # branch as "verifiably missing": silently falling back there would install
+  # an unverified prerelease exactly when we can least tell what's going on.
+  # So: fetch WITHOUT -f (to get the body+status on non-2xx too), capture the
+  # HTTP status explicitly, and only 404 gets the fallback — every other
+  # failure (403/5xx/network) is a hard error, never a silent downgrade.
+  latest_resp="$(curl -sS -L -w '\n%{http_code}' "${API}/latest")" && curl_rc=0 || curl_rc=$?
+  if [ "$curl_rc" -ne 0 ] || [ -z "${latest_resp:-}" ]; then
+    err "could not reach the GitHub API to resolve the latest release for ${RELEASES_REPO} (network error, curl exit ${curl_rc}) — refusing to fall back to an unverified release"
+  fi
+  latest_http_code="$(printf '%s\n' "$latest_resp" | tail -n1)"
+  latest_body="$(printf '%s\n' "$latest_resp" | sed '$d')"
+  case "$latest_http_code" in
+    200)
+      release_json="$latest_body"
+      ;;
+    404)
+      warn "${RELEASES_REPO} has no stable release yet — falling back to newest (may be a prerelease)"
+      release_json="$(curl -fsSL "${API}?per_page=1")" \
+        || err "could not query releases for ${RELEASES_REPO}"
+      ;;
+    *)
+      err "GitHub API returned HTTP ${latest_http_code} while resolving the latest release for ${RELEASES_REPO} — refusing to fall back to an unverified release (likely rate-limited or a transient error; retry, or pin an exact release with AQ_VERSION)"
+      ;;
+  esac
 fi
 
 tag="$(printf '%s' "$release_json" | grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*": *"//; s/"$//')"
