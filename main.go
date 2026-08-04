@@ -13,12 +13,19 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/Aquanodeio/aq/internal/api"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
 var version = "0.0.0-dev"
 
 func main() {
+	// Label every API request `aq/<version>` so the orchestrator can tell a CLI
+	// action from a scripted one. Set here rather than in the api package so the
+	// ldflags-injected version stays a main-package concern.
+	api.Version = version
+
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)

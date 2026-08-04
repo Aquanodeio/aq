@@ -40,6 +40,19 @@ func NewAuthed(baseURL, apiKey, teamID string) *Client {
 	return c
 }
 
+// Version is the aq build version. `main` overwrites it at startup from its own
+// ldflags-injected `version`, so this package can label its requests without
+// importing main.
+var Version = "0.0.0-dev"
+
+// setUserAgent identifies this caller to the orchestrator. Server-side product
+// analytics uses it to attribute an event to the CLI rather than to a generic
+// scripted API call — the API key alone is indistinguishable from `curl`. Keep
+// the `aq/` prefix: the orchestrator matches on it (`surfaceFromRequest`).
+func setUserAgent(req *http.Request) {
+	req.Header.Set("User-Agent", "aq/"+Version)
+}
+
 // setAuth attaches the auth headers when the client is authenticated. Sending
 // them on the public device endpoints is harmless (they are ignored there).
 func (c *Client) setAuth(req *http.Request) {
@@ -106,6 +119,7 @@ func (c *Client) getJSON(path string, out any) error {
 // the orchestrator's `{success,data,error}` envelope into out.
 func (c *Client) do(req *http.Request, out any) error {
 	c.setAuth(req)
+	setUserAgent(req)
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
