@@ -16,6 +16,8 @@
 #
 # Environment overrides (all optional):
 #   AQ_VERSION       pin a release tag (e.g. v0.1.0); default = latest published
+#   AQ_PRERELEASE    if set (e.g. 1), select the newest release INCLUDING
+#                     prereleases (-rc/-dev/-beta tags); default = stable only
 #   AQ_BIN_DIR       install dir for the binary (default /usr/local/bin, then ~/.local/bin)
 #   AQ_RELEASES_REPO owner/repo that hosts the release artifacts (default Aquanodeio/aq-releases)
 set -eu
@@ -70,11 +72,29 @@ if [ -n "${AQ_VERSION:-}" ] && [ "${AQ_VERSION}" != "latest" ]; then
   info "resolving aq release ${AQ_VERSION}"
   release_json="$(curl -fsSL "${API}/tags/${AQ_VERSION}")" \
     || err "release tag ${AQ_VERSION} not found in ${RELEASES_REPO}"
-else
-  info "resolving latest aq release from ${RELEASES_REPO}"
-  # Unauthenticated /releases excludes drafts, so per_page=1 = newest PUBLISHED release.
+elif [ -n "${AQ_PRERELEASE:-}" ]; then
+  info "resolving newest aq release (including prereleases) from ${RELEASES_REPO}"
+  # ?per_page=1 orders by creation date and excludes DRAFTS only — it happily
+  # returns a prerelease (-rc/-dev/-beta). That's exactly what AQ_PRERELEASE
+  # opts into, as an explicit escape hatch for testers.
   release_json="$(curl -fsSL "${API}?per_page=1")" \
     || err "could not query releases for ${RELEASES_REPO}"
+else
+  info "resolving latest stable aq release from ${RELEASES_REPO}"
+  # GitHub's /releases/latest excludes BOTH drafts and prereleases — it is the
+  # only endpoint that matches what "latest" means to a stable-install user,
+  # and it's also what the advertised `.../releases/latest/download/install.sh`
+  # URL resolves against, so the two must agree.
+  # It 404s if the repo has no non-prerelease releases at all (e.g. every tag
+  # published so far is an -rc); fall back to ?per_page=1 (newest of ANY kind,
+  # drafts excluded) only in that case, so the installer still works.
+  if release_json="$(curl -fsSL "${API}/latest" 2>/dev/null)"; then
+    :
+  else
+    warn "${RELEASES_REPO} has no stable release yet — falling back to newest (may be a prerelease)"
+    release_json="$(curl -fsSL "${API}?per_page=1")" \
+      || err "could not query releases for ${RELEASES_REPO}"
+  fi
 fi
 
 tag="$(printf '%s' "$release_json" | grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*": *"//; s/"$//')"
