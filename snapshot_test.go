@@ -3,8 +3,7 @@ package main
 import "testing"
 
 // TestSnapshotFlagsParseInAnyOrder exercises the same any-order flag/positional
-// contract as `aq status`/`aq down` (#204) — flags may come before or after the
-// target.
+// contract as `aq status`/`aq down` — flags may come before or after the target.
 func TestSnapshotFlagsParseInAnyOrder(t *testing.T) {
 	for _, args := range [][]string{
 		{"2884", "--name", "before-upgrade"},

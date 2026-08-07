@@ -20,7 +20,9 @@ type snapshotOptions struct {
 }
 
 // parseSnapshotArgs parses `aq snapshot`'s flags and positional target, letting
-// them appear in any order (#204).
+// them appear in any order. Go's stdlib flag package stops parsing at the first
+// positional, so `aq snapshot 2884 --name x` would otherwise silently drop the
+// flag; parseInterspersed is the shared workaround every verb here uses.
 func parseSnapshotArgs(args []string) (snapshotOptions, error) {
 	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
 	name := fs.String("name", "", "label for this snapshot (default: aq-<deploymentId>)")
