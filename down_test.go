@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
@@ -98,5 +100,54 @@ func TestDownRequiresLogin(t *testing.T) {
 	err := down([]string{"4242"})
 	if err == nil || !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("expected not-logged-in error, got: %v", err)
+	}
+}
+
+// TestDownWithSnapshotAbortsTerminateWhenCheckpointFails is the safety property
+// --snapshot exists for: a failed save must leave the box running, never
+// terminated unsaved.
+func TestDownWithSnapshotAbortsTerminateWhenCheckpointFails(t *testing.T) {
+	closed := false
+	err := downWithCheckpoint(
+		downOptions{snapshot: true, out: &bytes.Buffer{}},
+		func(snapshotOptions) (api.CreateSnapshotResult, error) {
+			return api.CreateSnapshotResult{}, errors.New("ogre agent unreachable")
+		},
+		func(downOptions) error { closed = true; return nil },
+	)
+	if err == nil {
+		t.Fatal("want error when checkpoint fails")
+	}
+	if closed {
+		t.Fatal("terminate ran after a failed checkpoint — the box would be destroyed unsaved")
+	}
+}
+
+func TestDownWithSnapshotTerminatesAfterSuccessfulCheckpoint(t *testing.T) {
+	closed := false
+	err := downWithCheckpoint(
+		downOptions{snapshot: true, out: &bytes.Buffer{}},
+		func(snapshotOptions) (api.CreateSnapshotResult, error) {
+			return api.CreateSnapshotResult{SnapshotID: "snap_42"}, nil
+		},
+		func(downOptions) error { closed = true; return nil },
+	)
+	if err != nil || !closed {
+		t.Fatalf("err=%v closed=%v; want nil/true", err, closed)
+	}
+}
+
+func TestDownWithoutSnapshotSkipsCheckpoint(t *testing.T) {
+	checkpointed := false
+	_ = downWithCheckpoint(
+		downOptions{snapshot: false, out: &bytes.Buffer{}},
+		func(snapshotOptions) (api.CreateSnapshotResult, error) {
+			checkpointed = true
+			return api.CreateSnapshotResult{}, nil
+		},
+		func(downOptions) error { return nil },
+	)
+	if checkpointed {
+		t.Fatal("checkpoint ran without --snapshot")
 	}
 }
