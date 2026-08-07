@@ -47,6 +47,8 @@ func main() {
 		run(sshCmd(args))
 	case "status":
 		run(status(args))
+	case "snapshot":
+		run(snapshot(args))
 	case "down":
 		run(down(args))
 	case "logout":
@@ -80,6 +82,7 @@ Commands:
   deploy     Restore a snapshot onto a freshly-rented Aquanode GPU box
   ssh        Open a shell on a deployment (managed key + ~/.ssh/config alias)
   status     Show a deployment's status, HTTPS URL, and credentials
+  snapshot   Save a deployment's current state on demand
   down       Tear down a deployment (stop the rented GPU box)
   logout     Remove the stored CLI credential
   whoami     Show the current login state
@@ -118,10 +121,14 @@ ssh:
   work with that alias and no aq involved. If you have no SSH key at all, aq
   generates a passphrase-less one at ~/.ssh/aquanode_ed25519.
 
-status / down:
+status / snapshot / down:
   aq status <name|id>        Re-check a provisioning or running env
                              (add --show-secrets to print the password)
+  aq snapshot <name|id>      Save the env's current state on demand
+                             (--name <label>, --workspace <dir>)
   aq down <name|id>          Tear the env down and stop billing
+                             (--snapshot saves first; terminate is skipped
+                             if the save fails)
 
 Environment:
   AQ_API_URL      Aquanode API base (default https://server.aquanode.io/api/v1)

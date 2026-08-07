@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -236,4 +237,71 @@ func (c *Client) CloseDeployment(deploymentID int) (*CloseResult, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// CreateSnapshotRequest is the body of POST /snapshots/:deploymentId/create —
+// the managed one-shot save path. BackupID identifies the backup row this
+// snapshot belongs to (the orchestrator creates one on first use if it doesn't
+// already exist); it is not a deployment id.
+type CreateSnapshotRequest struct {
+	BackupID         string `json:"backup_id"`
+	WorkspaceDir     string `json:"workspace_dir"`
+	IncludeProcess   bool   `json:"include_process"`
+	IncludeWorkspace bool   `json:"include_workspace"`
+}
+
+// CreateSnapshotResult is the data returned by POST /snapshots/:deploymentId/create.
+// SnapshotID is the underlying restic snapshot id (a string, not a database row
+// id) — it identifies the capture, but restoring it goes through
+// `aq deploy --snapshot <deploymentId>` (the SOURCE deployment id), never
+// through this string.
+type CreateSnapshotResult struct {
+	SnapshotID string `json:"snapshot_id"`
+	Size       int64  `json:"size"`
+	Message    string `json:"message"`
+}
+
+// CreateSnapshot takes a one-shot snapshot of a managed deployment. This is the
+// managed path: the orchestrator drives the box's ogre agent and records the
+// snapshot against the deployment. It is deliberately NOT the standalone
+// `ogre snapshot` CLI, which is for boxes with no Aquanode deployment.
+func (c *Client) CreateSnapshot(deploymentID int, req CreateSnapshotRequest) (CreateSnapshotResult, error) {
+	var out CreateSnapshotResult
+	path := fmt.Sprintf("/snapshots/%d/create", deploymentID)
+	if err := c.postJSON(path, req, &out); err != nil {
+		return CreateSnapshotResult{}, err
+	}
+	return out, nil
+}
+
+// SnapshotHistoryBackup is the `backups` object nested on a history item,
+// carrying the source deployment this snapshot belongs to. It is nil for an
+// external/CLI snapshot (no Aquanode deployment).
+type SnapshotHistoryBackup struct {
+	DeploymentID int    `json:"deployment_id"`
+	Path         string `json:"path"`
+}
+
+// SnapshotHistoryItem mirrors one row of GET /snapshots/history. The top-level
+// BackupID is the internal backup ROW id — NOT a deployment id; a snapshot is
+// associated with its owning deployment via Backups.DeploymentID instead.
+type SnapshotHistoryItem struct {
+	ID        int                    `json:"id"`
+	BackupID  int                    `json:"backup_id"`
+	Path      string                 `json:"path"`
+	Status    string                 `json:"status"`
+	Size      int64                  `json:"size"`
+	Type      string                 `json:"type"`
+	CreatedAt string                 `json:"created_at"`
+	Backups   *SnapshotHistoryBackup `json:"backups"`
+}
+
+// SnapshotHistory lists every snapshot the account owns, including external/CLI
+// ones with no source deployment.
+func (c *Client) SnapshotHistory() ([]SnapshotHistoryItem, error) {
+	var out []SnapshotHistoryItem
+	if err := c.getJSON("/snapshots/history", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

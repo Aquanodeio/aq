@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
@@ -227,5 +229,40 @@ func TestStatusRequiresLogin(t *testing.T) {
 	err := status([]string{"4242"})
 	if err == nil || !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("expected not-logged-in error, got: %v", err)
+	}
+}
+
+// TestFormatLastSavedNeverWhenNoSnapshots is the honesty constraint: no
+// snapshot data must never render as a reassuring blank.
+func TestFormatLastSavedNeverWhenNoSnapshots(t *testing.T) {
+	if got := formatLastSaved(nil, 2884, time.Now()); got != "never saved" {
+		t.Errorf("got %q, want %q", got, "never saved")
+	}
+}
+
+// TestFormatLastSavedUsesMostRecentForThatDeployment checks the match key: a
+// history item's owning deployment lives under Backups.DeploymentID, not the
+// top-level BackupID (that's the internal backup row id, not a deployment id).
+func TestFormatLastSavedUsesMostRecentForThatDeployment(t *testing.T) {
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	items := []api.SnapshotHistoryItem{
+		{ID: 1, BackupID: 7, CreatedAt: "2026-08-07T09:00:00Z", Backups: &api.SnapshotHistoryBackup{DeploymentID: 2884}},
+		{ID: 2, BackupID: 7, CreatedAt: "2026-08-07T11:30:00Z", Backups: &api.SnapshotHistoryBackup{DeploymentID: 2884}},
+		{ID: 3, BackupID: 3, CreatedAt: "2026-08-07T11:59:00Z", Backups: &api.SnapshotHistoryBackup{DeploymentID: 9999}},
+	}
+	if got := formatLastSaved(items, 2884, now); got != "30m ago" {
+		t.Errorf("got %q, want %q", got, "30m ago")
+	}
+}
+
+// TestFormatLastSavedIgnoresExternalSnapshots checks an external/CLI snapshot
+// (Backups == nil, no source deployment) never matches any deployment id.
+func TestFormatLastSavedIgnoresExternalSnapshots(t *testing.T) {
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	items := []api.SnapshotHistoryItem{
+		{ID: 1, BackupID: 2884, CreatedAt: "2026-08-07T09:00:00Z", Backups: nil},
+	}
+	if got := formatLastSaved(items, 2884, now); got != "never saved" {
+		t.Errorf("got %q, want %q", got, "never saved")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
@@ -82,6 +83,7 @@ func runStatus(opts statusOptions) error {
 		state = "UNKNOWN"
 	}
 	fmt.Fprintf(opts.out, "Deployment #%d: %s\n", deploymentID, state)
+	fmt.Fprintf(opts.out, "Last saved: %s\n", lastSavedLabel(client, deploymentID))
 
 	dep := withID(res.Deployment, deploymentID)
 
@@ -133,4 +135,51 @@ func requireLogin() (*config.Credential, error) {
 		return nil, errors.New("not logged in — run `aq login` first")
 	}
 	return cred, nil
+}
+
+// lastSavedLabel renders the deployment's true last-saved age for `aq status`.
+// A failed history lookup degrades to "unknown" rather than failing the whole
+// status command — the deployment's own status is still worth showing even if
+// snapshot history is temporarily unreachable.
+func lastSavedLabel(client *api.Client, deploymentID int) string {
+	items, err := client.SnapshotHistory()
+	if err != nil {
+		return "unknown"
+	}
+	return formatLastSaved(items, deploymentID, time.Now())
+}
+
+// formatLastSaved renders the true age of the most recent snapshot for a
+// deployment, or "never saved". It must never imply continuous protection:
+// automated snapshots are opt-in and nothing schedules them at deploy time.
+//
+// A history item's owning deployment lives under Backups.DeploymentID — the
+// top-level BackupID is the internal backup ROW id, not a deployment id, and an
+// external/CLI snapshot (Backups == nil) never matches any deployment.
+func formatLastSaved(items []api.SnapshotHistoryItem, deploymentID int, now time.Time) string {
+	var newest time.Time
+	for _, it := range items {
+		if it.Backups == nil || it.Backups.DeploymentID != deploymentID {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, it.CreatedAt)
+		if err != nil {
+			continue
+		}
+		if t.After(newest) {
+			newest = t
+		}
+	}
+	if newest.IsZero() {
+		return "never saved"
+	}
+	d := now.Sub(newest).Round(time.Minute)
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }

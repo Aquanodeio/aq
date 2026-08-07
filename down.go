@@ -17,18 +17,29 @@ import (
 // downOptions configures runDown. down() fills in the real environment; tests
 // inject a base URL and a buffer writer.
 type downOptions struct {
-	cred   *config.Credential
-	target string // deployment id, name, or project id (resolved by runDown)
-	out    io.Writer
-	errOut io.Writer
+	cred     *config.Credential
+	target   string // deployment id, name, or project id (resolved by runDown)
+	snapshot bool   // save the deployment before terminating it
+	out      io.Writer
+	errOut   io.Writer
 }
 
-// down parses the deployment target and wires the real environment into runDown.
+// down parses flags/the deployment target and wires the real environment into
+// downWithCheckpoint.
 //
 // `aq down <deploymentId>` tears down an env brought up by `aq up` / `aq deploy`,
-// stopping the rented GPU box and its billing.
+// stopping the rented GPU box and its billing. `--snapshot` saves it first —
+// terminate is skipped entirely if that save fails, so the flag can never
+// destroy an unsaved box.
 func down(args []string) error {
-	target, err := parseDeploymentTarget(args, "down")
+	fs := flag.NewFlagSet("down", flag.ContinueOnError)
+	snap := fs.Bool("snapshot", false, "save your setup before terminating")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+
+	target, err := parseDeploymentTarget(positional, "down")
 	if err != nil {
 		return err
 	}
@@ -38,12 +49,60 @@ func down(args []string) error {
 		return err
 	}
 
-	return runDown(downOptions{
-		cred:   cred,
-		target: target,
-		out:    os.Stdout,
-		errOut: os.Stderr,
-	})
+	opts := downOptions{
+		cred:     cred,
+		target:   target,
+		snapshot: *snap,
+		out:      os.Stdout,
+		errOut:   os.Stderr,
+	}
+
+	if opts.snapshot {
+		// Resolve to the numeric deployment id up front so the printed restore
+		// command (aq deploy --snapshot <id>) is always something `aq deploy`
+		// actually accepts, not a --name or a project UUID.
+		client := newControlClient(cred)
+		id, err := resolveDeploymentID(client, opts.target, "down")
+		if err != nil {
+			return err
+		}
+		opts.target = strconv.Itoa(id)
+	}
+
+	return downWithCheckpoint(opts, runSnapshot, runDown)
+}
+
+// downWithCheckpoint sequences an optional checkpoint before termination. A
+// failed checkpoint ABORTS the terminate: destroying a box whose save just
+// failed is the one outcome --snapshot exists to prevent. checkpoint and
+// terminate are injected so this control flow is testable without a live box.
+func downWithCheckpoint(
+	opts downOptions,
+	checkpoint func(snapshotOptions) (api.CreateSnapshotResult, error),
+	terminate func(downOptions) error,
+) error {
+	out := opts.out
+	if out == nil {
+		out = os.Stdout
+	}
+
+	if opts.snapshot {
+		fmt.Fprintln(out, "Saving your setup before terminating…")
+		res, err := checkpoint(snapshotOptions{
+			cred:         opts.cred,
+			target:       opts.target,
+			workspaceDir: "/workspace",
+		})
+		if err != nil {
+			return fmt.Errorf("save failed, so the deployment was NOT terminated (it is still running): %w", err)
+		}
+		fmt.Fprintf(out, "✓ Saved — snapshot %s\n", res.SnapshotID)
+		defer func() {
+			fmt.Fprintf(out, "\nPick up where you left off with:\n  aq deploy --snapshot %s\n", opts.target)
+		}()
+	}
+
+	return terminate(opts)
 }
 
 // runDown requests termination of the deployment and reports the outcome.
