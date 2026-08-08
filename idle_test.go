@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
@@ -219,13 +220,14 @@ func TestRunIdleSetSendsOnlySuppliedFieldsOverTheWire(t *testing.T) {
 			t.Errorf("expected PUT, got %s", r.Method)
 		}
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		// PUT /idle-policy's real response carries no "state"/"idleMinutes" —
+		// the orchestrator only computes a live verdict on GET. Omitting them
+		// here matches production and is what TestRunIdleSetOmitsStateLine pins.
 		writeData(w, map[string]any{
 			"warnAfterMinutes":        30,
 			"actAfterMinutes":         60,
 			"gpuIdleThresholdPercent": 5,
 			"autoStopEnabled":         true,
-			"state":                   "ACTIVE",
-			"idleMinutes":             0,
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -245,6 +247,63 @@ func TestRunIdleSetSendsOnlySuppliedFieldsOverTheWire(t *testing.T) {
 		if _, ok := gotBody[unset]; ok {
 			t.Errorf("did not expect %q in request body (flag was never passed); got: %v", unset, gotBody)
 		}
+	}
+}
+
+// TestRunIdleSetOmitsStateLine pins the fix for the empty "state" line: the
+// PUT /idle-policy response has no state field (the orchestrator never
+// computes a live verdict on write), so `aq idle set`'s output must not
+// print a "state" line at all — printing one with nothing after it is worse
+// than not printing it.
+func TestRunIdleSetOmitsStateLine(t *testing.T) {
+	mux := http.NewServeMux()
+	stubDeploymentList(mux)
+	mux.HandleFunc("/deployments/4242/idle-policy", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{
+			"warnAfterMinutes":        30,
+			"actAfterMinutes":         60,
+			"gpuIdleThresholdPercent": 5,
+			"autoStopEnabled":         true,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	warn := 30
+	var out bytes.Buffer
+	opts := idleSetOptions{cred: cred, target: "4242", warnAfter: &warn, out: &out}
+	if err := runIdleSet(opts); err != nil {
+		t.Fatalf("runIdleSet error: %v", err)
+	}
+
+	got := out.String()
+	if strings.Contains(got, "state") {
+		t.Errorf("expected no state line in `aq idle set` output; got:\n%s", got)
+	}
+	for _, want := range []string{"30m", "1h", "enabled", "5%"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("idle set output missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// TestPrintIdlePolicySettingsOmitsState is a narrower unit test on the
+// renderer itself: even if a caller passes a populated State field, the
+// settings-only renderer used by `aq idle set` must never print it — only
+// printIdlePolicy (used by `aq idle status`) renders live state.
+func TestPrintIdlePolicySettingsOmitsState(t *testing.T) {
+	var out bytes.Buffer
+	printIdlePolicySettings(&out, api.IdlePolicy{
+		WarnAfterMinutes:        30,
+		ActAfterMinutes:         60,
+		GPUIdleThresholdPercent: 5,
+		AutoStopEnabled:         true,
+		State:                   "ACTIVE",
+		IdleMinutes:             0,
+	})
+	if strings.Contains(out.String(), "state") {
+		t.Errorf("printIdlePolicySettings must never print a state line; got:\n%s", out.String())
 	}
 }
 
