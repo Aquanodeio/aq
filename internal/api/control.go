@@ -51,6 +51,12 @@ type UpRequest struct {
 	// a stable `ticket-<N>-<label>` here lets the session-scoped reaper attribute
 	// and clean up a throwaway box that would otherwise bill as an orphan (#310).
 	Name string `json:"name,omitempty"`
+	// IdlePolicy opts a fresh deployment into idle-auto-stop at creation time.
+	// Nil (the Go zero value for a pointer) omits the key entirely — the console
+	// shows a visible, pre-checked box a user can see and untick, but the CLI has
+	// no such surface, so silence here must mean "no opinion, use the
+	// orchestrator's defaults," never "explicitly off."
+	IdlePolicy *IdlePolicyUpdate `json:"idlePolicy,omitempty"`
 }
 
 // UpResult is the data returned by POST /deployments/up.
