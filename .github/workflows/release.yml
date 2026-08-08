@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.26.5"
 
       - name: Generate release notes
         # goreleaser's own changelog template has no way to strip the `(#N)`
