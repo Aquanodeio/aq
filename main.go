@@ -49,6 +49,8 @@ func main() {
 		run(status(args))
 	case "snapshot":
 		run(snapshot(args))
+	case "idle":
+		run(idle(args))
 	case "down":
 		run(down(args))
 	case "logout":
@@ -83,6 +85,7 @@ Commands:
   ssh        Open a shell on a deployment (managed key + ~/.ssh/config alias)
   status     Show a deployment's status, HTTPS URL, and credentials
   snapshot   Save a deployment's current state on demand
+  idle       View or change a deployment's idle-auto-stop policy
   down       Tear down a deployment (stop the rented GPU box)
   logout     Remove the stored CLI credential
   whoami     Show the current login state
@@ -96,6 +99,9 @@ up flags:
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
+  --auto-stop        Enable idle auto-stop on this deployment (off by default)
+  --warn-after <duration>  With --auto-stop: warn after this much idle time
+  --stop-after <duration>  With --auto-stop: auto-stop after this much idle time
 
 deploy flags:
   --snapshot <id>    Snapshot to deploy (id from aq / the console, e.g. ext-42)
@@ -120,6 +126,16 @@ ssh:
   "aq-<name>" alias per live box, so ssh, scp, rsync, and VSCode Remote-SSH all
   work with that alias and no aq involved. If you have no SSH key at all, aq
   generates a passphrase-less one at ~/.ssh/aquanode_ed25519.
+
+idle:
+  aq idle status <name|id>   Show the deployment's idle-auto-stop policy and
+                              its current live verdict (ACTIVE / IDLE / UNKNOWN)
+  aq idle set <name|id>      Update the policy (only the flags you pass change)
+
+  --warn-after <duration>   Warn after this much idle time, e.g. 30m, 1h
+  --stop-after <duration>   Auto-stop after this much idle time, e.g. 1h
+  --gpu-threshold <percent> GPU utilization below which the box counts idle
+  --on / --off              Enable / disable idle auto-stop
 
 status / snapshot / down:
   aq status <name|id>        Re-check a provisioning or running env

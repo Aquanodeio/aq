@@ -21,7 +21,8 @@ type upServer struct {
 	keys          []map[string]any // existing ssh keys
 	created       map[string]any   // last created key body
 	upBody        UpBodyCapture
-	statusReadyAt int32 // status polls before the service URL appears
+	rawUpBody     map[string]any // the full decoded POST /deployments/up body, for key-presence checks
+	statusReadyAt int32          // status polls before the service URL appears
 	statusPolls   int32
 	lastAPIKey    string
 	lastTeamID    string
@@ -61,6 +62,7 @@ func (s *upServer) handler() http.Handler {
 		s.lastTeamID = r.Header.Get("x-team-id")
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		s.rawUpBody = body
 		s.upBody = UpBodyCapture{
 			Template: str(body["template"]),
 			SSHKeyID: str(body["sshKeyId"]),
@@ -264,6 +266,126 @@ func TestRunUpThreadsName(t *testing.T) {
 		t.Errorf("up should send the --name in the request body, got %q", server.upBody.Name)
 	}
 }
+
+// TestRunUpNoIdleFlagsOmitsIdlePolicyKey is the default-off contract: a plain
+// `aq up` with none of --auto-stop/--warn-after/--stop-after passed must send
+// no "idlePolicy" key at all — not an idlePolicy object with
+// autoStopEnabled:false. The console can default its checkbox on because the
+// user can see and untick it; the CLI has no such surface, so silence must
+// mean "no opinion," never an explicit off.
+func TestRunUpNoIdleFlagsOmitsIdlePolicyKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	server := &upServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 2,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+
+	var out, errOut bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+		now:          time.Now,
+	})
+	if err != nil {
+		t.Fatalf("runUp error: %v", err)
+	}
+	if _, ok := server.rawUpBody["idlePolicy"]; ok {
+		t.Errorf("expected no idlePolicy key when no idle flags were passed; got body: %v", server.rawUpBody)
+	}
+}
+
+// TestRunUpAutoStopSendsIdlePolicy checks --auto-stop (plus --warn-after /
+// --stop-after) builds an idlePolicy object carrying only the fields the user
+// actually passed.
+func TestRunUpAutoStopSendsIdlePolicy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	server := &upServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 2,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	warn := 30
+	idlePolicy := &api.IdlePolicyUpdate{AutoStopEnabled: boolPtr(true), WarnAfterMinutes: &warn}
+
+	var out, errOut bytes.Buffer
+	err := runUp(upOptions{
+		cred:         cred,
+		template:     templateComfyUI,
+		idlePolicy:   idlePolicy,
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+		now:          time.Now,
+	})
+	if err != nil {
+		t.Fatalf("runUp error: %v", err)
+	}
+	got, ok := server.rawUpBody["idlePolicy"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected an idlePolicy object in the request body; got: %v", server.rawUpBody)
+	}
+	if got["autoStopEnabled"] != true {
+		t.Errorf("expected autoStopEnabled:true, got %v", got)
+	}
+	if got["warnAfterMinutes"] != float64(30) {
+		t.Errorf("expected warnAfterMinutes:30, got %v", got)
+	}
+	if _, ok := got["actAfterMinutes"]; ok {
+		t.Errorf("did not expect actAfterMinutes (--stop-after was never passed); got: %v", got)
+	}
+	if _, ok := got["gpuIdleThresholdPercent"]; ok {
+		t.Errorf("did not expect gpuIdleThresholdPercent (--gpu-threshold isn't exposed on `aq up`); got: %v", got)
+	}
+}
+
+// TestBuildUpIdlePolicy covers the flag-to-body construction directly: nil
+// when nothing was passed, only-supplied-fields otherwise, and the
+// client-side warn < stop guard.
+func TestBuildUpIdlePolicy(t *testing.T) {
+	p, err := buildUpIdlePolicy(false, "", "")
+	if err != nil || p != nil {
+		t.Fatalf("expected nil idlePolicy with no flags, got %v, err %v", p, err)
+	}
+
+	p, err = buildUpIdlePolicy(true, "", "")
+	if err != nil {
+		t.Fatalf("buildUpIdlePolicy error: %v", err)
+	}
+	if p == nil || p.AutoStopEnabled == nil || *p.AutoStopEnabled != true {
+		t.Fatalf("expected autoStopEnabled=true, got %+v", p)
+	}
+	if p.WarnAfterMinutes != nil || p.ActAfterMinutes != nil {
+		t.Errorf("expected warn/stop to stay nil when not passed, got %+v", p)
+	}
+
+	if _, err := buildUpIdlePolicy(false, "1h", "1h"); err == nil || !strings.Contains(err.Error(), "must be less than") {
+		t.Fatalf("expected warn<stop validation error, got: %v", err)
+	}
+
+	if _, err := buildUpIdlePolicy(false, "not-a-duration", ""); err == nil {
+		t.Fatal("expected a duration parse error")
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
 
 func TestRunUpHappyPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

@@ -115,6 +115,19 @@ func (c *Client) getJSON(path string, out any) error {
 	return c.do(req, out)
 }
 
+func (c *Client) putJSON(path string, body any, out any) error {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPut, c.BaseURL+path, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, out)
+}
+
 // do sends a prepared request (attaching auth + JSON content type) and decodes
 // the orchestrator's `{success,data,error}` envelope into out.
 func (c *Client) do(req *http.Request, out any) error {
