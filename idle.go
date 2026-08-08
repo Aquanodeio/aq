@@ -91,6 +91,15 @@ func runIdleStatus(opts idleStatusOptions) error {
 // busy, or trust auto-stop on a box it can't currently see).
 func printIdlePolicy(out io.Writer, p api.IdlePolicy) {
 	fmt.Fprintf(out, "state       %s\n", idleStateLabel(p.State, p.IdleMinutes))
+	printIdlePolicySettings(out, p)
+}
+
+// printIdlePolicySettings renders the policy fields that both GET and PUT
+// idle-policy responses carry: warn/stop thresholds, enabled flag, GPU idle
+// threshold. It deliberately excludes the live state/idleMinutes verdict —
+// see printIdlePolicy for that, and runIdleSet for why the write path never
+// has one to print.
+func printIdlePolicySettings(out io.Writer, p api.IdlePolicy) {
 	fmt.Fprintf(out, "warn after  %s\n", formatMinutes(p.WarnAfterMinutes))
 	enabled := "disabled"
 	if p.AutoStopEnabled {
@@ -259,7 +268,13 @@ func idleSet(args []string) error {
 	return runIdleSet(opts)
 }
 
-// runIdleSet applies the update and prints the resulting policy.
+// runIdleSet applies the update and prints the resulting settings.
+//
+// It prints only the policy fields (warn/stop/threshold/enabled), never a
+// "state" line: PUT /idle-policy never computes a live idle verdict (that
+// requires the last several hours of usage samples, which the write path
+// doesn't fetch) — the field is genuinely absent from the response, not just
+// unrendered. `aq idle status` is the command that reports live state.
 func runIdleSet(opts idleSetOptions) error {
 	out := opts.out
 	if out == nil {
@@ -283,6 +298,6 @@ func runIdleSet(opts idleSetOptions) error {
 	}
 
 	fmt.Fprintf(out, "✓ Updated idle policy for deployment #%d\n\n", deploymentID)
-	printIdlePolicy(out, *policy)
+	printIdlePolicySettings(out, *policy)
 	return nil
 }
