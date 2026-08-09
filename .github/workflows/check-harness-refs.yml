@@ -1,0 +1,29 @@
+name: Harness Refs Guard
+
+# Fails when a PR adds a NEW reference to a workspace-root (harness) artifact
+# — an unqualified "#N" citation, queue/tickets.md, .plans/, .specs/, or a
+# "root CLAUDE.md" pointer — to this repo's own tracked source. See
+# scripts/check-harness-refs.sh for the full background: this repo is cloned
+# and built independently of the aquanode workspace, so any such citation is
+# permanently dangling to anyone who clones it alone. A README shipped in
+# this repo's own release tarball (GoReleaser bundles LICENSE + README.md
+# alongside the binary), so a stray reference here isn't even confined to
+# developers. Runs on every PR (not path-filtered) since the offending
+# pattern can land in any file, not just a known subset.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: check-harness-refs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for new harness (workspace-root) artifact references
+        run: bash scripts/check-harness-refs.sh
