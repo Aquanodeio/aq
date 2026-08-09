@@ -56,6 +56,10 @@ SELF_REL="scripts/$(basename "${BASH_SOURCE[0]}")"
 MATCHER_REL="scripts/lib/harness-refs-matcher.py"
 BASELINE_REL="scripts/.harness-refs-baseline.txt"
 BASELINE_FILE="${REPO_ROOT}/${BASELINE_REL}"
+# The workflow file that invokes this guard necessarily DESCRIBES the
+# patterns it checks for (e.g. names "queue/tickets.md" in a comment) —
+# exclude it too, same rationale as excluding this script's own source.
+WORKFLOW_REL=".github/workflows/check-harness-refs.yml"
 
 # Tracked files only (gitignored/generated output never trips this), minus
 # lockfiles/vendor/node_modules/this guard's own files. The matcher itself
@@ -63,7 +67,7 @@ BASELINE_FILE="${REPO_ROOT}/${BASELINE_REL}"
 matches="$(git ls-files -z -- . \
   ':!go.sum' ':!go.mod' \
   ':!vendor/**' ':!node_modules/**' \
-  ":!${SELF_REL}" ":!${MATCHER_REL}" ":!${BASELINE_REL}" \
+  ":!${SELF_REL}" ":!${MATCHER_REL}" ":!${BASELINE_REL}" ":!${WORKFLOW_REL}" \
   | python3 "$MATCHER" || true)"
 
 declare -A baseline_keys=()
