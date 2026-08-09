@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # release-notes.sh — generate the body for a GitHub Release, fed to goreleaser
-# via `--release-notes <file>` (which skips goreleaser's own changelog pipe
-# entirely — see .goreleaser.yml's `changelog.disable`).
+# via `--release-notes <file>`. The changelog pipe in .goreleaser.yml MUST stay
+# enabled (disable: false) because it is what loads this file; disabling the
+# pipe means the flag is silently ignored and the release body comes out EMPTY.
 #
-# Why this exists (workspace ticket #460 A4): goreleaser's built-in changelog
-# renders raw commit subjects verbatim, e.g.
+# Why this exists: goreleaser's built-in changelog renders raw commit subjects
+# verbatim, e.g.
 #   Merge pull request #21 from Aquanodeio/ticket-422-aq-ssh
 #   feat: aq ssh — managed keypair (#422)
 # Those trailing `(#N)` / `Merge pull request #N` refs point at issues/PRs in
@@ -53,10 +54,10 @@ fi
 		# 1. Drop a trailing " (#N)" ref entirely (the common `git squash`/
 		#    PR-title-carried-into-subject case, e.g. "feat: foo (#22)").
 		sed -E 's/[[:space:]]*\(#[0-9]+\)[[:space:]]*$//' |
-		# 2. Any other bare "#N" mid-subject (e.g. "resolves ticket #423" —
-		#    that #423 is this workspace's internal ticket number, not a
-		#    GitHub issue, but GitHub autolinks it identically and it still
-		#    404s on the public repo) — de-hash it so it can't autolink,
+		# 2. Any other bare "#N" mid-subject (e.g. "resolves internal ticket #N" —
+		#    these are internal reference numbers, not GitHub issues, but
+		#    GitHub autolinks them identically and they still 404 on the public
+		#    repo) — de-hash it so it can't autolink,
 		#    keeping the number for readability.
 		sed -E 's/#([0-9]+)/\1/g' |
 		awk -F'\t' '{ printf "* %s %s\n", $1, $2 }'

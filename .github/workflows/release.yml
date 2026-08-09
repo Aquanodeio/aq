@@ -34,13 +34,15 @@ jobs:
           go-version: "1.26.5"
 
       - name: Generate release notes
-        # goreleaser's own changelog template has no way to strip the `(#N)`
-        # PR/issue refs from commit subjects (ticket #460 A4) — those refs
+        # Generate release notes to strip `(#N)` PR/issue refs — those refs
         # dangle-link on the public aq-releases repo since the numbered
-        # issues/PRs live in this (private) repo. Generate the notes
-        # ourselves and hand them to goreleaser via --release-notes, which
-        # skips goreleaser's changelog generation outright (see
-        # .goreleaser.yml's `changelog.disable`).
+        # issues/PRs live in this (private) repo. goreleaser's built-in
+        # changelog template has no way to strip these refs, so we generate
+        # notes ourselves and pass them via --release-notes. The changelog pipe
+        # in .goreleaser.yml MUST stay enabled (disable: false) because it is
+        # what loads this file; disabling the pipe means the flag is silently
+        # ignored and the release body comes out EMPTY (shipped that way in
+        # v0.2.1). See .goreleaser.yml and scripts/release-notes.sh.
         run: ./scripts/release-notes.sh /tmp/release-notes.md
 
       - name: Run GoReleaser
