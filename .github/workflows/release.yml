@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.5"
+          go-version-file: go.mod
 
       - name: Generate release notes
         # Generate release notes to strip `(#N)` PR/issue refs — those refs
