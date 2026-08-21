@@ -3,6 +3,9 @@ contact_links:
   - name: Security report (private)
     url: https://github.com/Aquanodeio/aq/security/advisories/new
     about: Do NOT open a public issue for a vulnerability — report it privately here.
-  - name: ogre (the on-box agent)
-    url: https://github.com/Aquanodeio/ogre
-    about: Snapshot/restore behavior lives in ogre. File on-box issues there.
+  - name: Aquanode docs
+    url: https://docs.aquanode.io
+    about: Guides for deploys, snapshots, pause/resume, and the API the CLI talks to.
+  - name: Aquanode support
+    url: https://aquanode.io
+    about: Account, billing, or a problem with a running box rather than with the CLI.

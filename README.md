@@ -3,12 +3,22 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![DCO](https://img.shields.io/badge/contributions-DCO%20signed--off-green.svg)](CONTRIBUTING.md)
 
-`aq` is the Aquanode control / funnel CLI. It runs on your laptop and talks to the
-Aquanode API to **rent a GPU, provision it, and restore a snapshot** — turning a
-multi-step GPU rental into a one-command Aquanode deploy.
+`aq` is the command-line client for **[Aquanode](https://www.aquanode.io)**. It runs on
+your laptop and talks to the Aquanode API to **rent a GPU, provision it, and restore a
+snapshot** — turning a multi-step GPU rental into a one-command deploy.
 
 It is a thin orchestration wrapper over the Aquanode API and does not reimplement
 any of the box-side provisioning itself.
+
+**What Aquanode is:** a GPU cloud where your *environment* survives. Stop a box and
+your packages, model weights, custom nodes and config are still there when you come
+back — on the same provider or a different one. If you have ever reinstalled the same
+ComfyUI custom nodes at the start of every session, that is the problem it exists for.
+Aquanode prices GPUs across many providers in one place, so `aq up` rents the cheapest
+box that matches what you asked for.
+
+Docs: **[docs.aquanode.io](https://docs.aquanode.io/docs)** · Live GPU pricing:
+**[aquanode.io/gpu-index](https://www.aquanode.io/gpu-index)**
 
 ## Capabilities
 
@@ -39,6 +49,12 @@ aq login     # pair the CLI to your Aquanode account
 ```
 
 Overrides: `AQ_VERSION` pins a release tag, `AQ_BIN_DIR` sets the install dir.
+
+Or, with a Go toolchain (1.26+):
+
+```sh
+go install github.com/Aquanodeio/aq@latest
+```
 
 ## Quickstart — the one-command deploy
 

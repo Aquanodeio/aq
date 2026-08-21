@@ -18,7 +18,7 @@
 ## Checklist
 
 - [ ] Commits are signed off (`git commit -s`) per the [DCO](../DCO) — see [CONTRIBUTING.md](../CONTRIBUTING.md)
-- [ ] Kept `aq` thin — no on-box snapshot/restore logic that belongs in [ogre](https://github.com/Aquanodeio/ogre)
+- [ ] Kept `aq` thin — no on-box snapshot/restore logic that belongs in `ogre`
 - [ ] Updated `README.md` if behavior changed
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

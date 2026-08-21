@@ -54,7 +54,7 @@ change (or have the right to submit it) and agree it's contributed under the Apa
    go vet ./...
    go test ./...
    ```
-3. **Keep `aq` thin.** `aq` is a control wrapper over [`ogre`](https://github.com/Aquanodeio/ogre)
+3. **Keep `aq` thin.** `aq` is a control wrapper over `ogre`
    + the Aquanode API — it does **not** reimplement ogre. On-box snapshot/restore logic
    belongs in ogre; `aq` orchestrates renting a box and provisioning the agent.
 4. **Match the surrounding code.** Follow the existing style, keep changes focused, and
