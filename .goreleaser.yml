@@ -82,7 +82,7 @@ release:
   extra_files:
     - glob: ./scripts/install.sh
 
-  footer: >-
+  footer: |-
 
     ---
 
