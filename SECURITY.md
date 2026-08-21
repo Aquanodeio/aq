@@ -9,9 +9,9 @@ us keep it and its users safe.
 **Please do not report security vulnerabilities through public GitHub issues, discussions,
 or pull requests.**
 
-Email **hi@aquanode.io** with the details. The `aq` source repository is currently
-private, so GitHub security advisories are not reachable from outside the Aquanode
-org — email is the reporting channel.
+Report it privately through
+[GitHub security advisories](https://github.com/Aquanodeio/aq/security/advisories/new),
+or email **hi@aquanode.io** if you prefer.
 
 Please do **not** disclose the issue publicly until we have shipped a fix.
 
@@ -21,9 +21,9 @@ Include as much as you can so we can reproduce and triage quickly:
 - Steps to reproduce, a proof-of-concept, or the affected code path.
 - `aq version`, your OS, and relevant command output.
 
-> On-box snapshot/restore logic lives in [`ogre`](https://github.com/Aquanodeio/ogre).
-> If the issue is in the on-box agent rather than the CLI, please report it via
-> [ogre's security advisories](https://github.com/Aquanodeio/ogre/security/advisories/new).
+> On-box snapshot/restore logic lives in `ogre`, Aquanode's closed-source on-box
+> agent. If the issue is in the on-box agent rather than the CLI, email it to the same
+> address and say so — we will route it.
 
 ## What to expect
 
