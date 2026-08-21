@@ -2,9 +2,11 @@ name: Release
 
 # On a version tag (v*), build the cross-platform `aq` binaries with GoReleaser
 # and publish them as a GitHub Release on the SEPARATE public repo
-# Aquanodeio/aq-releases (this repo, Aquanodeio/aq, stays private — see
-# GITHUB_TOKEN below). scripts/install.sh fetches the matching tarball from
-# that same aq-releases repo for a `curl … | sh` install.
+# Aquanodeio/aq-releases. Both repos are public; they stay split because
+# scripts/install.sh and the published install URL on the website point at
+# aq-releases for the `curl … | sh` install, so moving the release would break
+# every documented install line. GITHUB_TOKEN below is still required: the
+# default token is scoped to THIS repo and cannot write to the other one.
 on:
   push:
     tags:

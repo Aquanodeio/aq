@@ -58,14 +58,15 @@ checksum:
 # release body outright and skips this pipe entirely. Disabled explicitly so
 # there's exactly one changelog mechanism rather than two that can disagree —
 # goreleaser's own template-based changelog has no way to strip the `(#N)`
-# PR/issue refs that dangle-link on the public aq-releases repo (ticket #460
-# A4), which is why release-notes.sh exists.
+# PR/issue refs so that they resolve against Aquanodeio/aq rather than
+# autolinking to a nonexistent issue in aq-releases, which is why
+# release-notes.sh exists.
 changelog:
   # MUST stay enabled. goreleaser's changelog PIPE is what loads
   # `--release-notes <file>`; disabling it means the flag is silently ignored
   # and the published release body comes out EMPTY (shipped that way in v0.2.1).
   # The pipe does not generate anything of its own when --release-notes is
-  # passed — it uses the file. See scripts/release-notes.sh and #460 A4.
+  # passed — it uses the file. See scripts/release-notes.sh.
   disable: false
 
 release:
