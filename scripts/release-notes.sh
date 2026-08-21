@@ -8,19 +8,27 @@
 # verbatim, e.g.
 #   Merge pull request #21 from Aquanodeio/ticket-422-aq-ssh
 #   feat: aq ssh — managed keypair (#422)
-# Those trailing `(#N)` / `Merge pull request #N` refs point at issues/PRs in
-# the PRIVATE Aquanodeio/aq repo, but the release is published on the PUBLIC
-# Aquanodeio/aq-releases repo — GitHub autolinks `#N` there regardless, and
-# every one of those links 404s for every reader. There is no goreleaser
-# template func to strip a variable `(#N)` (confirmed: no regex func is
-# registered in `changelog.format`'s FuncMap), so we generate the notes
-# ourselves instead of fighting the template engine.
+# A bare `#N` in a release body published on Aquanodeio/aq-releases autolinks
+# to an issue in AQ-RELEASES, which has none — so every such link 404s. There
+# is no goreleaser template func to rewrite a variable `(#N)` (confirmed: no
+# regex func is registered in `changelog.format`'s FuncMap), so we generate the
+# notes ourselves instead of fighting the template engine.
+#
+# Aquanodeio/aq is PUBLIC as of 2026-08-21, so a PR ref is no longer something
+# to delete — it is a working link we were throwing away. `#N` is now QUALIFIED
+# to `Aquanodeio/aq#N`, which GitHub renders as a real cross-repo link from the
+# release page back to the source. Merge-commit subjects are still dropped:
+# they carry internal ticket-numbered branch names and no reader value.
 #
 # Usage: scripts/release-notes.sh [output-file]
 #   Defaults to writing to stdout if no output-file is given.
 set -euo pipefail
 
 out="${1:-/dev/stdout}"
+
+# The public repo that PR refs in commit subjects belong to. The release itself
+# is published on aq-releases, so an unqualified "#N" would resolve there.
+SOURCE_REPO="${SOURCE_REPO:-Aquanodeio/aq}"
 
 # Resolve the tag that triggered this release. In CI, GITHUB_REF is
 # refs/tags/vX.Y.Z; locally, fall back to the most recent tag reachable
@@ -49,16 +57,12 @@ fi
 
 {
 	echo "## Changelog"
-	git log "$range" --no-merges --reverse --pretty=format:'%H%x09%s' |
-		grep -Ev $'\t''Merge pull request #[0-9]+ from ' |
-		# 1. Drop a trailing " (#N)" ref entirely (the common `git squash`/
-		#    PR-title-carried-into-subject case, e.g. "feat: foo (#22)").
-		sed -E 's/[[:space:]]*\(#[0-9]+\)[[:space:]]*$//' |
-		# 2. Any other bare "#N" mid-subject (e.g. "resolves internal ticket #N" —
-		#    these are internal reference numbers, not GitHub issues, but
-		#    GitHub autolinks them identically and they still 404 on the public
-		#    repo) — de-hash it so it can't autolink,
-		#    keeping the number for readability.
-		sed -E 's/#([0-9]+)/\1/g' |
-		awk -F'\t' '{ printf "* %s %s\n", $1, $2 }'
+	git log "$range" --no-merges --reverse --pretty=format:'%s' |
+		grep -Ev '^Merge pull request #[0-9]+ from ' |
+		# Qualify every "#N" to "Aquanodeio/aq#N" so it links to the PR in the
+		# public source repo instead of autolinking to a nonexistent issue in
+		# aq-releases. Guarded on a preceding non-slash so re-running over an
+		# already-qualified subject cannot double-qualify it.
+		sed -E 's@(^|[^/[:alnum:]])#([0-9]+)@\1'"$SOURCE_REPO"'#\2@g' |
+		awk '{ printf "* %s\n", $0 }'
 } >"$out"
