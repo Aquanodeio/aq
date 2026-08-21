@@ -28,3 +28,26 @@ func TestVersionDefault(t *testing.T) {
 		t.Fatal("version must not be empty")
 	}
 }
+
+func TestResolveVersionPrefersLdflagsInjectedVersion(t *testing.T) {
+	orig := version
+	t.Cleanup(func() { version = orig })
+
+	version = "1.2.3"
+	if got := resolveVersion(); got != "1.2.3" {
+		t.Fatalf("resolveVersion() = %q, want the ldflags-injected %q", got, "1.2.3")
+	}
+}
+
+func TestResolveVersionFallsBackToSentinelWithoutModuleVersion(t *testing.T) {
+	orig := version
+	t.Cleanup(func() { version = orig })
+
+	// A test binary's build info carries no release tag (it is "" or "(devel)"),
+	// which is the same state a plain `go build` from a checkout produces. The
+	// dev sentinel must survive rather than leak "(devel)" to users.
+	version = "0.0.0-dev"
+	if got := resolveVersion(); got != "0.0.0-dev" {
+		t.Fatalf("resolveVersion() = %q, want the dev sentinel to survive", got)
+	}
+}

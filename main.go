@@ -13,17 +13,42 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
+	"strings"
 
 	"github.com/Aquanodeio/aq/internal/api"
 )
 
-// version is overridden at build time via -ldflags "-X main.version=...".
+// version is overridden at build time via -ldflags "-X main.version=...", which is
+// how release binaries get their number. `go install github.com/Aquanodeio/aq@latest`
+// sets no ldflags, so those builds fall back to the version the Go toolchain stamps
+// into the build info from the module tag.
 var version = "0.0.0-dev"
+
+// resolveVersion returns the ldflags-injected version when there is one, else the
+// module version recorded in the build info. Returns the dev sentinel for a plain
+// `go build` from a checkout, where neither source has a real version.
+func resolveVersion() string {
+	if version != "0.0.0-dev" {
+		return version
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok || bi.Main.Version == "" {
+		return version
+	}
+	// A `go build` from a checkout reports "(devel)"; only a module-proxy install
+	// carries a real tag.
+	if bi.Main.Version == "(devel)" {
+		return version
+	}
+	return strings.TrimPrefix(bi.Main.Version, "v")
+}
 
 func main() {
 	// Label every API request `aq/<version>` so the orchestrator can tell a CLI
 	// action from a scripted one. Set here rather than in the api package so the
 	// ldflags-injected version stays a main-package concern.
+	version = resolveVersion()
 	api.Version = version
 
 	if len(os.Args) < 2 {
