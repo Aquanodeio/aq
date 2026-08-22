@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -147,9 +146,14 @@ func (p *portID) UnmarshalJSON(b []byte) error {
 // snake_case only. A camelCase tag would decode the status endpoint and
 // silently yield zero values for every list row.
 type Deployment struct {
-	ID                 int                 `json:"id"`
-	Name               string              `json:"name"`
-	Status             string              `json:"status"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	// ProjectID is only populated by GetDeployment (GET /deployments/:id, a
+	// raw untransformed row) — the pause route is project-scoped rather than
+	// deployment-scoped, so it's the one field that route needs beyond the
+	// deployment id itself.
+	ProjectID          string              `json:"project_id"`
 	AppURL             string              `json:"app_url"`
 	ServiceCredentials *ServiceCredentials `json:"service_credentials"`
 	// ServiceURLs stays raw so a malformed or unexpectedly-shaped value (the
@@ -229,6 +233,29 @@ func (c *Client) ListDeployments() ([]Deployment, error) {
 	return out, nil
 }
 
+// GetDeployment fetches the raw deployment row by id (GET /deployments/:id),
+// including ProjectID — the fields the transformed /status and list endpoints
+// don't carry.
+func (c *Client) GetDeployment(deploymentID int) (*Deployment, error) {
+	var out Deployment
+	path := "/deployments/" + strconv.Itoa(deploymentID)
+	if err := c.getJSON(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PauseDeployment saves the deployment's current state and releases its
+// rented box (`aq pause`), via the existing project-scoped pause route —
+// pause always targets the ACTIVE deployment under a project, so it's keyed
+// by projectID in the path plus deploymentID in the body, not by deployment
+// id alone.
+func (c *Client) PauseDeployment(projectID string, deploymentID int) error {
+	path := "/deployments/project/" + url.PathEscape(projectID) + "/pause"
+	body := map[string]int{"deploymentId": deploymentID}
+	return c.postJSON(path, body, nil)
+}
+
 // CloseResult mirrors POST /deployments/close.
 type CloseResult struct {
 	Status string `json:"status"`
@@ -243,41 +270,6 @@ func (c *Client) CloseDeployment(deploymentID int) (*CloseResult, error) {
 		return nil, err
 	}
 	return &out, nil
-}
-
-// CreateSnapshotRequest is the body of POST /snapshots/:deploymentId/create —
-// the managed one-shot save path. BackupID identifies the backup row this
-// snapshot belongs to (the orchestrator creates one on first use if it doesn't
-// already exist); it is not a deployment id.
-type CreateSnapshotRequest struct {
-	BackupID         string `json:"backup_id"`
-	WorkspaceDir     string `json:"workspace_dir"`
-	IncludeProcess   bool   `json:"include_process"`
-	IncludeWorkspace bool   `json:"include_workspace"`
-}
-
-// CreateSnapshotResult is the data returned by POST /snapshots/:deploymentId/create.
-// SnapshotID is the underlying restic snapshot id (a string, not a database row
-// id) — it identifies the capture, but restoring it goes through
-// `aq deploy --snapshot <deploymentId>` (the SOURCE deployment id), never
-// through this string.
-type CreateSnapshotResult struct {
-	SnapshotID string `json:"snapshot_id"`
-	Size       int64  `json:"size"`
-	Message    string `json:"message"`
-}
-
-// CreateSnapshot takes a one-shot snapshot of a managed deployment. This is the
-// managed path: the orchestrator drives the box's ogre agent and records the
-// snapshot against the deployment. It is deliberately NOT the standalone
-// `ogre snapshot` CLI, which is for boxes with no Aquanode deployment.
-func (c *Client) CreateSnapshot(deploymentID int, req CreateSnapshotRequest) (CreateSnapshotResult, error) {
-	var out CreateSnapshotResult
-	path := fmt.Sprintf("/snapshots/%d/create", deploymentID)
-	if err := c.postJSON(path, req, &out); err != nil {
-		return CreateSnapshotResult{}, err
-	}
-	return out, nil
 }
 
 // SnapshotHistoryBackup is the `backups` object nested on a history item,

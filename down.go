@@ -20,6 +20,7 @@ type downOptions struct {
 	cred     *config.Credential
 	target   string // deployment id, name, or project id (resolved by runDown)
 	snapshot bool   // save the deployment before terminating it
+	setupID  string // the setup id (uuid) backing target, resolved when snapshot is true
 	out      io.Writer
 	errOut   io.Writer
 }
@@ -67,6 +68,17 @@ func down(args []string) error {
 			return err
 		}
 		opts.target = strconv.Itoa(id)
+
+		// The checkpoint save is a setup-scoped call (POST
+		// /setups/:id/snapshot), not a deployment-scoped one — map the
+		// resolved deployment to the setup whose lease it currently holds
+		// rather than ever passing the deployment id where a setup id
+		// belongs.
+		setupID, err := setupIDForDeployment(client, id)
+		if err != nil {
+			return err
+		}
+		opts.setupID = setupID
 	}
 
 	return downWithCheckpoint(opts, runSnapshot, runDown)
@@ -78,7 +90,7 @@ func down(args []string) error {
 // terminate are injected so this control flow is testable without a live box.
 func downWithCheckpoint(
 	opts downOptions,
-	checkpoint func(snapshotOptions) (api.CreateSnapshotResult, error),
+	checkpoint func(snapshotOptions) (api.SetupVersion, error),
 	terminate func(downOptions) error,
 ) error {
 	out := opts.out
@@ -89,14 +101,14 @@ func downWithCheckpoint(
 	if opts.snapshot {
 		fmt.Fprintln(out, "Saving your setup before terminating…")
 		res, err := checkpoint(snapshotOptions{
-			cred:         opts.cred,
-			target:       opts.target,
-			workspaceDir: "/workspace",
+			cred:    opts.cred,
+			setupID: opts.setupID,
+			pathDir: "/workspace",
 		})
 		if err != nil {
 			return fmt.Errorf("save failed, so the deployment was NOT terminated (it is still running): %w", err)
 		}
-		fmt.Fprintf(out, "✓ Saved — snapshot %s\n", res.SnapshotID)
+		fmt.Fprintf(out, "✓ Saved %s v%d\n", res.Name, res.Version)
 		defer func() {
 			fmt.Fprintf(out, "\nPick up where you left off with:\n  aq deploy --snapshot %s\n", opts.target)
 		}()
