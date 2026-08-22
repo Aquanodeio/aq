@@ -110,8 +110,8 @@ func TestDownWithSnapshotAbortsTerminateWhenCheckpointFails(t *testing.T) {
 	closed := false
 	err := downWithCheckpoint(
 		downOptions{snapshot: true, out: &bytes.Buffer{}},
-		func(snapshotOptions) (api.CreateSnapshotResult, error) {
-			return api.CreateSnapshotResult{}, errors.New("ogre agent unreachable")
+		func(snapshotOptions) (api.SetupVersion, error) {
+			return api.SetupVersion{}, errors.New("ogre agent unreachable")
 		},
 		func(downOptions) error { closed = true; return nil },
 	)
@@ -127,8 +127,8 @@ func TestDownWithSnapshotTerminatesAfterSuccessfulCheckpoint(t *testing.T) {
 	closed := false
 	err := downWithCheckpoint(
 		downOptions{snapshot: true, out: &bytes.Buffer{}},
-		func(snapshotOptions) (api.CreateSnapshotResult, error) {
-			return api.CreateSnapshotResult{SnapshotID: "snap_42"}, nil
+		func(snapshotOptions) (api.SetupVersion, error) {
+			return api.SetupVersion{Name: "comfyui", Version: 3}, nil
 		},
 		func(downOptions) error { closed = true; return nil },
 	)
@@ -141,9 +141,9 @@ func TestDownWithoutSnapshotSkipsCheckpoint(t *testing.T) {
 	checkpointed := false
 	_ = downWithCheckpoint(
 		downOptions{snapshot: false, out: &bytes.Buffer{}},
-		func(snapshotOptions) (api.CreateSnapshotResult, error) {
+		func(snapshotOptions) (api.SetupVersion, error) {
 			checkpointed = true
-			return api.CreateSnapshotResult{}, nil
+			return api.SetupVersion{}, nil
 		},
 		func(downOptions) error { return nil },
 	)

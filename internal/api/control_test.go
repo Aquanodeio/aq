@@ -8,52 +8,51 @@ import (
 	"testing"
 )
 
-// TestCreateSnapshotPostsToDeploymentScopedPath is the managed one-shot save
-// path (`aq snapshot`): POST /snapshots/:deploymentId/create, team-scoped by the
-// x-api-key/x-team-id headers every authenticated Client call carries.
-func TestCreateSnapshotPostsToDeploymentScopedPath(t *testing.T) {
-	var gotPath, gotKey, gotTeam string
-	var gotBody CreateSnapshotRequest
+// TestGetDeploymentReturnsProjectID checks GetDeployment (the raw
+// GET /deployments/:id row) decodes project_id — the field `aq pause` needs
+// to hit the project-scoped pause route, which the transformed /status and
+// list endpoints don't carry.
+func TestGetDeploymentReturnsProjectID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotKey, gotTeam = r.URL.Path, r.Header.Get("x-api-key"), r.Header.Get("x-team-id")
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		if r.URL.Path != "/deployments/2884" {
+			t.Errorf("path = %q, want /deployments/2884", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"snapshot_id":"snap_abc123","size":104857600,"message":"Snapshot created successfully"}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"id":2884,"name":"comfyui","status":"ACTIVE","project_id":"11111111-1111-1111-1111-111111111111"}}`)
 	}))
 	defer srv.Close()
 
-	c := NewAuthed(srv.URL, "tok", "team-1")
-	got, err := c.CreateSnapshot(2884, CreateSnapshotRequest{
-		BackupID: "aq-2884", WorkspaceDir: "/workspace",
-		IncludeProcess: false, IncludeWorkspace: true,
-	})
+	dep, err := NewAuthed(srv.URL, "tok", "t").GetDeployment(2884)
 	if err != nil {
-		t.Fatalf("CreateSnapshot: %v", err)
+		t.Fatalf("GetDeployment: %v", err)
 	}
-	if gotPath != "/snapshots/2884/create" {
-		t.Errorf("path = %q, want /snapshots/2884/create", gotPath)
-	}
-	if gotKey != "tok" || gotTeam != "team-1" {
-		t.Errorf("auth headers = %q/%q", gotKey, gotTeam)
-	}
-	if !gotBody.IncludeWorkspace || gotBody.WorkspaceDir != "/workspace" {
-		t.Errorf("body = %+v", gotBody)
-	}
-	if got.SnapshotID != "snap_abc123" || got.Size != 104857600 {
-		t.Errorf("result = %+v", got)
+	if dep.ProjectID != "11111111-1111-1111-1111-111111111111" {
+		t.Errorf("ProjectID = %q, want the project uuid", dep.ProjectID)
 	}
 }
 
-// TestCreateSnapshotSurfacesServerError checks a 500 (e.g. an unreachable ogre
-// agent) comes back as a Go error rather than a zero-value result.
-func TestCreateSnapshotSurfacesServerError(t *testing.T) {
+// TestPauseDeploymentPostsToProjectScopedPath checks PauseDeployment hits the
+// existing /deployments/project/:projectId/pause route with deploymentId in
+// the body, not a hypothetical deployment-scoped pause endpoint.
+func TestPauseDeploymentPostsToProjectScopedPath(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"success":false,"error":"Failed to create snapshot"}`)
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":null}`)
 	}))
 	defer srv.Close()
-	if _, err := NewAuthed(srv.URL, "tok", "t").CreateSnapshot(1, CreateSnapshotRequest{}); err == nil {
-		t.Fatal("want error on 500, got nil")
+
+	if err := NewAuthed(srv.URL, "tok", "t").PauseDeployment("proj-1", 2884); err != nil {
+		t.Fatalf("PauseDeployment: %v", err)
+	}
+	if gotPath != "/deployments/project/proj-1/pause" {
+		t.Errorf("path = %q, want /deployments/project/proj-1/pause", gotPath)
+	}
+	if gotBody["deploymentId"] != 2884 {
+		t.Errorf("body = %+v, want deploymentId 2884", gotBody)
 	}
 }
 

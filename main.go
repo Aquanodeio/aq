@@ -74,6 +74,14 @@ func main() {
 		run(status(args))
 	case "snapshot":
 		run(snapshot(args))
+	case "share":
+		run(share(args))
+	case "pause":
+		run(pause(args))
+	case "autosave":
+		run(autosave(args))
+	case "setups":
+		run(setups(args))
 	case "idle":
 		run(idle(args))
 	case "down":
@@ -105,13 +113,17 @@ Usage:
 
 Commands:
   login      Pair this CLI to your Aquanode account (device login)
-  up         Rent the cheapest matching GPU and bring up a working env
+  up         Rent the cheapest matching GPU and bring up a working setup
   deploy     Restore a snapshot onto a freshly-rented Aquanode GPU box
-  ssh        Open a shell on a deployment (managed key + ~/.ssh/config alias)
-  status     Show a deployment's status, HTTPS URL, and credentials
-  snapshot   Save a deployment's current state on demand
-  idle       View or change a deployment's idle-auto-stop policy
-  down       Tear down a deployment (stop the rented GPU box)
+  ssh        Open a shell on a setup (managed key + ~/.ssh/config alias)
+  status     Show a setup's status, HTTPS URL, and credentials
+  snapshot   Save a setup's current state into its named lineage
+  share      Get a link to one saved version of a setup
+  pause      Save a setup, then release its machine (resume later with up)
+  autosave   Turn a setup's automated snapshotting on or off
+  setups     List the setups you own
+  idle       View or change a setup's idle-auto-stop policy
+  down       Tear down a setup (stop the rented GPU box)
   logout     Remove the stored CLI credential
   whoami     Show the current login state
   version    Print the aq version
@@ -162,12 +174,33 @@ idle:
   --gpu-threshold <percent> GPU utilization below which the box counts idle
   --on / --off              Enable / disable idle auto-stop
 
-status / snapshot / down:
-  aq status <name|id>        Re-check a provisioning or running env
+status / snapshot / share / pause / autosave / setups / down:
+  aq status <name|id>        Re-check a provisioning or running setup
                              (add --show-secrets to print the password)
-  aq snapshot <name|id>      Save the env's current state on demand
-                             (--name <label>, --workspace <dir>)
-  aq down <name|id>          Tear the env down and stop billing
+  aq snapshot <name|id>      Save the setup's current state into its named
+                             save lineage. The first save on a setup asks
+                             for a lineage name once (Enter accepts the
+                             default, which is the setup's own name; a
+                             non-interactive shell just uses the default).
+                             Every later save reuses that lineage silently
+                             and increments its version (v1, v2, v3, ...).
+                             (--name <lineage>, --path <dir>)
+  aq share <name|id> <ver>   Print a link to ONE immutable saved version
+                             (e.g. "aq share comfyui 3"). The link always
+                             points at that exact version, never at
+                             whatever the lineage's head becomes later.
+  aq pause <name|id>         Save the setup, then release its machine.
+                             Pick it back up any time with "aq up".
+  aq autosave <name|id> on|off
+                             Turn automated snapshotting on or off. This
+                             keeps ONE always-current copy — it is NOT a
+                             history and NOT undo: deleting your own work
+                             is replicated into that copy on the next
+                             tick too. Held snapshot storage is billed at
+                             $0.01/GiB/mo; turning it on prints that rate.
+  aq setups                  List the setups you own: name, whether it's
+                             running, latest saved version, and size.
+  aq down <name|id>          Tear the setup down and stop billing
                              (--snapshot saves first; terminate is skipped
                              if the save fails)
 
