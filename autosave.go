@@ -74,7 +74,7 @@ func runAutosave(opts autosaveOptions) error {
 	if opts.enabled {
 		fmt.Fprintln(out, "Autosave keeps ONE always-current copy of this setup — it is not undo.")
 		fmt.Fprintln(out, "If you delete your own work, that gets replicated into the copy on the next tick too.")
-		fmt.Fprintln(out, "Held snapshot storage is billed at $0.01/GiB/mo.")
+		fmt.Fprintf(out, "Held snapshot storage is billed at %s.\n", heldStorageRateLabel)
 	}
 
 	res, err := client.SetSetupAutosave(setupID, opts.enabled)

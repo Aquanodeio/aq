@@ -59,7 +59,7 @@ func printSetups(out io.Writer, list []api.Setup) {
 
 // formatSetupSize renders a byte count in the largest whole binary unit that
 // keeps it readable, at GiB precision — matching how held-snapshot storage
-// is billed ($0.01/GiB/mo).
+// is billed (see heldStorageRateLabel in pricing.go).
 func formatSetupSize(n int64) string {
 	const unit = 1024
 	if n < unit {
