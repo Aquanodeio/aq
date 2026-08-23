@@ -196,8 +196,9 @@ status / snapshot / share / pause / autosave / setups / down:
                              keeps ONE always-current copy — it is NOT a
                              history and NOT undo: deleting your own work
                              is replicated into that copy on the next
-                             tick too. Held snapshot storage is billed at
-                             $0.01/GiB/mo; turning it on prints that rate.
+                             tick too. Held snapshot storage is billed
+                             at `+heldStorageRateLabel+`; turning it on prints
+                             that rate.
   aq setups                  List the setups you own: name, whether it's
                              running, latest saved version, and size.
   aq down <name|id>          Tear the setup down and stop billing
