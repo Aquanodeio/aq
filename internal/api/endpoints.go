@@ -110,20 +110,58 @@ func (c *Client) ListCalls(endpointID string) ([]Call, error) {
 // CreateCallRequest is the body of POST /endpoints/:id/calls. Inputs is
 // always a non-nil map (possibly empty) — the CLI sends `{"inputs":{}}`
 // rather than omitting the field when the caller passes no --input file.
+// Wait and WaitSeconds are optional; when set, the server will try to return
+// a 200 with the full call object if it completes within the window.
 type CreateCallRequest struct {
-	Inputs map[string]any `json:"inputs"`
+	Inputs      map[string]any `json:"inputs"`
+	Wait        bool           `json:"wait,omitempty"`
+	WaitSeconds int            `json:"waitSeconds,omitempty"`
 }
 
-// CreateCallResult is the data returned by POST /endpoints/:id/calls.
+// CreateCallResult is the data returned by POST /endpoints/:id/calls (202 async response).
 type CreateCallResult struct {
 	CallID     string `json:"callId"`
 	Status     string `json:"status"`
 	AcceptedAt string `json:"acceptedAt"`
 }
 
-// CreateCall makes a call against an endpoint.
-func (c *Client) CreateCall(endpointID string, req CreateCallRequest) (*CreateCallResult, error) {
-	var out CreateCallResult
+// CreateCallResponse can be either a 202 CreateCallResult or a 200 Call object.
+// It merges all possible fields; the presence of certain fields indicates which
+// response type was returned (CallID → 202 async, ID → 200 completed).
+type CreateCallResponse struct {
+	// 202 async response fields
+	CallID     string `json:"callId"`
+	AcceptedAt string `json:"acceptedAt"`
+	// 200 sync response fields (full Call object)
+	ID         string `json:"id"`
+	StartedAt  string `json:"startedAt"`
+	FinishedAt string `json:"finishedAt"`
+	OutputRef  string `json:"outputRef"`
+	// Both responses include Status and Reason
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+	Phase  string `json:"phase"`
+}
+
+// IsAsync returns true if this is a 202 async response (still queued/running).
+func (r *CreateCallResponse) IsAsync() bool {
+	return r.CallID != "" && r.ID == ""
+}
+
+// CallID returns either the 202 callId or the 200 id, whichever is present.
+func (r *CreateCallResponse) GetCallID() string {
+	if r.CallID != "" {
+		return r.CallID
+	}
+	return r.ID
+}
+
+// CreateCall makes a call against an endpoint. The response can be either
+// 202 (async, still running) or 200 (sync, completed within the wait window).
+// Use resp.IsAsync() to distinguish them, or resp.GetCallID() to get the id
+// in either case.
+func (c *Client) CreateCall(endpointID string, req CreateCallRequest) (*CreateCallResponse, error) {
+	var out CreateCallResponse
 	path := "/endpoints/" + url.PathEscape(endpointID) + "/calls"
 	if err := c.postJSON(path, req, &out); err != nil {
 		return nil, err
