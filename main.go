@@ -84,6 +84,12 @@ func main() {
 		run(setups(args))
 	case "idle":
 		run(idle(args))
+	case "endpoint":
+		run(endpoint(args))
+	case "call":
+		run(call(args))
+	case "calls":
+		run(calls(args))
 	case "down":
 		run(down(args))
 	case "logout":
@@ -123,6 +129,9 @@ Commands:
   autosave   Turn a setup's automated snapshotting on or off
   setups     List the setups you own
   idle       View or change a setup's idle-auto-stop policy
+  endpoint   Make a setup version callable, repoint it, or remove it
+  call       Make a call against an endpoint
+  calls      List an endpoint's recent calls
   down       Tear down a setup (stop the rented GPU box)
   logout     Remove the stored CLI credential
   whoami     Show the current login state
@@ -173,6 +182,28 @@ idle:
   --stop-after <duration>   Auto-stop after this much idle time, e.g. 1h
   --gpu-threshold <percent> GPU utilization below which the box counts idle
   --on / --off              Enable / disable idle auto-stop
+
+endpoint:
+  aq endpoint create <setup> <version>   Make a setup version callable.
+                              Requires --max-instances and --spend-cap-cents
+                              — an endpoint hands out a GPU budget, so
+                              neither ever defaults to unbounded.
+                              (--name <name>, default: the setup's own name)
+  aq endpoint point <name> <version>
+                              Repoint an endpoint at a different version in
+                              its lineage (also how you roll back).
+  aq endpoint rm <name>      Remove an endpoint.
+
+call / calls:
+  aq call <endpoint> [--input file]
+                              Make a call against an endpoint and print its
+                              call id. --input is a JSON file of the
+                              declared params; with no --input, the call is
+                              made with no inputs.
+  aq calls <endpoint>        List an endpoint's recent calls: id, status,
+                              phase, and reason. "unservable" means Aquanode
+                              could not get the call a box at all — not that
+                              the call's own code failed.
 
 status / snapshot / share / pause / autosave / setups / down:
   aq status <name|id>        Re-check a provisioning or running setup
