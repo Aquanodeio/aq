@@ -128,6 +128,14 @@ func (c *Client) putJSON(path string, body any, out any) error {
 	return c.do(req, out)
 }
 
+func (c *Client) deleteJSON(path string, out any) error {
+	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	return c.do(req, out)
+}
+
 // do sends a prepared request (attaching auth + JSON content type) and decodes
 // the orchestrator's `{success,data,error}` envelope into out.
 func (c *Client) do(req *http.Request, out any) error {

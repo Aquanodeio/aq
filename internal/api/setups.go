@@ -93,6 +93,23 @@ func (c *Client) ListSetupVersions(name string) ([]SetupVersion, error) {
 	return out, nil
 }
 
+// GetSetupVersion fetches one version row by its own global row id — GET
+// /setups/versions/:id. `aq endpoint point` uses this to learn which
+// lineage (setup id + name) an endpoint's CURRENT version belongs to: the
+// repoint API and the `<version>` a user types are both scoped to a version
+// NUMBER within one lineage, but an Endpoint only carries its current
+// VersionID, not the owning setup — this is the lookup that recovers it,
+// the same way ListSetupVersions recovers a row id from a (setup,
+// version-number) pair.
+func (c *Client) GetSetupVersion(versionRowID int) (*SetupVersion, error) {
+	var out SetupVersion
+	path := "/setups/versions/" + strconv.Itoa(versionRowID)
+	if err := c.getJSON(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ShareSetupVersionResult is the data returned by POST
 // /setups/versions/:id/share.
 type ShareSetupVersionResult struct {
