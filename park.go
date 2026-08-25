@@ -36,9 +36,13 @@ type parkOptions struct {
 // would collide with the cron feature's meaning in a way a flat CLI command
 // list can't disambiguate the way console's tabs do; "park" cannot be
 // confused with either. This rename is CLI-surface only — it still calls the
-// same PauseDeployment/project-scoped pause route as before; whether the
-// backend should move onto the newer save-and-stop endpoint is a separate,
-// unresolved question, see the #738 rewrite report.
+// same ParkDeployment/project-scoped pause route as before (internal method
+// name updated to match, the route itself is unchanged). Console ALSO has a
+// second, newer path to the same user promise — a save-and-stop endpoint
+// that fully closes the deployment and relies on a resumable close reason
+// rather than a live paused lease — and whether this CLI verb should move
+// onto that instead is a real, separate, still-open question this rename
+// does not answer.
 func park(args []string) error {
 	fs := flag.NewFlagSet("park", flag.ContinueOnError)
 	positional, err := parseInterspersed(fs, args)
