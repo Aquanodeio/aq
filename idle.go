@@ -129,7 +129,7 @@ func idleStateLabel(state string, idleMinutes int) string {
 }
 
 // formatMinutes renders a minute count the way a user would type it back as a
-// --warn-after/--stop-after duration flag (e.g. "30m", "1h", "1h30m").
+// --warn-after/--pause-after duration flag (e.g. "30m", "1h", "1h30m").
 func formatMinutes(m int) string {
 	if m <= 0 {
 		return fmt.Sprintf("%dm", m)
@@ -165,9 +165,6 @@ func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 	fs := flag.NewFlagSet("idle set", flag.ContinueOnError)
 	warnAfterStr := fs.String("warn-after", "", "warn after this much idle time, e.g. 30m, 1h")
 	pauseAfterStr := fs.String("pause-after", "", "auto-pause after this much idle time, e.g. 1h")
-	// stopAfterStr is the deprecated pre-rename name for --pause-after, kept
-	// working (undocumented) so a shipped script doesn't break.
-	stopAfterStr := fs.String("stop-after", "", "")
 	gpuThreshold := fs.Int("gpu-threshold", -1, "GPU utilization percent below which the box counts as idle (0-100)")
 	on := fs.Bool("on", false, "enable idle auto-pause")
 	off := fs.Bool("off", false, "disable idle auto-pause")
@@ -179,15 +176,6 @@ func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 
 	if *on && *off {
 		return idleSetOptions{}, errors.New("pass at most one of --on / --off")
-	}
-
-	if *pauseAfterStr != "" && *stopAfterStr != "" {
-		return idleSetOptions{}, errors.New("pass at most one of --pause-after / --stop-after (the latter is deprecated)")
-	}
-	effectivePauseAfterStr := *pauseAfterStr
-	if effectivePauseAfterStr == "" && *stopAfterStr != "" {
-		fmt.Fprintln(os.Stderr, `aq: "--stop-after" is deprecated, use "--pause-after" instead`)
-		effectivePauseAfterStr = *stopAfterStr
 	}
 
 	var opts idleSetOptions
@@ -202,8 +190,8 @@ func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 		}
 		opts.warnAfter = &m
 	}
-	if effectivePauseAfterStr != "" {
-		m, err := parsePositiveMinutes("--pause-after", effectivePauseAfterStr)
+	if *pauseAfterStr != "" {
+		m, err := parsePositiveMinutes("--pause-after", *pauseAfterStr)
 		if err != nil {
 			return idleSetOptions{}, err
 		}

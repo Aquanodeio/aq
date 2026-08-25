@@ -82,8 +82,6 @@ func main() {
 		run(editVersion(args))
 	case "pause":
 		run(pause(args))
-	case "park":
-		run(park(args))
 	case "autopause":
 		run(autopause(args))
 	case "force-detach":
@@ -257,8 +255,7 @@ force-detach / sync-now / setups / down:
                              (--label <text>, --description <text>,
                              --visibility private|team|public)
   aq pause <name|id>         Save the setup, then release its machine.
-                             Pick it back up any time with "aq up". ("aq
-                             park" still works too, as a deprecated alias.)
+                             Pick it back up any time with "aq up".
   aq autopause <name|id> on|off
                              Turn this SETUP's auto-pause-when-idle
                              preference on or off, using the platform's

@@ -211,7 +211,7 @@ type SetupAutopauseRequest struct {
 // (on or off), returning the updated Setup row.
 //
 // This is NOT the same mechanism as `aq idle`: idle policy is a
-// PER-DEPLOYMENT threshold config (warn/stop-after minutes, GPU idle %) that
+// PER-DEPLOYMENT threshold config (warn/pause-after minutes, GPU idle %) that
 // always outranks whatever this sets (see idlePolicyFor in the
 // orchestrator's idle.config.ts, which layers Setup.autopauseEnabled in
 // underneath it). Autopause carries no thresholds of its own — it only says

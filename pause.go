@@ -28,31 +28,10 @@ type pauseOptions struct {
 //
 // This command used to be named "park". Pause / auto-pause is the one noun
 // the whole product (console, docs, website, aq) now uses for
-// save-then-release, and resume is its opposite. `aq park` is kept below as
-// a deprecated alias so a shipped script that still calls it does not break.
+// save-then-release, and resume is its opposite. There are no users on the
+// platform yet, so this is a hard rename — no "park" alias.
 func pause(args []string) error {
 	fs := flag.NewFlagSet("pause", flag.ContinueOnError)
-	positional, err := parseInterspersed(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(positional) == 0 || positional[0] == "" {
-		return fmt.Errorf("a setup is required — usage: aq pause <setup>")
-	}
-	target := positional[0]
-
-	cred, err := requireLogin()
-	if err != nil {
-		return err
-	}
-
-	return runPause(pauseOptions{cred: cred, target: target, out: os.Stdout})
-}
-
-// park is the deprecated alias for `aq pause` — see pause()'s doc comment.
-func park(args []string) error {
-	fmt.Fprintln(os.Stderr, `aq: "park" is deprecated, use "pause" instead`)
-	fs := flag.NewFlagSet("park", flag.ContinueOnError)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err

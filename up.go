@@ -54,11 +54,6 @@ func up(args []string) error {
 	autoPause := fs.Bool("auto-pause", false, "Enable idle auto-pause on this deployment (off by default)")
 	warnAfter := fs.String("warn-after", "", "With --auto-pause: warn after this much idle time, e.g. 30m")
 	pauseAfter := fs.String("pause-after", "", "With --auto-pause: auto-pause after this much idle time, e.g. 1h")
-	// autoStopLegacy/stopAfterLegacy are the deprecated pre-rename names for
-	// --auto-pause/--pause-after, kept working (undocumented) so a shipped
-	// script doesn't break.
-	autoStopLegacy := fs.Bool("auto-stop", false, "")
-	stopAfterLegacy := fs.String("stop-after", "", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -71,18 +66,7 @@ func up(args []string) error {
 		template = templateJupyter
 	}
 
-	effectiveAutoPause := *autoPause
-	if *autoStopLegacy {
-		fmt.Fprintln(os.Stderr, `aq: "--auto-stop" is deprecated, use "--auto-pause" instead`)
-		effectiveAutoPause = true
-	}
-	effectivePauseAfter := *pauseAfter
-	if effectivePauseAfter == "" && *stopAfterLegacy != "" {
-		fmt.Fprintln(os.Stderr, `aq: "--stop-after" is deprecated, use "--pause-after" instead`)
-		effectivePauseAfter = *stopAfterLegacy
-	}
-
-	idlePolicy, err := buildUpIdlePolicy(effectiveAutoPause, *warnAfter, effectivePauseAfter)
+	idlePolicy, err := buildUpIdlePolicy(*autoPause, *warnAfter, *pauseAfter)
 	if err != nil {
 		return err
 	}
