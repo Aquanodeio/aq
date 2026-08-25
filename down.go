@@ -164,11 +164,28 @@ func runDown(opts downOptions) error {
 // newControlClient builds an authenticated API client from a stored credential,
 // defaulting the base URL to the configured Aquanode API.
 func newControlClient(cred *config.Credential) *api.Client {
-	apiURL := cred.APIURL
-	if apiURL == "" {
-		apiURL = config.APIURL()
+	return api.NewAuthed(resolveAPIURL(cred), cred.Token, cred.TeamID)
+}
+
+// resolveAPIURL picks the API base URL for this run: AQ_API_URL if the
+// operator set it, else the URL baked into the stored credential, else the
+// built-in default.
+//
+// The env var MUST outrank the credential. `aq login` persists the URL it
+// paired against, so a logged-in user — everyone — silently kept talking to
+// production no matter what AQ_API_URL said. That made the documented local-dev
+// override dead on arrival, and worse than dead: pointing it at a local stack
+// LOOKED like it worked and quietly rented a real billable box in prod instead.
+// An explicit environment override is the strongest signal of intent there is;
+// nothing persisted should beat it.
+func resolveAPIURL(cred *config.Credential) string {
+	if v := config.APIURLOverride(); v != "" {
+		return v
 	}
-	return api.NewAuthed(apiURL, cred.Token, cred.TeamID)
+	if cred != nil && cred.APIURL != "" {
+		return cred.APIURL
+	}
+	return config.APIURL()
 }
 
 // parseInterspersed parses fs while allowing flags and positional arguments to

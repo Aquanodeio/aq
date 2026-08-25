@@ -34,9 +34,19 @@ type Credential struct {
 	Scopes  []string `json:"scopes,omitempty"`
 }
 
+// APIURLOverride returns AQ_API_URL when it is set, else "".
+//
+// Split out from APIURL so callers can tell "the operator explicitly pointed
+// this run somewhere" from "nothing was configured, use the default". That
+// distinction is the whole reason the override works at all — see
+// resolveAPIURL.
+func APIURLOverride() string {
+	return os.Getenv("AQ_API_URL")
+}
+
 // APIURL returns the configured Aquanode API base URL, honoring AQ_API_URL.
 func APIURL() string {
-	if v := os.Getenv("AQ_API_URL"); v != "" {
+	if v := APIURLOverride(); v != "" {
 		return v
 	}
 	return DefaultAPIURL

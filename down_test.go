@@ -151,3 +151,29 @@ func TestDownWithoutSnapshotSkipsCheckpoint(t *testing.T) {
 		t.Fatal("checkpoint ran without --save")
 	}
 }
+
+// TestResolveAPIURLLetsTheEnvOverrideWin is a safety test, not a preference
+// test. `aq login` persists the URL it paired against, so before this every
+// logged-in user — everyone — kept talking to production no matter what
+// AQ_API_URL said. Pointing it at a local stack LOOKED like it worked and
+// quietly rented a real billable box in prod instead, which is exactly how a
+// validation run leaked two live deployments.
+func TestResolveAPIURLLetsTheEnvOverrideWin(t *testing.T) {
+	stored := &config.Credential{APIURL: "https://api.aquanode.io/api/v1"}
+
+	t.Setenv("AQ_API_URL", "http://localhost:11080/api/v1")
+	if got := resolveAPIURL(stored); got != "http://localhost:11080/api/v1" {
+		t.Fatalf("the env override must beat the stored credential, got %q", got)
+	}
+
+	t.Setenv("AQ_API_URL", "")
+	if got := resolveAPIURL(stored); got != "https://api.aquanode.io/api/v1" {
+		t.Fatalf("with no override the stored credential wins, got %q", got)
+	}
+	if got := resolveAPIURL(&config.Credential{}); got != config.DefaultAPIURL {
+		t.Fatalf("with neither, the built-in default, got %q", got)
+	}
+	if got := resolveAPIURL(nil); got != config.DefaultAPIURL {
+		t.Fatalf("a nil credential must not panic, got %q", got)
+	}
+}

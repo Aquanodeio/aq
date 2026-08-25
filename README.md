@@ -70,6 +70,32 @@ aq down my-box                    # tear it down and stop billing
 `aq` does the renting and provisioning; snapshot/restore is a durable, standalone
 capability of the box itself, so your data outlives any single `aq` session.
 
+## What's running
+
+```sh
+aq ls              # live boxes: id, name, status, GPU, provider, hourly rate, age
+aq ls --all        # include closed and failed ones
+```
+
+The rate column always names its currency (`0.1500 USD`). That is the provider's
+own denomination — not always dollars — so it is never printed as a bare `$`.
+
+## Multiple GPUs
+
+```sh
+aq up --gpus 4                  # only consider offers with at least 4 GPUs
+aq deploy --snapshot ext-42 --gpus 2
+```
+
+Default is 1, max is 8. CPU, RAM and storage scale with the count.
+
+Worth knowing: on providers that sell whole nodes, you get the whole physical box
+whatever you ask for, and the price is the same — so `--gpus` there is how you
+stop paying node price for a box configured with one GPU's worth of CPU and RAM.
+On providers that sell per-GPU slices it picks a different box. `--max-price` is
+compared against the **whole offer's** price, not the per-GPU price.
+
+
 ## Run your local code on the box
 
 `aq push` sends your working directory up; `aq run` sends it and then runs something
@@ -102,6 +128,23 @@ them over ssh is slower than fetching them on the box.
 
 By default `aq` skips version-control metadata, virtualenvs, module trees and
 interpreter caches, which is what keeps a first push seconds rather than minutes.
+
+### Long runs
+
+`aq run` holds your terminal, so closing the laptop kills the run. For anything
+long, detach it:
+
+```sh
+aq run --detach -- python train.py    # prints a run id and returns
+aq logs -f                            # follow the newest run
+aq logs --list                        # every run on this box, state, command
+aq logs --run 20260826-141230 -n 500  # a specific one
+```
+
+A detached run keeps going after you disconnect, writes its output to a file on
+the box, and records its exit code — so a log that stops moving tells you whether
+it finished, crashed, or is just quiet. The run id goes to stdout on its own, so
+`RUN=$(aq run --detach -- python train.py)` works.
 
 **Transport.** If both your machine and the box have `rsync`, `aq` uses it and only
 changed files move. Otherwise it falls back to tar over ssh, which re-sends the whole

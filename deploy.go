@@ -22,6 +22,7 @@ type deployOptions struct {
 	template     string // "" → restore only, no app relaunch
 	name         string
 	gpuModel     string
+	gpuCount     int
 	maxPrice     float64
 	provider     string
 	showSecrets  bool
@@ -50,6 +51,7 @@ func deploy(args []string) error {
 	noApp := fs.Bool("no-app", false, "Restore only — do not relaunch an app")
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
+	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
 	name := fs.String("name", "", "Set the deployment's display name (default: an auto-generated name)")
 	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
@@ -65,6 +67,10 @@ func deploy(args []string) error {
 	}
 	if source == "" {
 		return errors.New("a snapshot is required — pass --snapshot <id> (or `aq deploy <id>`)")
+	}
+
+	if err := validateGPUCount(*gpus); err != nil {
+		return err
 	}
 
 	if *comfyui && *jupyter {
@@ -98,6 +104,7 @@ func deploy(args []string) error {
 		template:    template,
 		name:        strings.TrimSpace(*name),
 		gpuModel:    *gpu,
+		gpuCount:    *gpus,
 		maxPrice:    *maxPrice,
 		provider:    *provider,
 		showSecrets: *showSecrets,
@@ -129,10 +136,7 @@ func runDeploy(opts deployOptions) error {
 		opts.probe = httpAppReady
 	}
 
-	apiURL := opts.cred.APIURL
-	if apiURL == "" {
-		apiURL = config.APIURL()
-	}
+	apiURL := resolveAPIURL(opts.cred)
 	client := api.NewAuthed(apiURL, opts.cred.Token, opts.cred.TeamID)
 
 	// 1. Ensure an SSH key is registered (own-key access to the restored box).
@@ -153,6 +157,7 @@ func runDeploy(opts deployOptions) error {
 		Template:       opts.template,
 		Name:           opts.name,
 		GPUModel:       opts.gpuModel,
+		GPUCount:       opts.gpuCount,
 		MaxPrice:       opts.maxPrice,
 		Provider:       opts.provider,
 	})
