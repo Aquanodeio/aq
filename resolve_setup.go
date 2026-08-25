@@ -67,7 +67,7 @@ func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 }
 
 // setupIDForDeployment maps a deployment id to the setup whose lease it
-// currently holds. `aq down --snapshot` uses this: the checkpoint save it
+// currently holds. `aq down --save` uses this: the checkpoint save it
 // takes before terminating is a setup-scoped call, but the deployment being
 // torn down is the only identifier the user gave it.
 func setupIDForDeployment(client *api.Client, deploymentID int) (string, error) {

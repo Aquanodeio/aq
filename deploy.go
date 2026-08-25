@@ -44,9 +44,9 @@ type deployOptions struct {
 // research/action/02-console-dx.md (CD3).
 func deploy(args []string) error {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
-	snapshot := fs.String("snapshot", "", "Snapshot to deploy (id from `aq` / the console, e.g. ext-42)")
-	comfyui := fs.Bool("comfyui", false, "Relaunch ComfyUI on the restored data (default)")
-	jupyter := fs.Bool("jupyter", false, "Relaunch Torch + Jupyter on the restored data")
+	snapshot := fs.String("snapshot", "", "Save to deploy (id from `aq` / the console, e.g. ext-42)")
+	comfyui := fs.Bool("comfyui", false, "Relaunch ComfyUI on the restored data (default app if you don't pick one)")
+	jupyter := fs.Bool("jupyter", false, "Relaunch Torch + Jupyter on the restored data instead")
 	noApp := fs.Bool("no-app", false, "Restore only — do not relaunch an app")
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")

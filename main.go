@@ -80,8 +80,8 @@ func main() {
 		run(fork(args))
 	case "edit-version":
 		run(editVersion(args))
-	case "pause":
-		run(pause(args))
+	case "park":
+		run(park(args))
 	case "autosave":
 		run(autosave(args))
 	case "autopause":
@@ -137,7 +137,7 @@ Commands:
   share         Get a link to one saved version of a setup
   fork          Turn a share link into a new setup in your own library
   edit-version  Edit a saved version's label, description, or visibility
-  pause         Save a setup, then release its machine (resume later with up)
+  park          Save a setup, then release its machine (resume later with up)
   autosave      Turn a setup's automated snapshotting on or off
   autopause     Turn a setup's stop-when-idle preference on or off
   force-detach  Break a setup's lease even mid-sync (can lose unsynced work)
@@ -167,14 +167,16 @@ up flags:
   --jupyter          Install Torch + Jupyter instead
 
 deploy flags:
-  --snapshot <id>    Snapshot to deploy (id from aq / the console, e.g. ext-42)
-  --comfyui          Relaunch ComfyUI on the restored data (default)
-  --jupyter          Relaunch Torch + Jupyter on the restored data
-  --no-app           Restore only — do not relaunch an app
+  --snapshot <id>    Save to deploy (id from aq / the console, e.g. ext-42)
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
+
+  App (optional — relaunches ComfyUI by default; --no-app restores data only):
+  --comfyui          Relaunch ComfyUI on the restored data
+  --jupyter          Relaunch Torch + Jupyter on the restored data instead
+  --no-app           Restore only — do not relaunch an app
 
 ssh:
   aq ssh                     Open a shell on your only live deployment
@@ -226,7 +228,7 @@ call / calls:
                               could not get the call a box at all — not that
                               the call's own code failed.
 
-status / save / share / fork / edit-version / pause / autosave / autopause /
+status / save / share / fork / edit-version / park / autosave / autopause /
 force-detach / sync-now / setups / down:
   aq status <name|id>        Re-check a provisioning or running setup
                              (add --show-secrets to print the password)
@@ -255,8 +257,12 @@ force-detach / sync-now / setups / down:
                              a label/description back to empty.
                              (--label <text>, --description <text>,
                              --visibility private|team|public)
-  aq pause <name|id>         Save the setup, then release its machine.
-                             Pick it back up any time with "aq up".
+  aq park <name|id>          Save the setup, then release its machine.
+                             Pick it back up any time with "aq up". Named
+                             "park", not "pause" — console's own "pause"
+                             already names a different thing (pausing the
+                             automated-snapshot cron on the older Snapshotter
+                             tab), so this avoids the collision.
   aq autosave <name|id> on|off
                              Turn automated snapshotting on or off. This
                              keeps ONE always-current copy — it is NOT a
@@ -289,7 +295,7 @@ force-detach / sync-now / setups / down:
   aq setups                  List the setups you own: name, whether it's
                              running, latest saved version, and size.
   aq down <name|id>          Tear the setup down and stop billing
-                             (--snapshot saves first; terminate is skipped
+                             (--save saves first; terminate is skipped
                              if the save fails)
 
 Environment:

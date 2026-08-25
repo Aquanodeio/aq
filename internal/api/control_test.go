@@ -9,7 +9,7 @@ import (
 )
 
 // TestGetDeploymentReturnsProjectID checks GetDeployment (the raw
-// GET /deployments/:id row) decodes project_id — the field `aq pause` needs
+// GET /deployments/:id row) decodes project_id — the field `aq park` needs
 // to hit the project-scoped pause route, which the transformed /status and
 // list endpoints don't carry.
 func TestGetDeploymentReturnsProjectID(t *testing.T) {
@@ -31,10 +31,12 @@ func TestGetDeploymentReturnsProjectID(t *testing.T) {
 	}
 }
 
-// TestPauseDeploymentPostsToProjectScopedPath checks PauseDeployment hits the
-// existing /deployments/project/:projectId/pause route with deploymentId in
-// the body, not a hypothetical deployment-scoped pause endpoint.
-func TestPauseDeploymentPostsToProjectScopedPath(t *testing.T) {
+// TestParkDeploymentPostsToProjectScopedPath checks ParkDeployment (`aq
+// park`) hits the existing /deployments/project/:projectId/pause route with
+// deploymentId in the body, not a hypothetical deployment-scoped pause
+// endpoint. The route itself is still named "pause" server-side — only the
+// CLI verb was renamed to "park", see park.go's doc comment for why.
+func TestParkDeploymentPostsToProjectScopedPath(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,8 +47,8 @@ func TestPauseDeploymentPostsToProjectScopedPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := NewAuthed(srv.URL, "tok", "t").PauseDeployment("proj-1", 2884); err != nil {
-		t.Fatalf("PauseDeployment: %v", err)
+	if err := NewAuthed(srv.URL, "tok", "t").ParkDeployment("proj-1", 2884); err != nil {
+		t.Fatalf("ParkDeployment: %v", err)
 	}
 	if gotPath != "/deployments/project/proj-1/pause" {
 		t.Errorf("path = %q, want /deployments/project/proj-1/pause", gotPath)

@@ -91,7 +91,7 @@ func snapshot(args []string) error {
 }
 
 // runSnapshot saves a setup's current state into its named lineage, given an
-// already-resolved setup id. Reused by `aq down --snapshot` as the
+// already-resolved setup id. Reused by `aq down --save` as the
 // checkpoint step before terminating.
 func runSnapshot(opts snapshotOptions) (api.SetupVersion, error) {
 	client := newControlClient(opts.cred)

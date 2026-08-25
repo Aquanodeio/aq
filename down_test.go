@@ -104,7 +104,7 @@ func TestDownRequiresLogin(t *testing.T) {
 }
 
 // TestDownWithSnapshotAbortsTerminateWhenCheckpointFails is the safety property
-// --snapshot exists for: a failed save must leave the box running, never
+// --save exists for: a failed save must leave the box running, never
 // terminated unsaved.
 func TestDownWithSnapshotAbortsTerminateWhenCheckpointFails(t *testing.T) {
 	closed := false
@@ -148,6 +148,6 @@ func TestDownWithoutSnapshotSkipsCheckpoint(t *testing.T) {
 		func(downOptions) error { return nil },
 	)
 	if checkpointed {
-		t.Fatal("checkpoint ran without --snapshot")
+		t.Fatal("checkpoint ran without --save")
 	}
 }

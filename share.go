@@ -38,7 +38,7 @@ func share(args []string) error {
 	target := positional[0]
 	version, err := strconv.Atoi(positional[1])
 	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q — pass the version number shown by `aq snapshot` or `aq setups` (e.g. 3 for v3)", positional[1])
+		return fmt.Errorf("invalid version %q — pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
 	}
 
 	cred, err := requireLogin()

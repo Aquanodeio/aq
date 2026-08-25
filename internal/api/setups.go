@@ -297,7 +297,8 @@ func (c *Client) SyncSetupNow(setupID string) (*SetupSyncResult, error) {
 // never overwrites the existing value; there is currently no way to send an
 // explicit `null` to CLEAR one back to empty (the schema allows it, but
 // distinguishing "not touched" from "clear to null" needs more than a plain
-// omitempty pointer — left out of this first cut, see aq's #738 report).
+// omitempty pointer, since both render as an absent key — deliberately left
+// unsupported rather than guessed at).
 // Visibility is a plain non-nullable enum string when set.
 type UpdateSnapshotVersionRequest struct {
 	Label       *string `json:"label,omitempty"`
