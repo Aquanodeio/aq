@@ -30,7 +30,7 @@ type upOptions struct {
 	maxPrice     float64
 	provider     string
 	showSecrets  bool
-	idlePolicy   *api.IdlePolicyUpdate // nil unless the user passed --auto-stop/--warn-after/--stop-after
+	idlePolicy   *api.IdlePolicyUpdate // nil unless the user passed --auto-pause/--warn-after/--pause-after
 	out          io.Writer
 	errOut       io.Writer
 	pollInterval time.Duration
@@ -51,9 +51,9 @@ func up(args []string) error {
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
 	name := fs.String("name", "", "Set the deployment's display name (default: an auto-generated name)")
 	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
-	autoStop := fs.Bool("auto-stop", false, "Enable idle auto-stop on this deployment (off by default)")
-	warnAfter := fs.String("warn-after", "", "With --auto-stop: warn after this much idle time, e.g. 30m")
-	stopAfter := fs.String("stop-after", "", "With --auto-stop: auto-stop after this much idle time, e.g. 1h")
+	autoPause := fs.Bool("auto-pause", false, "Enable idle auto-pause on this deployment (off by default)")
+	warnAfter := fs.String("warn-after", "", "With --auto-pause: warn after this much idle time, e.g. 30m")
+	pauseAfter := fs.String("pause-after", "", "With --auto-pause: auto-pause after this much idle time, e.g. 1h")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func up(args []string) error {
 		template = templateJupyter
 	}
 
-	idlePolicy, err := buildUpIdlePolicy(*autoStop, *warnAfter, *stopAfter)
+	idlePolicy, err := buildUpIdlePolicy(*autoPause, *warnAfter, *pauseAfter)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func up(args []string) error {
 }
 
 // buildUpIdlePolicy builds the optional `idlePolicy` body for POST
-// /deployments/up from `aq up`'s --auto-stop/--warn-after/--stop-after flags.
+// /deployments/up from `aq up`'s --auto-pause/--warn-after/--pause-after flags.
 //
 // It returns nil — not a struct with everything zeroed — when the user passed
 // none of the three flags. A nil IdlePolicy omits the key from the request
@@ -104,15 +104,15 @@ func up(args []string) error {
 // checked because the user SEES the checked box and can untick it; a CLI flag
 // the user never typed is invisible, so its absence must never be read as an
 // explicit "off" — and it must equally never be read as an explicit "on."
-func buildUpIdlePolicy(autoStop bool, warnAfterStr, stopAfterStr string) (*api.IdlePolicyUpdate, error) {
-	if !autoStop && warnAfterStr == "" && stopAfterStr == "" {
+func buildUpIdlePolicy(autoPause bool, warnAfterStr, pauseAfterStr string) (*api.IdlePolicyUpdate, error) {
+	if !autoPause && warnAfterStr == "" && pauseAfterStr == "" {
 		return nil, nil
 	}
 
 	var p api.IdlePolicyUpdate
-	if autoStop {
+	if autoPause {
 		t := true
-		p.AutoStopEnabled = &t
+		p.AutoPauseEnabled = &t
 	}
 	if warnAfterStr != "" {
 		m, err := parsePositiveMinutes("--warn-after", warnAfterStr)
@@ -121,18 +121,18 @@ func buildUpIdlePolicy(autoStop bool, warnAfterStr, stopAfterStr string) (*api.I
 		}
 		p.WarnAfterMinutes = &m
 	}
-	if stopAfterStr != "" {
-		m, err := parsePositiveMinutes("--stop-after", stopAfterStr)
+	if pauseAfterStr != "" {
+		m, err := parsePositiveMinutes("--pause-after", pauseAfterStr)
 		if err != nil {
 			return nil, err
 		}
 		p.ActAfterMinutes = &m
 	}
-	// Same client-side mirror of the server's warn < stop rule used by
+	// Same client-side mirror of the server's warn < pause rule used by
 	// `aq idle set` — fail fast rather than round-trip a doomed request.
 	if p.WarnAfterMinutes != nil && p.ActAfterMinutes != nil && *p.WarnAfterMinutes >= *p.ActAfterMinutes {
 		return nil, fmt.Errorf(
-			"--warn-after (%s) must be less than --stop-after (%s)",
+			"--warn-after (%s) must be less than --pause-after (%s)",
 			formatMinutes(*p.WarnAfterMinutes), formatMinutes(*p.ActAfterMinutes),
 		)
 	}

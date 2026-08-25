@@ -50,10 +50,10 @@ type UpRequest struct {
 	// a stable `ticket-<N>-<label>` here lets the session-scoped reaper attribute
 	// and clean up a throwaway box that would otherwise bill as an orphan (#310).
 	Name string `json:"name,omitempty"`
-	// IdlePolicy opts a fresh deployment into idle-auto-stop at creation time.
+	// IdlePolicy opts a fresh deployment into idle-auto-pause at creation time.
 	// Nil (the Go zero value for a pointer) omits the key entirely, meaning "no
 	// opinion, use the orchestrator's defaults," never "explicitly off." Those
-	// defaults are OFF everywhere (DEFAULT_IDLE_POLICY.autoStopEnabled is false
+	// defaults are OFF everywhere (DEFAULT_IDLE_POLICY.autoPauseEnabled is false
 	// and the console's deploy-sheet toggle starts unchecked), so a CLI deploy
 	// that says nothing is not enrolled — same as every other surface.
 	IdlePolicy *IdlePolicyUpdate `json:"idlePolicy,omitempty"`
@@ -246,13 +246,12 @@ func (c *Client) GetDeployment(deploymentID int) (*Deployment, error) {
 	return &out, nil
 }
 
-// ParkDeployment saves the deployment's current state and releases its
-// rented box (`aq park`), via the existing project-scoped pause route — the
-// route and its path are still named "pause" server-side, but the CLI verb
-// is "park" (see park.go's doc comment for why). Pause/park always targets
-// the ACTIVE deployment under a project, so it's keyed by projectID in the
-// path plus deploymentID in the body, not by deployment id alone.
-func (c *Client) ParkDeployment(projectID string, deploymentID int) error {
+// PauseDeployment saves the deployment's current state and releases its
+// rented box (`aq pause`), via the existing project-scoped pause route.
+// Pause always targets the ACTIVE deployment under a project, so it's keyed
+// by projectID in the path plus deploymentID in the body, not by deployment
+// id alone.
+func (c *Client) PauseDeployment(projectID string, deploymentID int) error {
 	path := "/deployments/project/" + url.PathEscape(projectID) + "/pause"
 	body := map[string]int{"deploymentId": deploymentID}
 	return c.postJSON(path, body, nil)

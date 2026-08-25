@@ -268,9 +268,9 @@ func TestRunUpThreadsName(t *testing.T) {
 }
 
 // TestRunUpNoIdleFlagsOmitsIdlePolicyKey is the default-off contract: a plain
-// `aq up` with none of --auto-stop/--warn-after/--stop-after passed must send
+// `aq up` with none of --auto-pause/--warn-after/--pause-after passed must send
 // no "idlePolicy" key at all — not an idlePolicy object with
-// autoStopEnabled:false. The console can default its checkbox on because the
+// autoPauseEnabled:false. The console can default its checkbox on because the
 // user can see and untick it; the CLI has no such surface, so silence must
 // mean "no opinion," never an explicit off.
 func TestRunUpNoIdleFlagsOmitsIdlePolicyKey(t *testing.T) {
@@ -305,10 +305,10 @@ func TestRunUpNoIdleFlagsOmitsIdlePolicyKey(t *testing.T) {
 	}
 }
 
-// TestRunUpAutoStopSendsIdlePolicy checks --auto-stop (plus --warn-after /
-// --stop-after) builds an idlePolicy object carrying only the fields the user
+// TestRunUpAutoPauseSendsIdlePolicy checks --auto-pause (plus --warn-after /
+// --pause-after) builds an idlePolicy object carrying only the fields the user
 // actually passed.
-func TestRunUpAutoStopSendsIdlePolicy(t *testing.T) {
+func TestRunUpAutoPauseSendsIdlePolicy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
 
@@ -321,7 +321,7 @@ func TestRunUpAutoStopSendsIdlePolicy(t *testing.T) {
 
 	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
 	warn := 30
-	idlePolicy := &api.IdlePolicyUpdate{AutoStopEnabled: boolPtr(true), WarnAfterMinutes: &warn}
+	idlePolicy := &api.IdlePolicyUpdate{AutoPauseEnabled: boolPtr(true), WarnAfterMinutes: &warn}
 
 	var out, errOut bytes.Buffer
 	err := runUp(upOptions{
@@ -342,14 +342,14 @@ func TestRunUpAutoStopSendsIdlePolicy(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected an idlePolicy object in the request body; got: %v", server.rawUpBody)
 	}
-	if got["autoStopEnabled"] != true {
-		t.Errorf("expected autoStopEnabled:true, got %v", got)
+	if got["autoPauseEnabled"] != true {
+		t.Errorf("expected autoPauseEnabled:true, got %v", got)
 	}
 	if got["warnAfterMinutes"] != float64(30) {
 		t.Errorf("expected warnAfterMinutes:30, got %v", got)
 	}
 	if _, ok := got["actAfterMinutes"]; ok {
-		t.Errorf("did not expect actAfterMinutes (--stop-after was never passed); got: %v", got)
+		t.Errorf("did not expect actAfterMinutes (--pause-after was never passed); got: %v", got)
 	}
 	if _, ok := got["gpuIdleThresholdPercent"]; ok {
 		t.Errorf("did not expect gpuIdleThresholdPercent (--gpu-threshold isn't exposed on `aq up`); got: %v", got)
@@ -369,8 +369,8 @@ func TestBuildUpIdlePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildUpIdlePolicy error: %v", err)
 	}
-	if p == nil || p.AutoStopEnabled == nil || *p.AutoStopEnabled != true {
-		t.Fatalf("expected autoStopEnabled=true, got %+v", p)
+	if p == nil || p.AutoPauseEnabled == nil || *p.AutoPauseEnabled != true {
+		t.Fatalf("expected autoPauseEnabled=true, got %+v", p)
 	}
 	if p.WarnAfterMinutes != nil || p.ActAfterMinutes != nil {
 		t.Errorf("expected warn/stop to stay nil when not passed, got %+v", p)

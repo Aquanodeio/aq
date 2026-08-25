@@ -9,7 +9,7 @@ import (
 )
 
 // Setup-lineage endpoints backing `aq save`, `aq share`, `aq fork`,
-// `aq autosave`, `aq autopause`, `aq force-detach`, `aq sync-now`,
+// `aq autopause`, `aq force-detach`, `aq sync-now`,
 // `aq edit-version`, and `aq setups`. A "setup" is its own object, distinct
 // from the deployment that may currently hold its compute lease (Deployment,
 // in control.go) — never pass a deployment id where a setup id belongs, or
@@ -202,24 +202,6 @@ func (c *Client) ForkSetup(req ForkSetupRequest) (*Setup, error) {
 	return &out, nil
 }
 
-// SetupAutosaveRequest is the body of PUT /setups/:id/autosave.
-type SetupAutosaveRequest struct {
-	Enabled bool `json:"enabled"`
-}
-
-// SetSetupAutosave turns a setup's autosave on or off, returning the updated
-// Setup row. Autosave keeps one always-current copy — it is not a history
-// and not undo, so the CLI prints that warning (plus the per-GiB storage
-// rate) itself before ever calling this when turning it on.
-func (c *Client) SetSetupAutosave(setupID string, enabled bool) (*Setup, error) {
-	var out Setup
-	path := "/setups/" + url.PathEscape(setupID) + "/autosave"
-	if err := c.putJSON(path, SetupAutosaveRequest{Enabled: enabled}, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // SetupAutopauseRequest is the body of PUT /setups/:id/autopause.
 type SetupAutopauseRequest struct {
 	Enabled bool `json:"enabled"`
@@ -229,14 +211,14 @@ type SetupAutopauseRequest struct {
 // (on or off), returning the updated Setup row.
 //
 // This is NOT the same mechanism as `aq idle`: idle policy is a
-// PER-DEPLOYMENT threshold config (warn/stop-after minutes, GPU idle %) that
+// PER-DEPLOYMENT threshold config (warn/pause-after minutes, GPU idle %) that
 // always outranks whatever this sets (see idlePolicyFor in the
 // orchestrator's idle.config.ts, which layers Setup.autopauseEnabled in
 // underneath it). Autopause carries no thresholds of its own — it only says
-// "stop this setup's box when it goes idle, using the platform's default
-// thresholds." There is also no verb to clear it back to "unset" — a setup
-// that never calls this route simply follows the platform default
-// (DEFAULT_IDLE_POLICY.autoStopEnabled, currently off).
+// "auto-pause this setup's box when it goes idle, using the platform's
+// default thresholds." There is also no verb to clear it back to "unset" —
+// a setup that never calls this route simply follows the platform default
+// (DEFAULT_IDLE_POLICY.autoPauseEnabled, currently off).
 func (c *Client) SetSetupAutopause(setupID string, enabled bool) (*Setup, error) {
 	var out Setup
 	path := "/setups/" + url.PathEscape(setupID) + "/autopause"
@@ -357,11 +339,10 @@ func (n *setupSizeBytes) UnmarshalJSON(b []byte) error {
 // the top of this file for why this struct's convention differs from
 // SetupVersion's.
 type Setup struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Status          string `json:"status"`
-	MountPath       string `json:"mountPath"`
-	AutosaveEnabled bool   `json:"autosaveEnabled"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	MountPath string `json:"mountPath"`
 	// AutopauseEnabled is three-state on the wire: nil = never explicitly
 	// chosen (the setup follows the platform default), non-nil = explicitly
 	// set true/false. NEVER collapse nil into false when rendering this —

@@ -12,12 +12,12 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// idle dispatches `aq idle status|set` — the idle-auto-stop policy commands.
+// idle dispatches `aq idle status|set` — the idle-auto-pause policy commands.
 //
 // This is the CLI-side half of a policy the console already exposes: a
 // setting only reachable from the browser is invisible to anyone who deploys
 // or drives their boxes from a terminal or a script, which is exactly how the
-// idle policy's own effect (a box quietly stopped) would otherwise get
+// idle policy's own effect (a box quietly paused) would otherwise get
 // noticed too late.
 func idle(args []string) error {
 	if len(args) == 0 {
@@ -61,7 +61,7 @@ func idleStatus(args []string) error {
 	return runIdleStatus(idleStatusOptions{cred: cred, target: target, out: os.Stdout})
 }
 
-// runIdleStatus fetches and renders a deployment's idle-auto-stop policy.
+// runIdleStatus fetches and renders a deployment's idle-auto-pause policy.
 func runIdleStatus(opts idleStatusOptions) error {
 	out := opts.out
 	if out == nil {
@@ -88,7 +88,7 @@ func runIdleStatus(opts idleStatusOptions) error {
 // UNKNOWN must render as unknown — never as ACTIVE and never as IDLE. UNKNOWN
 // means the box has reported no usable usage data, and presenting that as
 // either extreme is a lie the user could act on (stop a box that's actually
-// busy, or trust auto-stop on a box it can't currently see).
+// busy, or trust auto-pause on a box it can't currently see).
 func printIdlePolicy(out io.Writer, p api.IdlePolicy) {
 	fmt.Fprintf(out, "state       %s\n", idleStateLabel(p.State, p.IdleMinutes))
 	printIdlePolicySettings(out, p)
@@ -102,10 +102,10 @@ func printIdlePolicy(out io.Writer, p api.IdlePolicy) {
 func printIdlePolicySettings(out io.Writer, p api.IdlePolicy) {
 	fmt.Fprintf(out, "warn after  %s\n", formatMinutes(p.WarnAfterMinutes))
 	enabled := "disabled"
-	if p.AutoStopEnabled {
+	if p.AutoPauseEnabled {
 		enabled = "enabled"
 	}
-	fmt.Fprintf(out, "stop after  %s  (%s)\n", formatMinutes(p.ActAfterMinutes), enabled)
+	fmt.Fprintf(out, "pause after  %s  (%s)\n", formatMinutes(p.ActAfterMinutes), enabled)
 	fmt.Fprintf(out, "gpu idle threshold  %d%%\n", p.GPUIdleThresholdPercent)
 }
 
@@ -118,7 +118,7 @@ func idleStateLabel(state string, idleMinutes int) string {
 	case "IDLE_WARN":
 		return fmt.Sprintf("IDLE, warned (%d min)", idleMinutes)
 	case "IDLE_ACT":
-		return fmt.Sprintf("IDLE, stopping (%d min)", idleMinutes)
+		return fmt.Sprintf("IDLE, pausing (%d min)", idleMinutes)
 	case "UNKNOWN":
 		return "UNKNOWN — no usage data yet"
 	default:
@@ -129,7 +129,7 @@ func idleStateLabel(state string, idleMinutes int) string {
 }
 
 // formatMinutes renders a minute count the way a user would type it back as a
-// --warn-after/--stop-after duration flag (e.g. "30m", "1h", "1h30m").
+// --warn-after/--pause-after duration flag (e.g. "30m", "1h", "1h30m").
 func formatMinutes(m int) string {
 	if m <= 0 {
 		return fmt.Sprintf("%dm", m)
@@ -150,13 +150,13 @@ func formatMinutes(m int) string {
 // the API, or an unset flag would silently overwrite the user's other
 // settings with a zero value.
 type idleSetOptions struct {
-	cred            *config.Credential
-	target          string
-	warnAfter       *int // minutes
-	stopAfter       *int // minutes
-	gpuThreshold    *int // percent
-	autoStopEnabled *bool
-	out             io.Writer
+	cred             *config.Credential
+	target           string
+	warnAfter        *int // minutes
+	pauseAfter       *int // minutes
+	gpuThreshold     *int // percent
+	autoPauseEnabled *bool
+	out              io.Writer
 }
 
 // parseIdleSetArgs parses `aq idle set`'s flags and positional target,
@@ -164,10 +164,10 @@ type idleSetOptions struct {
 func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 	fs := flag.NewFlagSet("idle set", flag.ContinueOnError)
 	warnAfterStr := fs.String("warn-after", "", "warn after this much idle time, e.g. 30m, 1h")
-	stopAfterStr := fs.String("stop-after", "", "auto-stop after this much idle time, e.g. 1h")
+	pauseAfterStr := fs.String("pause-after", "", "auto-pause after this much idle time, e.g. 1h")
 	gpuThreshold := fs.Int("gpu-threshold", -1, "GPU utilization percent below which the box counts as idle (0-100)")
-	on := fs.Bool("on", false, "enable idle auto-stop")
-	off := fs.Bool("off", false, "disable idle auto-stop")
+	on := fs.Bool("on", false, "enable idle auto-pause")
+	off := fs.Bool("off", false, "disable idle auto-pause")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -190,12 +190,12 @@ func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 		}
 		opts.warnAfter = &m
 	}
-	if *stopAfterStr != "" {
-		m, err := parsePositiveMinutes("--stop-after", *stopAfterStr)
+	if *pauseAfterStr != "" {
+		m, err := parsePositiveMinutes("--pause-after", *pauseAfterStr)
 		if err != nil {
 			return idleSetOptions{}, err
 		}
-		opts.stopAfter = &m
+		opts.pauseAfter = &m
 	}
 	if *gpuThreshold != -1 {
 		if *gpuThreshold < 0 || *gpuThreshold > 100 {
@@ -205,26 +205,26 @@ func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 	}
 	if *on {
 		t := true
-		opts.autoStopEnabled = &t
+		opts.autoPauseEnabled = &t
 	}
 	if *off {
 		f := false
-		opts.autoStopEnabled = &f
+		opts.autoPauseEnabled = &f
 	}
 
 	// Client-side mirror of the server's rule, so a doomed request fails fast
 	// with a clear message instead of a round trip for a 400. The server
 	// remains the real authority — it also catches the case where only one of
 	// the two is being changed against the deployment's existing other value.
-	if opts.warnAfter != nil && opts.stopAfter != nil && *opts.warnAfter >= *opts.stopAfter {
+	if opts.warnAfter != nil && opts.pauseAfter != nil && *opts.warnAfter >= *opts.pauseAfter {
 		return idleSetOptions{}, fmt.Errorf(
-			"--warn-after (%s) must be less than --stop-after (%s)",
-			formatMinutes(*opts.warnAfter), formatMinutes(*opts.stopAfter),
+			"--warn-after (%s) must be less than --pause-after (%s)",
+			formatMinutes(*opts.warnAfter), formatMinutes(*opts.pauseAfter),
 		)
 	}
 
-	if opts.warnAfter == nil && opts.stopAfter == nil && opts.gpuThreshold == nil && opts.autoStopEnabled == nil {
-		return idleSetOptions{}, errors.New("nothing to update — pass at least one of --warn-after, --stop-after, --gpu-threshold, --on/--off")
+	if opts.warnAfter == nil && opts.pauseAfter == nil && opts.gpuThreshold == nil && opts.autoPauseEnabled == nil {
+		return idleSetOptions{}, errors.New("nothing to update — pass at least one of --warn-after, --pause-after, --gpu-threshold, --on/--off")
 	}
 
 	return opts, nil
@@ -247,7 +247,7 @@ func parsePositiveMinutes(flagName, raw string) (int, error) {
 // idleSet parses flags/the deployment target and wires the real environment
 // into runIdleSet.
 //
-// `aq idle set <deploymentId> [flags]` updates a deployment's idle-auto-stop
+// `aq idle set <deploymentId> [flags]` updates a deployment's idle-auto-pause
 // policy — the same policy the console's deployment settings edit.
 func idleSet(args []string) error {
 	opts, err := parseIdleSetArgs(args)
@@ -289,9 +289,9 @@ func runIdleSet(opts idleSetOptions) error {
 
 	policy, err := client.SetIdlePolicy(deploymentID, api.IdlePolicyUpdate{
 		WarnAfterMinutes:        opts.warnAfter,
-		ActAfterMinutes:         opts.stopAfter,
+		ActAfterMinutes:         opts.pauseAfter,
 		GPUIdleThresholdPercent: opts.gpuThreshold,
-		AutoStopEnabled:         opts.autoStopEnabled,
+		AutoPauseEnabled:        opts.autoPauseEnabled,
 	})
 	if err != nil {
 		return fmt.Errorf("could not update idle policy for deployment #%d: %w", deploymentID, err)
