@@ -255,6 +255,10 @@ type importServer struct {
 	// omitBackupID drops restic_backup_id from the /start response, so tests
 	// can exercise the "server didn't return it" refusal (CONTRACT.md G).
 	omitBackupID bool
+	// lastCompleteImportToken records the import_token /complete actually
+	// received, so a test can assert resume used the FRESH one from
+	// /credentials rather than a remembered one from /start.
+	lastCompleteImportToken string
 }
 
 func (s *importServer) handler() http.Handler {
@@ -280,10 +284,21 @@ func (s *importServer) handler() http.Handler {
 		}
 		writeData(w, body)
 	})
+	// /setups/import/credentials returns EVERYTHING --resume needs
+	// (setup-import.service.ts's ImportCredentialsResult, landed 960c487) —
+	// storage_prefix/restic_backup_id/restic_password alongside a FRESH
+	// import_token, so aq keeps no local copy of any of it. The token here
+	// deliberately differs from /start's "tok-1" so tests can catch aq
+	// sending the wrong one to /complete.
 	mux.HandleFunc("/setups/import/credentials", func(w http.ResponseWriter, r *http.Request) {
 		s.credentialsCalls++
 		writeData(w, map[string]any{
-			"expires_at": "2026-08-27T00:00:00Z",
+			"setup_id":         "setup-1",
+			"storage_prefix":   "team-1/ws-abc",
+			"restic_backup_id": "repo",
+			"restic_password":  "resticpw",
+			"import_token":     "tok-fresh",
+			"expires_at":       "2026-08-27T00:00:00Z",
 			"credentials": map[string]any{
 				"endpoint":          "https://s3.example.com",
 				"bucket":            "aquanode-storage",
@@ -295,6 +310,11 @@ func (s *importServer) handler() http.Handler {
 	})
 	mux.HandleFunc("/setups/import/complete", func(w http.ResponseWriter, r *http.Request) {
 		s.completeCalls++
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if tok, ok := body["import_token"].(string); ok {
+			s.lastCompleteImportToken = tok
+		}
 		writeData(w, map[string]any{
 			"setup_id":   "setup-1",
 			"version_id": 7,
@@ -544,11 +564,12 @@ func TestRunImportRefusesWhenBackupIDMissing(t *testing.T) {
 
 // TestRunImportResumeReusesStoragePrefixAndBackupID drives a failed capture
 // followed by `aq import --resume <setup-id>`, and checks the resumed
-// capture targets the EXACT SAME storage_prefix/backup_id the first attempt
-// used (never a fresh one — that's what lets restic dedup instead of
-// restarting from zero or writing a second, orphaned copy), that credentials
-// are re-minted via /setups/import/credentials, and that the local resume
-// record is cleared once the resume completes.
+// capture targets the SAME storage_prefix/backup_id the first attempt used —
+// but sourced ENTIRELY from the /setups/import/credentials response, never
+// from anything aq remembered locally (960c487 made that response return
+// everything --resume needs specifically so aq keeps no local secret file on
+// a box it doesn't control). Also checks the FRESH import_token from that
+// response is what reaches /complete, never the original /start token.
 func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 	t.Setenv("AQ_CONFIG_DIR", t.TempDir())
 
@@ -572,6 +593,8 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 		t.Fatal("complete must not be called when the capture failed")
 	}
 
+	// The resumed run's --resume flag is the ONLY input identifying the
+	// setup — no file from the failed attempt above is read.
 	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
 	okOgre, argsFile, _ := writeStubOgre(t, surveyJSON, captureJSON)
 
@@ -582,13 +605,16 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 		t.Fatalf("runImport --resume: %v", err)
 	}
 	if server.credentialsCalls == 0 {
-		t.Fatal("expected /setups/import/credentials to be called to re-mint write creds")
+		t.Fatal("expected /setups/import/credentials to be called to re-mint everything needed")
 	}
 	if server.completeCalls == 0 {
 		t.Fatal("expected complete to be called after a successful resume capture")
 	}
 	if server.startCalls != 1 {
 		t.Fatalf("resume must not call /setups/import/start again; startCalls=%d", server.startCalls)
+	}
+	if server.lastCompleteImportToken != "tok-fresh" {
+		t.Errorf("complete used import_token %q, want the fresh one from /credentials (\"tok-fresh\"), not the original /start token", server.lastCompleteImportToken)
 	}
 
 	argsRaw, err := os.ReadFile(argsFile)
@@ -600,8 +626,87 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 			t.Errorf("resumed capture args missing %q; got: %q", want, string(argsRaw))
 		}
 	}
+}
 
-	if _, err := loadImportResumeState("setup-1"); err == nil {
-		t.Error("expected the local resume state to be cleared after a successful resume")
+// listFilesUnder returns every regular file under dir, relative to dir. Used
+// to snapshot a directory tree before/after an operation.
+func listFilesUnder(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if !info.IsDir() {
+			rel, relErr := filepath.Rel(dir, path)
+			if relErr != nil {
+				rel = path
+			}
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
 	}
+	return files
+}
+
+// TestRunImportWritesNoFileUnderConfigDir is the regression guard for the
+// box-side secret file this command used to write: it walks the config dir
+// before and after a full import (survey -> confirm -> start -> capture ->
+// complete) and asserts the set of files is unchanged. A filename-specific
+// check would stop catching this the moment the file got renamed; this
+// doesn't care what it would have been called.
+func TestRunImportWritesNoFileUnderConfigDir(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("AQ_CONFIG_DIR", configDir)
+
+	before := listFilesUnder(t, configDir)
+
+	obs := sampleObservation()
+	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
+	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
+	ogrePath, _, _ := writeStubOgre(t, surveyJSON, captureJSON)
+
+	server := &importServer{}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	opts := testImportOptions(cred, ogrePath, &out, &errOut)
+
+	if err := runImport(opts); err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+
+	after := listFilesUnder(t, configDir)
+	if !slicesEqualUnordered(before, after) {
+		t.Errorf("files under the config dir changed during import: before=%v after=%v — aq must never write restic_password/import_token to disk on a box it doesn't control", before, after)
+	}
+}
+
+// slicesEqualUnordered reports whether a and b contain the same elements,
+// ignoring order.
+func slicesEqualUnordered(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, s := range a {
+		counts[s]++
+	}
+	for _, s := range b {
+		counts[s]--
+	}
+	for _, n := range counts {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }

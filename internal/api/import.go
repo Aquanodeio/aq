@@ -189,23 +189,34 @@ func (c *Client) StartImport(req ImportStartRequest) (*ImportStartResult, error)
 }
 
 // ImportCredentialsRefreshRequest is the body of POST
-// /setups/import/credentials — re-mints scoped write credentials for a still-
-// pending import. StoragePrefix/ResticPassword/ResticBackupID are unaffected
-// by this call; only the S3 write credentials themselves are time-limited.
+// /setups/import/credentials — re-mints EVERYTHING `aq import --resume`
+// needs for a still-pending import, keyed by setup id alone.
 type ImportCredentialsRefreshRequest struct {
 	SetupID string `json:"setup_id"`
 }
 
 // ImportCredentialsRefreshResult is the data returned by POST
-// /setups/import/credentials.
+// /setups/import/credentials (setup-import.service.ts's
+// ImportCredentialsResult). This is the WHOLE point of the route: it returns
+// everything --resume needs — StoragePrefix/ResticBackupID/ResticPassword
+// alongside a freshly-minted ImportToken and scoped write Credentials — so aq
+// never has to persist a single one of these locally. ImportToken here
+// SUPERSEDES any token from a prior /start or /credentials call for this
+// setup; using a remembered one for /complete will be refused.
 type ImportCredentialsRefreshResult struct {
-	Credentials ImportCredentials `json:"credentials"`
-	ExpiresAt   string            `json:"expires_at"`
+	SetupID        string            `json:"setup_id"`
+	StoragePrefix  string            `json:"storage_prefix"`
+	ResticBackupID string            `json:"restic_backup_id"`
+	ResticPassword string            `json:"restic_password"`
+	ImportToken    string            `json:"import_token"`
+	ExpiresAt      string            `json:"expires_at"`
+	Credentials    ImportCredentials `json:"credentials"`
 }
 
-// RefreshImportCredentials re-mints scoped write credentials for setupID's
-// still-pending import — the mechanism `aq import --resume` uses when the
-// credentials minted at StartImport have expired before the capture finished.
+// RefreshImportCredentials re-mints everything needed to resume setupID's
+// still-pending import: scoped write credentials, the storage location, and a
+// fresh single-use completion token. This is `aq import --resume`'s ONLY
+// source of that state — aq keeps no local copy of any of it.
 func (c *Client) RefreshImportCredentials(setupID string) (*ImportCredentialsRefreshResult, error) {
 	var out ImportCredentialsRefreshResult
 	if err := c.postJSON("/setups/import/credentials", ImportCredentialsRefreshRequest{SetupID: setupID}, &out); err != nil {
