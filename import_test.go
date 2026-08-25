@@ -79,6 +79,28 @@ esac
 	return ogrePath
 }
 
+// writeStubOgreHardError stands in for ogre exiting 1 on a handler error
+// (internal/cli/cli.go's "ogre <verb>: <msg>\n" then os.Exit(1)): a few
+// human progress lines, then ONE final line carrying the actual error, e.g.
+// contract H1's unreadable-explicit-include remedy.
+func writeStubOgreHardError(t *testing.T, finalErrLine string) string {
+	t.Helper()
+	dir := t.TempDir()
+	ogrePath := filepath.Join(dir, "ogre")
+	script := fmt.Sprintf(`#!/bin/sh
+echo "installing restic rootless..." >&2
+echo "surveying filesystem..." >&2
+cat >&2 <<'FINAL_EOF'
+%s
+FINAL_EOF
+exit 1
+`, finalErrLine)
+	if err := os.WriteFile(ogrePath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub ogre: %v", err)
+	}
+	return ogrePath
+}
+
 // sampleObservation is a minimal, schema-valid ImportObservation with one
 // capturing entry, one truncated (floor) "not capturing" entry, and one
 // unreadable entry — enough to exercise all three survey blocks.
@@ -101,6 +123,7 @@ func sampleObservation() api.ImportObservation {
 			Unreadable: []api.ImportUnreadableEntry{
 				{Path: "/root", Reason: "permission_denied"},
 			},
+			MinReportBytes: 1 << 30, // 1 GiB, ogre's default (contract H2)
 		},
 	}
 }
@@ -150,6 +173,92 @@ func TestPrintSurveyRendersAllThreeBlocks(t *testing.T) {
 	unreadableBlock := got[unreadableIdx:]
 	if !strings.Contains(unreadableBlock, "/root") || !strings.Contains(unreadableBlock, "permission_denied") {
 		t.Errorf("unreadable block missing /root/permission_denied; got:\n%s", unreadableBlock)
+	}
+
+	// Contract H1: the remedy is the point — an unreadable path can be
+	// fixed by re-running under sudo, and the CLI must say so, not just
+	// list the path.
+	if !strings.Contains(unreadableBlock, "sudo") {
+		t.Errorf("unreadable block missing the sudo remedy; got:\n%s", unreadableBlock)
+	}
+
+	// Contract H2: without the floor line, the "not capturing" block reads
+	// as EXHAUSTIVE — a directory just under the floor appears in neither
+	// list, and nothing says a floor was ever applied.
+	if !strings.Contains(notCapturingBlock, "1.0 GiB") {
+		t.Errorf("not-capturing block missing the min_report_bytes floor line; got:\n%s", notCapturingBlock)
+	}
+}
+
+// TestPrintSurveyOmitsSudoRemedyWhenNothingUnreadable checks the sudo line
+// only appears when there is something to fix — an empty "Unreadable" block
+// must not tell the user to re-run under sudo for no reason.
+func TestPrintSurveyOmitsSudoRemedyWhenNothingUnreadable(t *testing.T) {
+	obs := sampleObservation()
+	obs.Survey.Unreadable = nil
+
+	var out bytes.Buffer
+	printSurvey(&out, obs)
+	got := out.String()
+
+	if strings.Contains(got, "sudo") {
+		t.Errorf("printed a sudo remedy with nothing unreadable; got:\n%s", got)
+	}
+}
+
+// TestPrintSurveyCapturingAndUnreadableAreDistinct checks that a path
+// present in Unreadable is never ALSO rendered in the Capturing block —
+// contract H1: an unreadable capture root is dropped from Capturing and
+// reported in Unreadable only, never both (which would otherwise claim
+// capture of a tree that couldn't be read).
+func TestPrintSurveyCapturingAndUnreadableAreDistinct(t *testing.T) {
+	obs := api.ImportObservation{
+		Schema: api.ImportObservationSchema,
+		Survey: api.ImportSurvey{
+			Capturing: []api.ImportCaptureEntry{
+				{Path: "/opt/venv", Bytes: 1000, Source: "detected"},
+			},
+			Unreadable: []api.ImportUnreadableEntry{
+				{Path: "/root", Reason: "permission_denied"},
+			},
+			MinReportBytes: 1 << 30,
+		},
+	}
+
+	var out bytes.Buffer
+	printSurvey(&out, obs)
+	got := out.String()
+
+	capturingIdx := strings.Index(got, "Capturing:")
+	notCapturingIdx := strings.Index(got, "Not capturing:")
+	capturingBlock := got[capturingIdx:notCapturingIdx]
+	if strings.Contains(capturingBlock, "/root") {
+		t.Errorf("an unreadable path must never also appear in Capturing; got:\n%s", capturingBlock)
+	}
+}
+
+// TestRunOgreSurveySurfacesOgresFinalErrorLineCleanly checks a failed ogre
+// invocation's error message is ogre's own final stderr line — e.g. contract
+// H1's unreadable-explicit-include remedy ("cannot read it on this box —
+// re-run with sudo, or drop the flag") — not a vague "exit status 1", and
+// that human progress lines still stream live to stderr as they're printed.
+func TestRunOgreSurveySurfacesOgresFinalErrorLineCleanly(t *testing.T) {
+	const finalLine = "ogre capture: --include /mnt/data: cannot read it on this box — re-run with sudo, or drop the flag to import without it"
+	ogrePath := writeStubOgreHardError(t, finalLine)
+
+	var errOut bytes.Buffer
+	_, err := runOgreSurvey(ogrePath, []string{"/mnt/data"}, nil, &errOut)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "re-run with sudo") {
+		t.Errorf("error does not surface ogre's remedy cleanly: %v", err)
+	}
+	if strings.Contains(err.Error(), "exit status") {
+		t.Errorf("error still wraps the vague exit-status text instead of ogre's own message: %v", err)
+	}
+	if !strings.Contains(errOut.String(), "installing restic rootless") {
+		t.Errorf("progress lines must still stream live to stderr; got: %q", errOut.String())
 	}
 }
 

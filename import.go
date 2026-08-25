@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -260,12 +261,22 @@ func printSurvey(out io.Writer, obs api.ImportObservation) {
 	for _, e := range obs.Survey.NotCapturing {
 		fmt.Fprintf(out, "  %-40s %-12s (%s)\n", e.Path, formatSurveyBytes(e.Bytes, e.BytesTruncated), e.Reason)
 	}
+	// State the floor (contract H2): without this line the block above reads
+	// as EXHAUSTIVE, when a directory under the floor appears in neither
+	// list and nothing says a floor was ever applied — the same class of
+	// failure as a silent skip.
+	if obs.Survey.MinReportBytes > 0 {
+		fmt.Fprintf(out, "  (directories under %s are not listed)\n", formatBytes(obs.Survey.MinReportBytes))
+	}
 
 	if len(obs.Survey.Unreadable) > 0 {
 		fmt.Fprintln(out, "\nUnreadable (could not even check — not the same as \"not capturing\"):")
 		for _, e := range obs.Survey.Unreadable {
 			fmt.Fprintf(out, "  %-40s (%s)\n", e.Path, e.Reason)
 		}
+		// The remedy is the point (contract H1): these are not captured, and
+		// the user can fix it.
+		fmt.Fprintln(out, "  not captured — re-run under sudo to include them")
 	}
 
 	if obs.Manifest.Collected {
@@ -579,6 +590,23 @@ func checkObservationSchema(obs api.ImportObservation) error {
 	return nil
 }
 
+// ogreExitError builds a clean error from a failed ogre invocation. On a
+// handler error ogre prints exactly one FINAL line to stderr — "ogre <verb>:
+// <msg>" (internal/cli/cli.go) — before exiting 1, after any human progress
+// lines that came before it. That final line IS the useful part (e.g.
+// contract H1's "cannot read it on this box — re-run with sudo, or drop the
+// flag" for an unreadable explicit --include), so it — and only it — is
+// surfaced, rather than wrapping the whole transcript or a vague "exit
+// status 1" behind it.
+func ogreExitError(prefix string, stderr []byte, err error) error {
+	lines := strings.Split(strings.TrimRight(string(stderr), "\n"), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last != "" {
+		return fmt.Errorf("%s: %s", prefix, last)
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
+}
+
 // ogreSurveyOutput mirrors `ogre capture --survey-only`'s stdout shape
 // (CONTRACT.md section B): {"observation": {...}}, nothing else.
 type ogreSurveyOutput struct {
@@ -613,10 +641,11 @@ func surveyPathArgs(includes, excludes []string) []string {
 func runOgreSurvey(ogrePath string, includes, excludes []string, errOut io.Writer) (api.ImportObservation, error) {
 	args := append([]string{"capture", "--json", "--survey-only"}, surveyPathArgs(includes, excludes)...)
 	cmd := exec.Command(ogrePath, args...)
-	cmd.Stderr = errOut
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = io.MultiWriter(errOut, &stderrBuf)
 	stdout, err := cmd.Output()
 	if err != nil {
-		return api.ImportObservation{}, fmt.Errorf("ogre survey failed: %w", err)
+		return api.ImportObservation{}, ogreExitError("ogre survey failed", stderrBuf.Bytes(), err)
 	}
 
 	var out ogreSurveyOutput
@@ -647,10 +676,11 @@ func runOgreCapture(ogrePath, endpoint, bucket, region, prefix, backupID, mountP
 	}
 	cmd := exec.Command(ogrePath, args...)
 	cmd.Env = append(os.Environ(), env...)
-	cmd.Stderr = errOut
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = io.MultiWriter(errOut, &stderrBuf)
 	stdout, err := cmd.Output()
 	if err != nil {
-		return ogreCaptureOutput{}, fmt.Errorf("ogre capture failed: %w", err)
+		return ogreCaptureOutput{}, ogreExitError("ogre capture failed", stderrBuf.Bytes(), err)
 	}
 
 	var out ogreCaptureOutput

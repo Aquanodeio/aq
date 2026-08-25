@@ -83,12 +83,26 @@ type ImportUnreadableEntry struct {
 // ImportSurvey is the full pre-capture report: what will be captured, what
 // won't, what couldn't even be read, and whether the walk itself ran out of
 // budget before finishing (in which case every size above is a floor).
+//
+// Capturing and Unreadable are mutually exclusive at the top level (contract
+// H1, ogre 94d34a5): a capture path whose own root cannot be opened is
+// dropped from Capturing and reported in Unreadable only — never both, which
+// would otherwise claim capture of a tree that couldn't be read. A path whose
+// root IS readable stays in Capturing even when some descendants fail; those
+// descendants are listed individually in Unreadable (partial capture is real
+// capture, not discarded).
 type ImportSurvey struct {
-	Capturing     []ImportCaptureEntry    `json:"capturing"`
-	NotCapturing  []ImportSkippedEntry    `json:"not_capturing"`
-	Unreadable    []ImportUnreadableEntry `json:"unreadable"`
-	WalkTruncated bool                    `json:"walk_truncated"`
-	DeadlineHit   bool                    `json:"deadline_hit"`
+	Capturing    []ImportCaptureEntry    `json:"capturing"`
+	NotCapturing []ImportSkippedEntry    `json:"not_capturing"`
+	Unreadable   []ImportUnreadableEntry `json:"unreadable"`
+	// MinReportBytes is the size floor NotCapturing was built with (contract
+	// H2, default 1 GiB). Every renderer of this survey MUST state it:
+	// without it the "not capturing" block reads as EXHAUSTIVE, when a
+	// directory under the floor appears in neither list and nothing says a
+	// floor was ever applied — the same class of failure as a silent skip.
+	MinReportBytes int64 `json:"min_report_bytes"`
+	WalkTruncated  bool  `json:"walk_truncated"`
+	DeadlineHit    bool  `json:"deadline_hit"`
 }
 
 // Incomplete reports whether the survey hit a budget before it could finish
