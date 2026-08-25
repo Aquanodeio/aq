@@ -52,11 +52,10 @@ func autopause(args []string) error {
 
 // runAutopause sets the setup-level auto-pause PREFERENCE.
 //
-// "Pause" / "auto-pause" is the product's one settled noun for
-// save-then-release (meta-repo ticket #753) — this command keeps the verb
-// "autopause" (it predates the ticket and nothing else collides with it),
-// but every string it prints uses the hyphenated "auto-pause" form to match
-// console/docs/website.
+// "Pause" / "auto-pause" is the product's one noun for save-then-release,
+// used consistently across console, docs, and website — this command keeps
+// its verb "autopause" (nothing else collides with it), but every string it
+// prints uses the hyphenated "auto-pause" form to match those surfaces.
 //
 // This is a different mechanism from `aq idle`, and the two never conflate:
 // `aq idle set` writes a PER-DEPLOYMENT idle-threshold policy (warn/pause

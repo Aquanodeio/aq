@@ -54,7 +54,7 @@ func up(args []string) error {
 	autoPause := fs.Bool("auto-pause", false, "Enable idle auto-pause on this deployment (off by default)")
 	warnAfter := fs.String("warn-after", "", "With --auto-pause: warn after this much idle time, e.g. 30m")
 	pauseAfter := fs.String("pause-after", "", "With --auto-pause: auto-pause after this much idle time, e.g. 1h")
-	// autoStopLegacy/stopAfterLegacy are the deprecated pre-#753 names for
+	// autoStopLegacy/stopAfterLegacy are the deprecated pre-rename names for
 	// --auto-pause/--pause-after, kept working (undocumented) so a shipped
 	// script doesn't break.
 	autoStopLegacy := fs.Bool("auto-stop", false, "")

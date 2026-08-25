@@ -26,11 +26,10 @@ type pauseOptions struct {
 // resumable slot: a future `aq up`/`aq deploy` against the same setup picks
 // it back up automatically.
 //
-// This command used to be named "park" — see the settled vocabulary in the
-// meta-repo's #753: pause / auto-pause is the one noun the whole product
-// (console, docs, website, aq) now uses for save-then-release, and resume is
-// its opposite. `aq park` is kept below as a deprecated alias so a shipped
-// script that still calls it does not break.
+// This command used to be named "park". Pause / auto-pause is the one noun
+// the whole product (console, docs, website, aq) now uses for
+// save-then-release, and resume is its opposite. `aq park` is kept below as
+// a deprecated alias so a shipped script that still calls it does not break.
 func pause(args []string) error {
 	fs := flag.NewFlagSet("pause", flag.ContinueOnError)
 	positional, err := parseInterspersed(fs, args)

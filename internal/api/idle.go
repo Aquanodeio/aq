@@ -15,13 +15,12 @@ type IdlePolicy struct {
 	ActAfterMinutes         int `json:"actAfterMinutes"`
 	GPUIdleThresholdPercent int `json:"gpuIdleThresholdPercent"`
 	// AutoPauseEnabled is the renamed successor to the orchestrator's
-	// "autoStopEnabled" field (meta-repo ticket #753 — "pause" is the
-	// product's one noun for save-then-release, "auto-stop" is retired). It
-	// is decoded manually below rather than via a struct tag: a released
-	// `aq` binary talks to whatever backend happens to be deployed, and a
-	// backend that predates the rename only ever sends the old name, so the
-	// new name is tried first and the old name is a fallback, never the
-	// reverse.
+	// "autoStopEnabled" field ("pause" is the product's one noun for
+	// save-then-release; "auto-stop" is retired). It is decoded manually
+	// below rather than via a struct tag: a released `aq` binary talks to
+	// whatever backend happens to be deployed, and a backend that predates
+	// the rename only ever sends the old name, so the new name is tried
+	// first and the old name is a fallback, never the reverse.
 	AutoPauseEnabled bool `json:"-"`
 	// State is one of UNKNOWN | ACTIVE | IDLE_WARN | IDLE_ACT. UNKNOWN means the
 	// box has reported no usable usage data yet — render it as unknown, never as

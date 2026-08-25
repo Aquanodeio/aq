@@ -6,8 +6,8 @@ import (
 )
 
 // TestIdlePolicyDecodesNewAutoPauseField checks the common case: a backend
-// that has shipped the #753 rename sends "autoPauseEnabled", and it decodes
-// straight through.
+// that has shipped the autoStopEnabled -> autoPauseEnabled rename sends
+// "autoPauseEnabled", and it decodes straight through.
 func TestIdlePolicyDecodesNewAutoPauseField(t *testing.T) {
 	var p IdlePolicy
 	body := `{"warnAfterMinutes":30,"actAfterMinutes":60,"gpuIdleThresholdPercent":5,"autoPauseEnabled":true,"state":"ACTIVE","idleMinutes":0}`
@@ -19,11 +19,11 @@ func TestIdlePolicyDecodesNewAutoPauseField(t *testing.T) {
 	}
 }
 
-// TestIdlePolicyFallsBackToOldAutoStopField checks that a backend running
-// ahead of the #753 rename (still emitting the pre-rename "autoStopEnabled"
-// and never "autoPauseEnabled") still decodes correctly — a released `aq`
-// binary talks to whatever backend is deployed, and must not break against
-// one that predates this rename.
+// TestIdlePolicyFallsBackToOldAutoStopField checks that a backend running a
+// build that predates the rename (still emitting the pre-rename
+// "autoStopEnabled" and never "autoPauseEnabled") still decodes correctly —
+// a released `aq` binary talks to whatever backend is deployed, and must
+// not break against one that predates this rename.
 func TestIdlePolicyFallsBackToOldAutoStopField(t *testing.T) {
 	var p IdlePolicy
 	body := `{"warnAfterMinutes":30,"actAfterMinutes":60,"gpuIdleThresholdPercent":5,"autoStopEnabled":true,"state":"ACTIVE","idleMinutes":0}`
@@ -36,9 +36,9 @@ func TestIdlePolicyFallsBackToOldAutoStopField(t *testing.T) {
 }
 
 // TestIdlePolicyPrefersNewFieldWhenBothPresent checks the transition window
-// where a backend emits both names for one release (per the general #753
-// ticket, matching IdlePolicyUpdateSchema's dual-accept on input) — the new
-// name must win, never the old one.
+// where a backend emits both names for one release (matching
+// IdlePolicyUpdateSchema's dual-accept on input) — the new name must win,
+// never the old one.
 func TestIdlePolicyPrefersNewFieldWhenBothPresent(t *testing.T) {
 	var p IdlePolicy
 	body := `{"warnAfterMinutes":30,"actAfterMinutes":60,"gpuIdleThresholdPercent":5,"autoPauseEnabled":true,"autoStopEnabled":false,"state":"ACTIVE","idleMinutes":0}`

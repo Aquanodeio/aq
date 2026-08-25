@@ -165,7 +165,7 @@ func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 	fs := flag.NewFlagSet("idle set", flag.ContinueOnError)
 	warnAfterStr := fs.String("warn-after", "", "warn after this much idle time, e.g. 30m, 1h")
 	pauseAfterStr := fs.String("pause-after", "", "auto-pause after this much idle time, e.g. 1h")
-	// stopAfterStr is the deprecated pre-#753 name for --pause-after, kept
+	// stopAfterStr is the deprecated pre-rename name for --pause-after, kept
 	// working (undocumented) so a shipped script doesn't break.
 	stopAfterStr := fs.String("stop-after", "", "")
 	gpuThreshold := fs.Int("gpu-threshold", -1, "GPU utilization percent below which the box counts as idle (0-100)")
