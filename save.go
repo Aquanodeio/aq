@@ -13,7 +13,7 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// snapshotArgs holds `aq snapshot`'s raw parsed CLI input, before target is
+// snapshotArgs holds `aq save`'s raw parsed CLI input, before target is
 // resolved to a setup id.
 type snapshotArgs struct {
 	target  string // setup id (uuid) or name
@@ -31,12 +31,12 @@ type snapshotOptions struct {
 	pathDir string
 }
 
-// parseSnapshotArgs parses `aq snapshot`'s flags and positional target, letting
+// parseSnapshotArgs parses `aq save`'s flags and positional target, letting
 // them appear in any order. Go's stdlib flag package stops parsing at the first
-// positional, so `aq snapshot comfyui --name x` would otherwise silently drop the
+// positional, so `aq save comfyui --name x` would otherwise silently drop the
 // flag; parseInterspersed is the shared workaround every verb here uses.
 func parseSnapshotArgs(args []string) (snapshotArgs, error) {
-	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
+	fs := flag.NewFlagSet("save", flag.ContinueOnError)
 	name := fs.String("name", "", "name for this setup's save lineage (default: the setup's own name; only matters on the first save)")
 	path := fs.String("path", "/workspace", "directory to capture")
 	rest, err := parseInterspersed(fs, args)
@@ -50,18 +50,19 @@ func parseSnapshotArgs(args []string) (snapshotArgs, error) {
 	return opts, nil
 }
 
-// snapshot parses flags and wires the real environment into runSnapshot.
+// snapshot parses flags and wires the real environment into runSnapshot,
+// backing `aq save`.
 //
-// `aq snapshot <setup>` saves a setup's current state on demand into its
-// named lineage — the same one-shot capture the console's Snapshotter tab
-// drives, reachable without leaving the terminal.
+// `aq save <setup>` saves a setup's current state on demand into its named
+// lineage — the same one-shot capture the console's Save action drives,
+// reachable without leaving the terminal.
 func snapshot(args []string) error {
 	parsed, err := parseSnapshotArgs(args)
 	if err != nil {
 		return err
 	}
 	if parsed.target == "" {
-		return fmt.Errorf("a setup is required — usage: aq snapshot <setup>")
+		return fmt.Errorf("a setup is required — usage: aq save <setup>")
 	}
 
 	cred, err := requireLogin()
@@ -90,7 +91,7 @@ func snapshot(args []string) error {
 }
 
 // runSnapshot saves a setup's current state into its named lineage, given an
-// already-resolved setup id. Reused by `aq down --snapshot` as the
+// already-resolved setup id. Reused by `aq down --save` as the
 // checkpoint step before terminating.
 func runSnapshot(opts snapshotOptions) (api.SetupVersion, error) {
 	client := newControlClient(opts.cred)
@@ -167,7 +168,7 @@ func setupDisplayName(client *api.Client, setupID string) string {
 }
 
 // namedLineagesPath is aq's local record of which setups it has already
-// asked (or defaulted) a save-lineage name for, so `aq snapshot` only prompts
+// asked (or defaulted) a save-lineage name for, so `aq save` only prompts
 // once per setup even across separate CLI invocations. This is a
 // best-effort client-side cache, not the source of truth — the server is
 // free to already have a lineage bound even if this file doesn't know it
@@ -201,7 +202,7 @@ func loadNamedLineages() map[string]bool {
 }
 
 // markLineageNamed records that setupID's save lineage has now been named, so
-// later `aq snapshot` runs stop prompting/defaulting a name for it. A failed
+// later `aq save` runs stop prompting/defaulting a name for it. A failed
 // write is silently ignored — at worst it re-prompts next time.
 func markLineageNamed(setupID string) {
 	path, err := namedLineagesPath()

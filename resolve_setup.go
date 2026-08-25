@@ -51,8 +51,8 @@ func resolveSetupID(client *api.Client, target string) (string, error) {
 
 // findSetup fetches the caller's setups and returns the one matching id, so
 // callers that already have a resolved id (from resolveSetupID or a direct
-// UUID) can get at its other fields (LeaseDeploymentID, LatestVersion, ...)
-// without a dedicated GET /setups/:id endpoint.
+// UUID) can get at its other fields (LeaseDeploymentID, ...) without a
+// dedicated GET /setups/:id endpoint.
 func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 	setups, err := client.ListSetups()
 	if err != nil {
@@ -67,7 +67,7 @@ func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 }
 
 // setupIDForDeployment maps a deployment id to the setup whose lease it
-// currently holds. `aq down --snapshot` uses this: the checkpoint save it
+// currently holds. `aq down --save` uses this: the checkpoint save it
 // takes before terminating is a setup-scoped call, but the deployment being
 // torn down is the only identifier the user gave it.
 func setupIDForDeployment(client *api.Client, deploymentID int) (string, error) {

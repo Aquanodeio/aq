@@ -3,12 +3,17 @@ package api
 import (
 	"net/url"
 	"strconv"
+	"strings"
+
+	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// Setup-lineage endpoints backing `aq snapshot`, `aq share`, `aq autosave`,
-// and `aq setups`. A "setup" is its own object, distinct from the deployment
-// that may currently hold its compute lease (Deployment, in control.go) —
-// never pass a deployment id where a setup id belongs, or vice versa.
+// Setup-lineage endpoints backing `aq save`, `aq share`, `aq fork`,
+// `aq autosave`, `aq autopause`, `aq force-detach`, `aq sync-now`,
+// `aq edit-version`, and `aq setups`. A "setup" is its own object, distinct
+// from the deployment that may currently hold its compute lease (Deployment,
+// in control.go) — never pass a deployment id where a setup id belongs, or
+// vice versa.
 //
 // Setup ids are UUID strings (`model Setup { id String @id
 // @default(uuid()) ... }`), NOT the small integer ids deployments use.
@@ -16,9 +21,19 @@ import (
 // every path is built by string concatenation (url-escaped) rather than
 // strconv.Itoa.
 //
-// Every field tag here is snake_case, per this orchestrator's DTO convention
-// (toBackupDTO, toSnapshotVersionDTO, ...) — there is no camelCase transform
-// on these routes.
+// Tags here are NOT one convention — verified per field against the actual
+// serializer/schema for its own endpoint, never inferred from a neighbour:
+//   - SetupVersion and its request/response bodies (POST .../snapshot, GET
+//     .../versions, PATCH .../versions/:id) go through toSnapshotVersionDTO /
+//     the zod schemas in setups.schemas.ts, which genuinely are snake_case.
+//   - The `Setup` struct below (GET /setups, GET /setups/:id-shaped routes)
+//     is serialized by serializeSetup in setups.controller.ts, which
+//     hand-writes a plain camelCase object literal instead of going through
+//     one of those DTO helpers — there is genuinely no case-transform
+//     middleware anywhere in the orchestrator (checked server.ts + everything
+//     under src/middleware). So its fields are tagged camelCase to match,
+//     the one exception being SizeBytes, whose wire type is also not a plain
+//     number — see its doc comment below.
 
 // CreateSetupSnapshotRequest is the body of POST /setups/:id/snapshot. Name
 // only matters on a setup's first save — it names the lineage every later
@@ -36,8 +51,10 @@ type CreateSetupSnapshotRequest struct {
 }
 
 // SetupVersion mirrors one row of the setup_versions table, as returned by
-// POST /setups/:id/snapshot (the newly created version), GET
-// /setups/versions?name=..., and nested as Setup.LatestVersion.
+// POST /setups/:id/snapshot (the newly created version) and GET
+// /setups/versions[?name=...]. There is no "latest version" field nested on
+// Setup itself — see ListAllSetupVersions for how `aq setups`/`aq share`
+// recover a setup's latest/named version instead.
 //
 // SetupID is a string for the same reason Setup.ID is — see the package doc.
 // The version row's own ID is left an int: unlike Setup, nothing in the
@@ -93,6 +110,27 @@ func (c *Client) ListSetupVersions(name string) ([]SetupVersion, error) {
 	return out, nil
 }
 
+// ListAllSetupVersions returns every version row the caller can see across
+// every one of their setups — GET /setups/versions with no `name` filter.
+// The orchestrator's listSnapshotVersions only takes the legacy-lineage
+// merge path when `name` is unset (listSnapshotVersions in
+// setups.controller.ts), so this also carries any legacy/external
+// (backup_id-owned, no SetupID) rows mixed in; callers matching on SetupID
+// filter those out for free.
+//
+// This is the only way to recover a setup's latest saved version — the
+// `Setup` row itself (GET /setups) carries no nested "latest version" field
+// on the wire (see the Setup doc comment), so `aq setups`' VERSION column
+// and `aq share`'s (setup, version-number) resolution both derive it from
+// this list instead of trusting anything nested.
+func (c *Client) ListAllSetupVersions() ([]SetupVersion, error) {
+	var out []SetupVersion
+	if err := c.getJSON("/setups/versions", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GetSetupVersion fetches one version row by its own global row id — GET
 // /setups/versions/:id. `aq endpoint point` uses this to learn which
 // lineage (setup id + name) an endpoint's CURRENT version belongs to: the
@@ -111,9 +149,19 @@ func (c *Client) GetSetupVersion(versionRowID int) (*SetupVersion, error) {
 }
 
 // ShareSetupVersionResult is the data returned by POST
-// /setups/versions/:id/share.
+// /setups/versions/:id/share — a bare share TOKEN plus the optional name/
+// expiry the caller passed. The orchestrator's `createVersionShare`
+// (snapshot-version.service.ts) never returns a URL — the console builds the
+// public link itself, client-side, as `<console origin>/launch/<token>` (see
+// its AccessPopover.tsx). URL below is filled in here the same way, so every
+// caller of this method still gets a ready-to-paste link.
 type ShareSetupVersionResult struct {
-	URL string `json:"url"`
+	Token     string  `json:"token"`
+	Name      *string `json:"name"`
+	ExpiresAt *string `json:"expires_at"`
+	// URL is never present on the wire — see the type doc above. Populated
+	// by ShareSetupVersion from Token before returning.
+	URL string `json:"-"`
 }
 
 // ShareSetupVersion mints a link for ONE immutable version of a setup's save
@@ -127,6 +175,28 @@ func (c *Client) ShareSetupVersion(versionRowID int) (*ShareSetupVersionResult, 
 	var out ShareSetupVersionResult
 	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/share"
 	if err := c.postJSON(path, struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	out.URL = config.ConsoleURL() + "/launch/" + out.Token
+	return &out, nil
+}
+
+// ForkSetupRequest is the body of POST /setups/fork — a live share TOKEN
+// (from ShareSetupVersion/`aq share`, or one pulled out of a pasted
+// /launch/<token> link) and an optional display name for the new setup.
+// Same shape as adoptSetupSchema for the same reason (setups.schemas.ts).
+type ForkSetupRequest struct {
+	Token string `json:"token"`
+	Name  string `json:"name,omitempty"`
+}
+
+// ForkSetup turns a live share token into a brand new Setup the caller owns,
+// filed under their own team — the consuming half of `aq share`'s link.
+// Forking your own team's own version is refused server-side (pointless
+// empty copy of something you can already read/save/run directly).
+func (c *Client) ForkSetup(req ForkSetupRequest) (*Setup, error) {
+	var out Setup
+	if err := c.postJSON("/setups/fork", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -150,6 +220,127 @@ func (c *Client) SetSetupAutosave(setupID string, enabled bool) (*Setup, error) 
 	return &out, nil
 }
 
+// SetupAutopauseRequest is the body of PUT /setups/:id/autopause.
+type SetupAutopauseRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SetSetupAutopause sets a setup's per-setup autopause PREFERENCE explicitly
+// (on or off), returning the updated Setup row.
+//
+// This is NOT the same mechanism as `aq idle`: idle policy is a
+// PER-DEPLOYMENT threshold config (warn/stop-after minutes, GPU idle %) that
+// always outranks whatever this sets (see idlePolicyFor in the
+// orchestrator's idle.config.ts, which layers Setup.autopauseEnabled in
+// underneath it). Autopause carries no thresholds of its own — it only says
+// "stop this setup's box when it goes idle, using the platform's default
+// thresholds." There is also no verb to clear it back to "unset" — a setup
+// that never calls this route simply follows the platform default
+// (DEFAULT_IDLE_POLICY.autoStopEnabled, currently off).
+func (c *Client) SetSetupAutopause(setupID string, enabled bool) (*Setup, error) {
+	var out Setup
+	path := "/setups/" + url.PathEscape(setupID) + "/autopause"
+	if err := c.putJSON(path, SetupAutopauseRequest{Enabled: enabled}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetupForceDetachResult is the data returned by POST
+// /setups/:id/force-detach.
+type SetupForceDetachResult struct {
+	WasSyncing bool `json:"wasSyncing"`
+}
+
+// ForceDetachSetup breaks a setup's lease even mid-sync, discarding any work
+// written since the last COMPLETED sync. acknowledgeDataLoss:true is sent
+// unconditionally — the orchestrator refuses the call without it
+// (forceDetachSetupSchema), and callers of this method (aq's `force-detach`
+// command) are expected to have gotten the user's explicit --yes first;
+// there is no silent/partial form of this call.
+func (c *Client) ForceDetachSetup(setupID string) (*SetupForceDetachResult, error) {
+	var out SetupForceDetachResult
+	path := "/setups/" + url.PathEscape(setupID) + "/force-detach"
+	body := map[string]bool{"acknowledgeDataLoss": true}
+	if err := c.postJSON(path, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetupSyncResult is the data returned by POST /setups/:id/sync. Unlike the
+// Setup DTO above, this really is ogre's own snake_case wire shape
+// (SetupSyncResponse in the orchestrator's types/setup.types.ts), passed
+// through unmodified — not the hand-written serializeSetup object literal.
+type SetupSyncResult struct {
+	SnapshotID      string `json:"snapshot_id"`
+	FilesNew        int    `json:"files_new,omitempty"`
+	FilesChanged    int    `json:"files_changed,omitempty"`
+	DataAddedPacked int64  `json:"data_added_packed,omitempty"`
+}
+
+// SyncSetupNow forces a sync tick right now, outside the setup's own
+// scheduled interval. The setup must currently be attached to a running
+// deployment — the orchestrator 400s otherwise with a message naming that.
+func (c *Client) SyncSetupNow(setupID string) (*SetupSyncResult, error) {
+	var out SetupSyncResult
+	path := "/setups/" + url.PathEscape(setupID) + "/sync"
+	if err := c.postJSON(path, struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateSnapshotVersionRequest is the body of PATCH /setups/versions/:id
+// (updateSnapshotVersionSchema, `.strict()` — only these three fields are
+// accepted). Label/Description are nil-omitted pointers so an unset flag
+// never overwrites the existing value; there is currently no way to send an
+// explicit `null` to CLEAR one back to empty (the schema allows it, but
+// distinguishing "not touched" from "clear to null" needs more than a plain
+// omitempty pointer, since both render as an absent key — deliberately left
+// unsupported rather than guessed at).
+// Visibility is a plain non-nullable enum string when set.
+type UpdateSnapshotVersionRequest struct {
+	Label       *string `json:"label,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Visibility  string  `json:"visibility,omitempty"`
+}
+
+// UpdateSnapshotVersion edits a saved version's label, description, and/or
+// visibility (private/team/public) — the same three fields the console's
+// version settings sheet edits.
+func (c *Client) UpdateSnapshotVersion(versionRowID int, req UpdateSnapshotVersionRequest) (*SetupVersion, error) {
+	var out SetupVersion
+	path := "/setups/versions/" + strconv.Itoa(versionRowID)
+	if err := c.patchJSON(path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// setupSizeBytes decodes GET /setups' `sizeBytes` field. serializeSetup
+// sends it as a decimal STRING (`ws.sizeBytes.toString()`), or JSON `null`
+// for a setup with no measured size yet — never a bare number: BigInt
+// doesn't survive JSON.stringify, per that function's own comment, so it
+// stringifies explicitly rather than relying on a global replacer. A plain
+// int64 field would hard-fail decoding every setup row once the tag below is
+// fixed to the real wire key.
+type setupSizeBytes int64
+
+func (n *setupSizeBytes) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		*n = 0
+		return nil
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	*n = setupSizeBytes(v)
+	return nil
+}
+
 // Setup mirrors one row of GET /setups: what the caller owns, independent of
 // whether the underlying compute is currently rented.
 //
@@ -158,19 +349,30 @@ func (c *Client) SetSetupAutosave(setupID string, enabled bool) (*Setup, error) 
 // running setup has one associated via LeaseDeploymentID. There is also no
 // boolean "running" field on the wire — Running derives it from
 // LeaseDeploymentID, which is only non-nil while a live deployment holds the
-// lease.
+// lease. There is likewise no "latest version" field nested here at all —
+// see ListAllSetupVersions.
+//
+// Every tag below is camelCase, matching serializeSetup's hand-written
+// object literal (setups.controller.ts) — see the package doc comment at
+// the top of this file for why this struct's convention differs from
+// SetupVersion's.
 type Setup struct {
-	ID                string        `json:"id"`
-	Name              string        `json:"name"`
-	Status            string        `json:"status"`
-	MountPath         string        `json:"mount_path"`
-	AutosaveEnabled   bool          `json:"autosave_enabled"`
-	SizeBytes         int64         `json:"size_bytes"`
-	LastSyncAt        string        `json:"last_sync_at"`
-	LeaseDeploymentID *int          `json:"lease_deployment_id"`
-	CreatedAt         string        `json:"created_at"`
-	UpdatedAt         string        `json:"updated_at"`
-	LatestVersion     *SetupVersion `json:"latest_version"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	MountPath       string `json:"mountPath"`
+	AutosaveEnabled bool   `json:"autosaveEnabled"`
+	// AutopauseEnabled is three-state on the wire: nil = never explicitly
+	// chosen (the setup follows the platform default), non-nil = explicitly
+	// set true/false. NEVER collapse nil into false when rendering this —
+	// see setups.controller.ts's comment on why (it's the whole point of the
+	// column).
+	AutopauseEnabled  *bool          `json:"autopauseEnabled"`
+	SizeBytes         setupSizeBytes `json:"sizeBytes"`
+	LastSyncAt        string         `json:"lastSyncAt"`
+	LeaseDeploymentID *int           `json:"leaseDeploymentId"`
+	CreatedAt         string         `json:"createdAt"`
+	UpdatedAt         string         `json:"updatedAt"`
 }
 
 // Running reports whether a deployment currently holds this setup's lease.

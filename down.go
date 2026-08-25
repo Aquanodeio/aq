@@ -29,12 +29,16 @@ type downOptions struct {
 // downWithCheckpoint.
 //
 // `aq down <deploymentId>` tears down an env brought up by `aq up` / `aq deploy`,
-// stopping the rented GPU box and its billing. `--snapshot` saves it first —
+// stopping the rented GPU box and its billing. `--save` saves it first —
 // terminate is skipped entirely if that save fails, so the flag can never
-// destroy an unsaved box.
+// destroy an unsaved box. Named "--save", not "--snapshot": this flag names
+// an ACTION (do a save before stopping), and the action is "Save" everywhere
+// else in this rewrite — "snapshot" survives only as the noun for the saved
+// artifact itself, e.g. `aq deploy --snapshot <id>` below, which names WHICH
+// save to restore, not an action.
 func down(args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
-	snap := fs.Bool("snapshot", false, "save your setup before terminating")
+	snap := fs.Bool("save", false, "save your setup before terminating")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -86,7 +90,7 @@ func down(args []string) error {
 
 // downWithCheckpoint sequences an optional checkpoint before termination. A
 // failed checkpoint ABORTS the terminate: destroying a box whose save just
-// failed is the one outcome --snapshot exists to prevent. checkpoint and
+// failed is the one outcome --save exists to prevent. checkpoint and
 // terminate are injected so this control flow is testable without a live box.
 func downWithCheckpoint(
 	opts downOptions,

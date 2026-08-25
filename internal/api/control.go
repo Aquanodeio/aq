@@ -246,12 +246,13 @@ func (c *Client) GetDeployment(deploymentID int) (*Deployment, error) {
 	return &out, nil
 }
 
-// PauseDeployment saves the deployment's current state and releases its
-// rented box (`aq pause`), via the existing project-scoped pause route —
-// pause always targets the ACTIVE deployment under a project, so it's keyed
-// by projectID in the path plus deploymentID in the body, not by deployment
-// id alone.
-func (c *Client) PauseDeployment(projectID string, deploymentID int) error {
+// ParkDeployment saves the deployment's current state and releases its
+// rented box (`aq park`), via the existing project-scoped pause route — the
+// route and its path are still named "pause" server-side, but the CLI verb
+// is "park" (see park.go's doc comment for why). Pause/park always targets
+// the ACTIVE deployment under a project, so it's keyed by projectID in the
+// path plus deploymentID in the body, not by deployment id alone.
+func (c *Client) ParkDeployment(projectID string, deploymentID int) error {
 	path := "/deployments/project/" + url.PathEscape(projectID) + "/pause"
 	body := map[string]int{"deploymentId": deploymentID}
 	return c.postJSON(path, body, nil)

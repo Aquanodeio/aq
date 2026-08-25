@@ -72,14 +72,24 @@ func main() {
 		run(sshCmd(args))
 	case "status":
 		run(status(args))
-	case "snapshot":
+	case "save":
 		run(snapshot(args))
 	case "share":
 		run(share(args))
-	case "pause":
-		run(pause(args))
+	case "fork":
+		run(fork(args))
+	case "edit-version":
+		run(editVersion(args))
+	case "park":
+		run(park(args))
 	case "autosave":
 		run(autosave(args))
+	case "autopause":
+		run(autopause(args))
+	case "force-detach":
+		run(forceDetach(args))
+	case "sync-now":
+		run(syncNow(args))
 	case "setups":
 		run(setups(args))
 	case "idle":
@@ -118,29 +128,32 @@ Usage:
   aq <command> [flags]
 
 Commands:
-  login      Pair this CLI to your Aquanode account (device login)
-  up         Rent the cheapest matching GPU and bring up a working setup
-  deploy     Restore a snapshot onto a freshly-rented Aquanode GPU box
-  ssh        Open a shell on a setup (managed key + ~/.ssh/config alias)
-  status     Show a setup's status, HTTPS URL, and credentials
-  snapshot   Save a setup's current state into its named lineage
-  share      Get a link to one saved version of a setup
-  pause      Save a setup, then release its machine (resume later with up)
-  autosave   Turn a setup's automated snapshotting on or off
-  setups     List the setups you own
-  idle       View or change a setup's idle-auto-stop policy
-  endpoint   Make a setup version callable, repoint it, or remove it
-  call       Make a call against an endpoint
-  calls      List an endpoint's recent calls
-  down       Tear down a setup (stop the rented GPU box)
-  logout     Remove the stored CLI credential
-  whoami     Show the current login state
-  version    Print the aq version
-  help       Show this help
+  login         Pair this CLI to your Aquanode account (device login)
+  up            Rent the cheapest matching GPU and bring up a working setup
+  deploy        Restore a save onto a freshly-rented Aquanode GPU box
+  ssh           Open a shell on a setup (managed key + ~/.ssh/config alias)
+  status        Show a setup's status, HTTPS URL, and credentials
+  save          Save a setup's current state into its named lineage
+  share         Get a link to one saved version of a setup
+  fork          Turn a share link into a new setup in your own library
+  edit-version  Edit a saved version's label, description, or visibility
+  park          Save a setup, then release its machine (resume later with up)
+  autosave      Turn a setup's automated snapshotting on or off
+  autopause     Turn a setup's stop-when-idle preference on or off
+  force-detach  Break a setup's lease even mid-sync (can lose unsynced work)
+  sync-now      Force a setup's sync tick right now
+  setups        List the setups you own
+  idle          View or change a DEPLOYMENT's idle-auto-stop thresholds
+  endpoint      Make a setup version callable, repoint it, or remove it
+  call          Make a call against an endpoint
+  calls         List an endpoint's recent calls
+  down          Tear down a setup (stop the rented GPU box)
+  logout        Remove the stored CLI credential
+  whoami        Show the current login state
+  version       Print the aq version
+  help          Show this help
 
 up flags:
-  --comfyui          Bring up ComfyUI (default)
-  --jupyter          Bring up Torch + Jupyter
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
@@ -149,15 +162,21 @@ up flags:
   --warn-after <duration>  With --auto-stop: warn after this much idle time
   --stop-after <duration>  With --auto-stop: auto-stop after this much idle time
 
+  App (optional — ComfyUI installs by default if you pick neither):
+  --comfyui          Install ComfyUI
+  --jupyter          Install Torch + Jupyter instead
+
 deploy flags:
-  --snapshot <id>    Snapshot to deploy (id from aq / the console, e.g. ext-42)
-  --comfyui          Relaunch ComfyUI on the restored data (default)
-  --jupyter          Relaunch Torch + Jupyter on the restored data
-  --no-app           Restore only — do not relaunch an app
+  --snapshot <id>    Save to deploy (id from aq / the console, e.g. ext-42)
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
+
+  App (optional — relaunches ComfyUI by default; --no-app restores data only):
+  --comfyui          Relaunch ComfyUI on the restored data
+  --jupyter          Relaunch Torch + Jupyter on the restored data instead
+  --no-app           Restore only — do not relaunch an app
 
 ssh:
   aq ssh                     Open a shell on your only live deployment
@@ -174,6 +193,10 @@ ssh:
   generates a passphrase-less one at ~/.ssh/aquanode_ed25519.
 
 idle:
+  A PER-DEPLOYMENT idle-auto-stop policy (warn/stop thresholds, GPU idle %).
+  It always outranks a setup's own "aq autopause" preference below — see
+  "autopause" for how the two differ.
+
   aq idle status <name|id>   Show the deployment's idle-auto-stop policy and
                               its current live verdict (ACTIVE / IDLE / UNKNOWN)
   aq idle set <name|id>      Update the policy (only the flags you pass change)
@@ -205,23 +228,41 @@ call / calls:
                               could not get the call a box at all — not that
                               the call's own code failed.
 
-status / snapshot / share / pause / autosave / setups / down:
+status / save / share / fork / edit-version / park / autosave / autopause /
+force-detach / sync-now / setups / down:
   aq status <name|id>        Re-check a provisioning or running setup
                              (add --show-secrets to print the password)
-  aq snapshot <name|id>      Save the setup's current state into its named
-                             save lineage. The first save on a setup asks
-                             for a lineage name once (Enter accepts the
-                             default, which is the setup's own name; a
-                             non-interactive shell just uses the default).
-                             Every later save reuses that lineage silently
-                             and increments its version (v1, v2, v3, ...).
-                             (--name <lineage>, --path <dir>)
+  aq save <name|id>          Save the setup's current state into its named
+                             save lineage. The first save on a
+                             setup asks for a lineage name once (Enter
+                             accepts the default, which is the setup's own
+                             name; a non-interactive shell just uses the
+                             default). Every later save reuses that lineage
+                             silently and increments its version (v1, v2,
+                             v3, ...). (--name <lineage>, --path <dir>)
   aq share <name|id> <ver>   Print a link to ONE immutable saved version
                              (e.g. "aq share comfyui 3"). The link always
                              points at that exact version, never at
                              whatever the lineage's head becomes later.
-  aq pause <name|id>         Save the setup, then release its machine.
-                             Pick it back up any time with "aq up".
+  aq fork <token|link>       Turn a link from "aq share" (someone else's,
+                             or your own team's own share of a team you've
+                             since left) into a brand new setup in your own
+                             library. Registers ownership only — it does
+                             not itself boot any hardware.
+                             (--name <name>, default: derived from the source)
+  aq edit-version <name|id> <ver> [flags]
+                             Edit a saved version's label, description,
+                             and/or visibility. Only the flags you pass
+                             change; there is currently no way to clear
+                             a label/description back to empty.
+                             (--label <text>, --description <text>,
+                             --visibility private|team|public)
+  aq park <name|id>          Save the setup, then release its machine.
+                             Pick it back up any time with "aq up". Named
+                             "park", not "pause" — console's own "pause"
+                             already names a different thing (pausing the
+                             automated-snapshot cron on the older Snapshotter
+                             tab), so this avoids the collision.
   aq autosave <name|id> on|off
                              Turn automated snapshotting on or off. This
                              keeps ONE always-current copy — it is NOT a
@@ -230,14 +271,37 @@ status / snapshot / share / pause / autosave / setups / down:
                              tick too. Held snapshot storage is billed
                              at `+heldStorageRateLabel+`; turning it on prints
                              that rate.
+  aq autopause <name|id> on|off
+                             Turn this SETUP's stop-when-idle preference on
+                             or off, using the platform's default idle
+                             thresholds. This is NOT "aq idle" above: idle
+                             policy is a per-DEPLOYMENT threshold config
+                             that always outranks this, and this carries no
+                             thresholds of its own — use "aq idle set" to
+                             change WHEN idle counts as idle, and this to
+                             turn stopping on setups on/off at all.
+  aq force-detach <name|id> --yes
+                             Break the setup's lease even mid-sync — for
+                             when a deployment died holding it and it needs
+                             freeing before anything else can attach.
+                             --yes acknowledges work since the last
+                             completed sync may be lost; there is no
+                             silent form of this command.
+  aq sync-now <name|id>      Force a sync tick right now instead of waiting
+                             for the setup's own schedule — e.g. right
+                             before "aq share"/"aq fork" so the link
+                             reflects your latest work. Requires the setup
+                             to be attached to a running deployment.
   aq setups                  List the setups you own: name, whether it's
                              running, latest saved version, and size.
   aq down <name|id>          Tear the setup down and stop billing
-                             (--snapshot saves first; terminate is skipped
+                             (--save saves first; terminate is skipped
                              if the save fails)
 
 Environment:
   AQ_API_URL      Aquanode API base (default https://server.aquanode.io/api/v1)
+  AQ_CONSOLE_URL  Aquanode console base "aq share" links point at
+                  (default https://console.aquanode.io)
   AQ_CONFIG_DIR   Credential directory (default <user-config-dir>/aq)
   AQ_SSH_KEY      Private key to use for box access (default: your ~/.ssh key,
                   else aq's managed ~/.ssh/aquanode_ed25519)
