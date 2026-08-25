@@ -248,10 +248,10 @@ func TestRunOgreCapturePassesCredentialsViaEnvNotArgv(t *testing.T) {
 
 // importServer is a minimal fake of the /setups/import/* orchestrator routes.
 type importServer struct {
-	startCalled       bool
-	completeCalled    bool
-	credentialsCalled bool
-	warnings          []string
+	startCalls       int
+	completeCalls    int
+	credentialsCalls int
+	warnings         []string
 	// omitBackupID drops restic_backup_id from the /start response, so tests
 	// can exercise the "server didn't return it" refusal (CONTRACT.md G).
 	omitBackupID bool
@@ -260,7 +260,7 @@ type importServer struct {
 func (s *importServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups/import/start", func(w http.ResponseWriter, r *http.Request) {
-		s.startCalled = true
+		s.startCalls++
 		body := map[string]any{
 			"setup_id":        "setup-1",
 			"storage_prefix":  "team-1/ws-abc",
@@ -281,7 +281,7 @@ func (s *importServer) handler() http.Handler {
 		writeData(w, body)
 	})
 	mux.HandleFunc("/setups/import/credentials", func(w http.ResponseWriter, r *http.Request) {
-		s.credentialsCalled = true
+		s.credentialsCalls++
 		writeData(w, map[string]any{
 			"expires_at": "2026-08-27T00:00:00Z",
 			"credentials": map[string]any{
@@ -294,7 +294,7 @@ func (s *importServer) handler() http.Handler {
 		})
 	})
 	mux.HandleFunc("/setups/import/complete", func(w http.ResponseWriter, r *http.Request) {
-		s.completeCalled = true
+		s.completeCalls++
 		writeData(w, map[string]any{
 			"setup_id":   "setup-1",
 			"version_id": 7,
@@ -335,7 +335,7 @@ func TestRunImportDryRunMakesNoStartCall(t *testing.T) {
 	if err := runImport(opts); err != nil {
 		t.Fatalf("runImport --dry-run: %v", err)
 	}
-	if server.startCalled {
+	if server.startCalls != 0 {
 		t.Fatal("--dry-run called /setups/import/start — it must capture and upload nothing")
 	}
 	if !strings.Contains(out.String(), "dry-run") {
@@ -367,7 +367,7 @@ func TestRunImportNonInteractiveWithoutYesRefuses(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "non-interactive") {
 		t.Fatalf("expected a non-interactive refusal, got: %v", err)
 	}
-	if server.startCalled {
+	if server.startCalls != 0 {
 		t.Fatal("import proceeded to /setups/import/start without confirmation")
 	}
 }
@@ -379,7 +379,7 @@ func TestRunImportHappyPathRegistersSetupAndPrintsWarnings(t *testing.T) {
 	obs := sampleObservation()
 	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
 	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
-	ogrePath, _, _ := writeStubOgre(t, surveyJSON, captureJSON)
+	ogrePath, argsFile, _ := writeStubOgre(t, surveyJSON, captureJSON)
 
 	server := &importServer{warnings: []string{"template is null — DetectApp found nothing, this setup restores data-only"}}
 	srv := httptest.NewServer(server.handler())
@@ -392,14 +392,26 @@ func TestRunImportHappyPathRegistersSetupAndPrintsWarnings(t *testing.T) {
 	if err := runImport(opts); err != nil {
 		t.Fatalf("runImport: %v", err)
 	}
-	if !server.startCalled || !server.completeCalled {
-		t.Fatalf("expected both start and complete to be called: start=%v complete=%v", server.startCalled, server.completeCalled)
+	if server.startCalls == 0 || server.completeCalls == 0 {
+		t.Fatalf("expected both start and complete to be called: startCalls=%d completeCalls=%d", server.startCalls, server.completeCalls)
 	}
 	if !strings.Contains(out.String(), "setup-1") || !strings.Contains(out.String(), strconv.Itoa(7)) {
 		t.Errorf("expected the new setup id and version printed; got:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "DetectApp found nothing") {
 		t.Errorf("expected the import warning printed; got:\n%s", out.String())
+	}
+
+	// CONTRACT.md section G: the backup_id ogre receives must be exactly
+	// whatever /setups/import/start returned ("repo" here), never a value aq
+	// picked itself — an earlier version used the setup's own uuid, which
+	// silently orphaned the upload.
+	argsRaw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	if !strings.Contains(string(argsRaw), "--backup-id\nrepo") {
+		t.Errorf("capture args missing the server-provided backup id; got: %q", string(argsRaw))
 	}
 }
 
@@ -525,7 +537,7 @@ func TestRunImportRefusesWhenBackupIDMissing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "restic_backup_id") {
 		t.Fatalf("expected a missing-backup-id refusal, got: %v", err)
 	}
-	if server.completeCalled {
+	if server.completeCalls != 0 {
 		t.Fatal("must never call complete without a real backup id")
 	}
 }
@@ -556,7 +568,7 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--resume setup-1") {
 		t.Fatalf("expected the first attempt to fail and point at --resume, got: %v", err)
 	}
-	if server.completeCalled {
+	if server.completeCalls != 0 {
 		t.Fatal("complete must not be called when the capture failed")
 	}
 
@@ -569,11 +581,14 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 	if err := runImport(resumeOpts); err != nil {
 		t.Fatalf("runImport --resume: %v", err)
 	}
-	if !server.credentialsCalled {
+	if server.credentialsCalls == 0 {
 		t.Fatal("expected /setups/import/credentials to be called to re-mint write creds")
 	}
-	if !server.completeCalled {
+	if server.completeCalls == 0 {
 		t.Fatal("expected complete to be called after a successful resume capture")
+	}
+	if server.startCalls != 1 {
+		t.Fatalf("resume must not call /setups/import/start again; startCalls=%d", server.startCalls)
 	}
 
 	argsRaw, err := os.ReadFile(argsFile)
