@@ -438,7 +438,28 @@ func printReady(out, errOut io.Writer, label string, dep api.Deployment, showSec
 	fmt.Fprintf(out, "\n✓ %s is live:\n\n    %s\n\n", label, dep.ServiceCredentials.URL)
 	printServiceCredentials(out, errOut, dep.ServiceCredentials, showSecrets, dep.ID)
 	printConnection(out, dep)
+	printRestoreWarnings(out, dep)
 	fmt.Fprintln(out, "\nManage it in the console or run `aq whoami` to confirm your login.")
+}
+
+// printRestoreWarnings prints the server-side CUDA/vendor-skew verdict for a
+// restore, when there is one. The orchestrator computes and persists
+// RestoreCompatibility/RestoreWarnings on every restore, but until now no CLI
+// path decoded either field — a user restoring a CUDA-12 environment onto a
+// CUDA-11 box saw nothing unless the restore hard-failed. Skew stays
+// non-blocking here exactly as it is server-side: the restore already reached
+// ACTIVE by the time this prints, so this only warns, it never decides for the
+// user. Shared by `aq up`'s printReady, `aq deploy`'s printRestored, and
+// `aq import`.
+func printRestoreWarnings(out io.Writer, dep api.Deployment) {
+	warnings := dep.RestoreWarningMessages()
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "\n⚠ Restore compatibility warnings:")
+	for _, w := range warnings {
+		fmt.Fprintf(out, "  - %s\n", w)
+	}
 }
 
 // printConnection prints how to get a shell on the box.

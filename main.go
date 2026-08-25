@@ -68,6 +68,8 @@ func main() {
 		run(up(args))
 	case "deploy":
 		run(deploy(args))
+	case "import":
+		run(importCmd(args))
 	case "ssh":
 		run(sshCmd(args))
 	case "status":
@@ -131,6 +133,7 @@ Commands:
   login         Pair this CLI to your Aquanode account (device login)
   up            Rent the cheapest matching GPU and bring up a working setup
   deploy        Restore a save onto a freshly-rented Aquanode GPU box
+  import        Capture a box you rent elsewhere into a new Aquanode setup
   ssh           Open a shell on a setup (managed key + ~/.ssh/config alias)
   status        Show a setup's status, HTTPS URL, and credentials
   save          Save a setup's current state into its named lineage
@@ -177,6 +180,22 @@ deploy flags:
   --comfyui          Relaunch ComfyUI on the restored data
   --jupyter          Relaunch Torch + Jupyter on the restored data instead
   --no-app           Restore only — do not relaunch an app
+
+import:
+  Run ON a box you already rent somewhere else (RunPod, Vast, your own
+  hardware) — captures its environment into a new Aquanode setup, so it can
+  be launched on any provider we support. Survey-first: aq shows exactly what
+  it will and won't capture, and asks before anything is uploaded.
+
+  aq import                 Survey, confirm, capture, and register the setup
+  aq import --dry-run       Survey and print the plan; capture/upload nothing
+  aq import --include <path>  Add a path to capture (repeatable)
+  aq import --exclude <path>  Drop a detected path from capture (repeatable)
+  aq import --name <name>   Name the resulting setup (default: from hostname)
+  aq import --yes           Skip the interactive confirmation
+  aq import --launch [--gpu <model>] [--max-price <n>] [--provider <name>]
+                             Report the observed hardware and what launching
+                             it would rent, before spending anything.
 
 ssh:
   aq ssh                     Open a shell on your only live deployment
