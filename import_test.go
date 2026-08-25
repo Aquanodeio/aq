@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
@@ -181,7 +182,7 @@ func TestRunOgreCapturePassesCredentialsViaEnvNotArgv(t *testing.T) {
 		"AWS_SECRET_ACCESS_KEY=another-secret",
 	}
 
-	res, err := runOgreCapture(ogrePath, "s3:endpoint/bucket/prefix", "/workspace", nil, nil, env, &bytes.Buffer{})
+	res, err := runOgreCapture(ogrePath, "https://s3.example.com", "aquanode-storage", "us-east-1", "team-1/ws-abc", "setup-1", "/workspace", nil, nil, env, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runOgreCapture: %v", err)
 	}
@@ -193,8 +194,20 @@ func TestRunOgreCapturePassesCredentialsViaEnvNotArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read args file: %v", err)
 	}
-	if strings.Contains(string(argsRaw), secretPassword) || strings.Contains(string(argsRaw), secretKey) {
-		t.Fatalf("secret leaked into argv: %q", string(argsRaw))
+	args := string(argsRaw)
+	if strings.Contains(args, secretPassword) || strings.Contains(args, secretKey) {
+		t.Fatalf("secret leaked into argv: %q", args)
+	}
+	// F1: aq must pass ogre the raw components (endpoint/bucket/region/
+	// prefix/backup-id), never a hand-rolled --repo URL — ogre builds that
+	// itself with its own resticRepositoryURL helper (CONTRACT.md F1).
+	for _, want := range []string{"--endpoint\nhttps://s3.example.com", "--bucket\naquanode-storage", "--region\nus-east-1", "--prefix\nteam-1/ws-abc", "--backup-id\nsetup-1"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("ogre capture args missing %q; got: %q", want, args)
+		}
+	}
+	if strings.Contains(args, "--repo") {
+		t.Errorf("--repo must not be passed — ogre builds the repo URL itself; got: %q", args)
 	}
 
 	envRaw, err := os.ReadFile(envFile)
@@ -339,5 +352,105 @@ func TestRunImportHappyPathRegistersSetupAndPrintsWarnings(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "DetectApp found nothing") {
 		t.Errorf("expected the import warning printed; got:\n%s", out.String())
+	}
+}
+
+// TestRunImportWithLaunchInstallsPollsAndRuns drives the F2 --launch path end
+// to end against a fake orchestrator: install-preview -> install -> poll the
+// deployment to active -> run. This is the real launch primitive
+// (setups.controller.ts's install/run pair), not a guessed
+// DeployRequest.SnapshotSource call.
+func TestRunImportWithLaunchInstallsPollsAndRuns(t *testing.T) {
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	obs := sampleObservation()
+	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
+	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
+	ogrePath, _, _ := writeStubOgre(t, surveyJSON, captureJSON)
+
+	server := &importServer{}
+	mux := server.handler().(*http.ServeMux)
+
+	var installCalled, runCalled bool
+	var installBody map[string]any
+	var runBody map[string]any
+	statusPolls := 0
+
+	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeData(w, []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}})
+			return
+		}
+		writeData(w, map[string]any{"id": "key-new"})
+	})
+	mux.HandleFunc("/setups/versions/7/install-preview", func(w http.ResponseWriter, r *http.Request) {
+		gpu := true
+		gpuName := "NVIDIA H100 80GB HBM3"
+		hasRecipe := true
+		writeData(w, map[string]any{
+			"id": 7, "name": "imported-box", "version": 1, "provenance": "user",
+			"hasRecipe": hasRecipe, "template": nil, "image": nil, "ports": []int{},
+			"hasAppUrl": false, "hasSecureUrl": false,
+			"startupScript":     map[string]any{"willRun": false, "source": nil},
+			"suggestedHardware": map[string]any{"gpu": gpuName, "gpuCount": 1, "cpu": nil, "memory": nil, "storage": nil},
+			"peakVram":          nil,
+			"warnings":          []string{},
+		})
+		_ = gpu
+	})
+	mux.HandleFunc("/setups/versions/7/install", func(w http.ResponseWriter, r *http.Request) {
+		installCalled = true
+		_ = json.NewDecoder(r.Body).Decode(&installBody)
+		writeData(w, map[string]any{"deployment_id": 555, "project_id": "proj-1"})
+	})
+	mux.HandleFunc("/deployments/555/status", func(w http.ResponseWriter, r *http.Request) {
+		statusPolls++
+		status := "PROVISIONING"
+		if statusPolls >= 2 {
+			status = "ACTIVE"
+		}
+		writeData(w, map[string]any{"deploymentId": 555, "status": status, "deployment": map[string]any{"id": 555, "status": status}})
+	})
+	mux.HandleFunc("/setups/versions/7/run", func(w http.ResponseWriter, r *http.Request) {
+		runCalled = true
+		_ = json.NewDecoder(r.Body).Decode(&runBody)
+		writeData(w, map[string]any{
+			"message":       "restored",
+			"compatibility": map[string]any{"warnings": []string{"driver CUDA 12.4 on the box vs 12.1 the snapshot expects"}},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	opts := testImportOptions(cred, ogrePath, &out, &errOut)
+	opts.launch = true
+	opts.launchPollInterval = time.Millisecond
+
+	if err := runImport(opts); err != nil {
+		t.Fatalf("runImport --launch: %v", err)
+	}
+	if !installCalled {
+		t.Fatal("expected POST /setups/versions/7/install to be called")
+	}
+	if !runCalled {
+		t.Fatal("expected POST /setups/versions/7/run to be called")
+	}
+	if installBody["gpu_model"] != "NVIDIA H100 80GB HBM3" {
+		t.Errorf("install body gpu_model = %v, want the observed GPU defaulted in", installBody["gpu_model"])
+	}
+	if id, ok := runBody["target_deployment_id"].(float64); !ok || int(id) != 555 {
+		t.Errorf("run body target_deployment_id = %#v, want 555", runBody["target_deployment_id"])
+	}
+	if statusPolls < 2 {
+		t.Errorf("expected the deployment to be polled until active, got %d polls", statusPolls)
+	}
+	if !strings.Contains(out.String(), "install preview") {
+		t.Errorf("expected the install-preview verdict printed before renting; got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "driver CUDA 12.4") {
+		t.Errorf("expected the run's compatibility warning printed; got:\n%s", out.String())
 	}
 }

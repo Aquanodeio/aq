@@ -194,8 +194,11 @@ import:
   aq import --name <name>   Name the resulting setup (default: from hostname)
   aq import --yes           Skip the interactive confirmation
   aq import --launch [--gpu <model>] [--max-price <n>] [--provider <name>]
-                             Report the observed hardware and what launching
-                             it would rent, before spending anything.
+                             After import, rent a GPU and restore onto it
+                             (billable). Prints the install-preview verdict —
+                             template, suggested hardware, compatibility
+                             warnings — before anything is rented. Defaults
+                             the GPU to the one observed on the source box.
 
 ssh:
   aq ssh                     Open a shell on your only live deployment

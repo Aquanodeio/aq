@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
@@ -39,6 +40,12 @@ type importOptions struct {
 	// ogrePath overrides ogre-binary discovery. Tests point it at a stub
 	// script; importCmd leaves it empty so runImport resolves a real one.
 	ogrePath string
+	// launchPollInterval/launchTimeout configure --launch's
+	// install-then-poll-then-run wait. Tests inject a fast interval; zero
+	// values default to the same cadence `aq up`/`aq deploy` poll at.
+	launchPollInterval time.Duration
+	launchTimeout      time.Duration
+	launchNow          func() time.Time
 }
 
 // importCmd parses flags and wires the real environment into runImport.
@@ -56,7 +63,7 @@ func importCmd(args []string) error {
 	fs.Var(&excludes, "exclude", "Drop a detected path from capture (repeatable)")
 	name := fs.String("name", "", "Name the resulting setup (default: derived from the box's hostname)")
 	yes := fs.Bool("yes", false, "Skip the interactive confirmation")
-	launch := fs.Bool("launch", false, "After import, report what launching it would rent (billable — see notes below)")
+	launch := fs.Bool("launch", false, "After import, rent a GPU and restore onto it (billable)")
 	gpu := fs.String("gpu", "", "With --launch: filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "With --launch: only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "With --launch: restrict to a single provider (e.g. massecompute)")
@@ -160,9 +167,14 @@ func runImport(opts importOptions) error {
 	if start.Credentials.Region != "" {
 		env = append(env, "AWS_DEFAULT_REGION="+start.Credentials.Region)
 	}
-	repoURL := resticRepoURL(start.Credentials, start.StoragePrefix)
 
-	captured, err := runOgreCapture(ogrePath, repoURL, obs.Capture.MountPath, opts.includes, opts.excludes, env, opts.errOut)
+	// ogre builds the restic repo URL itself (resticRepositoryURL,
+	// internal/vm_manage/restic_helpers.go) from these components — aq must
+	// NOT hand-roll a second formatter, or the two will drift (CONTRACT.md
+	// F1). setup_id doubles as the backup id: it is already the one stable
+	// identifier minted before capture starts, so re-running `aq import`
+	// against the same setup resumes into the same repo path.
+	captured, err := runOgreCapture(ogrePath, start.Credentials.Endpoint, start.Credentials.Bucket, start.Credentials.Region, start.StoragePrefix, start.SetupID, obs.Capture.MountPath, opts.includes, opts.excludes, env, opts.errOut)
 	if err != nil {
 		return fmt.Errorf("setup %s exists but the capture failed — restic is resumable, so re-running `aq import` will pick up where it left off: %w", start.SetupID, err)
 	}
@@ -184,8 +196,20 @@ func runImport(opts importOptions) error {
 	fmt.Fprintf(opts.out, "\n✓ Imported into setup %s (version %d). See it with `aq setups`.\n", complete.SetupID, complete.VersionID)
 	printImportWarnings(opts.out, complete.Warnings)
 
+	if opts.launchPollInterval <= 0 {
+		opts.launchPollInterval = 5 * time.Second
+	}
+	if opts.launchTimeout <= 0 {
+		opts.launchTimeout = 15 * time.Minute
+	}
+	if opts.launchNow == nil {
+		opts.launchNow = time.Now
+	}
+
 	if opts.launch {
-		printLaunchVerdict(opts.out, obs, opts.gpuModel, opts.maxPrice, opts.provider)
+		if err := launchImportedSetup(client, opts, complete.VersionID, obs); err != nil {
+			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact — launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
+		}
 	}
 
 	return nil
@@ -299,24 +323,100 @@ func printImportWarnings(out io.Writer, warnings []string) {
 	}
 }
 
-// printLaunchVerdict reports the observed hardware --launch would hand to a
-// restore, and what it would rent, BEFORE any money is spent (contract D.2).
-//
-// It stops there rather than actually renting: aq has no verb yet to
-// install/run a setup version onto a fresh box — that flow is console-only
-// today (see fork.go's identical, pre-existing gap for a forked setup), and
-// the frozen wire contract for this feature defines no endpoint for it
-// either. Fabricating a call against an endpoint that doesn't exist would be
-// worse than admitting the gap.
-func printLaunchVerdict(out io.Writer, obs api.ImportObservation, gpuModel string, maxPrice float64, provider string) {
-	fmt.Fprintln(out, "\n--launch: observed hardware on the source box:")
-	fmt.Fprintf(out, "  GPU:  %s x%d (vendor: %s, driver CUDA: %s, skew: %s)\n", obs.GPU.Name, obs.GPU.Count, obs.GPU.Vendor, obs.GPU.DriverCUDA, obs.GPU.Skew)
+// launchImportedSetup rents hardware for the just-imported setup version and
+// restores onto it, following setups.controller.ts's documented sequence:
+// install (provision a fresh deployment FROM the recipe) → poll until active
+// → run (restore the bytes onto it, passing target_deployment_id). The
+// install-preview verdict is fetched and printed BEFORE anything is rented —
+// it is the source doc names for "everything a prospective installer needs
+// to see before renting hardware," not a price aq invents.
+func launchImportedSetup(client *api.Client, opts importOptions, versionID int, obs api.ImportObservation) error {
+	out := opts.out
 
-	target := obs.GPU.Name
-	if gpuModel != "" {
-		target = gpuModel
+	gpuModel := opts.gpuModel
+	if gpuModel == "" {
+		// contract D.2: default the GPU to the one observed on the source
+		// box — matching hardware is the least surprising outcome, and the
+		// preview below still lets the user see (and override) it before
+		// anything is rented.
+		gpuModel = obs.GPU.Name
 	}
-	fmt.Fprintf(out, "  Would rent: %s", target)
+
+	preview, err := client.GetSetupVersionInstallPreview(versionID, gpuModel, obs.GPU.Count, 0)
+	if err != nil {
+		return fmt.Errorf("could not get an install preview: %w", err)
+	}
+	printInstallPreview(out, preview, gpuModel, opts.maxPrice, opts.provider)
+	if !preview.HasRecipe {
+		return errors.New("this version has no recipe to install from")
+	}
+
+	sshKeyID, err := ensureSSHKey(client, out)
+	if err != nil {
+		return err
+	}
+
+	installed, err := client.InstallSetupVersion(versionID, api.InstallSetupVersionRequest{
+		SSHKeyID: sshKeyID,
+		GPUModel: gpuModel,
+		MaxPrice: opts.maxPrice,
+		Provider: opts.provider,
+	})
+	if err != nil {
+		return fmt.Errorf("install failed: %w", err)
+	}
+	fmt.Fprintf(out, "\nDeployment #%d created. Provisioning (this can take a few minutes)...\n", installed.DeploymentID)
+
+	if err := pollUntilDeploymentActive(client, installed.DeploymentID, opts.launchPollInterval, opts.launchTimeout, opts.launchNow); err != nil {
+		return fmt.Errorf("deployment #%d did not come up: %w", installed.DeploymentID, err)
+	}
+
+	ran, err := client.RunSetupVersion(versionID, api.RunSetupVersionRequest{TargetDeploymentID: installed.DeploymentID})
+	if err != nil {
+		return fmt.Errorf("deployment #%d is up but restoring the imported setup onto it failed: %w", installed.DeploymentID, err)
+	}
+	fmt.Fprintf(out, "✓ %s\n", ran.Message)
+	if len(ran.Compatibility.Warnings) > 0 {
+		fmt.Fprintln(out, "\n⚠ Restore compatibility warnings:")
+		for _, w := range ran.Compatibility.Warnings {
+			fmt.Fprintf(out, "  - %s\n", w)
+		}
+	}
+	fmt.Fprintf(out, "\nCheck its status with `aq status %d` — connection details appear once it's ready.\n", installed.DeploymentID)
+	return nil
+}
+
+// printInstallPreview renders GET .../install-preview's verdict — template,
+// the author's own hardware as a SUGGESTION only, and any warnings — plus
+// what --launch would rent, all before a single dollar is spent. There is no
+// price field on this endpoint (it is a compatibility/shape preview, not a
+// quote), so this never invents one; `aq up`/`aq deploy` follow the same
+// house rule of not pre-quoting a price before renting.
+func printInstallPreview(out io.Writer, p *api.InstallPreviewResult, gpuModel string, maxPrice float64, provider string) {
+	fmt.Fprintln(out, "\n--launch: install preview (before renting):")
+	if !p.HasRecipe {
+		fmt.Fprintln(out, "  (no recipe on this version — nothing to provision from)")
+		return
+	}
+
+	template := "(none — data-only restore)"
+	if p.Template != nil && *p.Template != "" {
+		template = *p.Template
+	}
+	fmt.Fprintf(out, "  Template: %s\n", template)
+
+	if hw := p.SuggestedHardware; hw != nil && hw.GPU != nil {
+		fmt.Fprintf(out, "  Author's hardware (suggestion only): %s", *hw.GPU)
+		if hw.GPUCount != nil {
+			fmt.Fprintf(out, " x%d", *hw.GPUCount)
+		}
+		fmt.Fprintln(out)
+	}
+	if p.PeakVRAM != nil {
+		fmt.Fprintf(out, "  Peak VRAM observed: %d MB\n", p.PeakVRAM.PeakMB)
+	}
+
+	fmt.Fprintf(out, "  Would rent: %s", gpuModel)
 	if maxPrice > 0 {
 		fmt.Fprintf(out, " (max $%.2f/hr)", maxPrice)
 	}
@@ -324,17 +424,42 @@ func printLaunchVerdict(out io.Writer, obs api.ImportObservation, gpuModel strin
 		fmt.Fprintf(out, " on %s", provider)
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "\naq has no install/run-version verb yet — bring this setup online from the console for now (`aq fork` has the same gap).")
+
+	for _, w := range p.Warnings {
+		fmt.Fprintf(out, "  ⚠ %s\n", w)
+	}
 }
 
-// resticRepoURL builds a restic S3-repository URL for the scoped storage
-// destination /setups/import/start minted. Restic's S3 backend syntax is
-// `s3:<endpoint>/<bucket>/<path>`.
-func resticRepoURL(creds api.ImportCredentials, storagePrefix string) string {
-	endpoint := strings.TrimRight(creds.Endpoint, "/")
-	bucket := strings.Trim(creds.Bucket, "/")
-	prefix := strings.Trim(storagePrefix, "/")
-	return fmt.Sprintf("s3:%s/%s/%s", endpoint, bucket, prefix)
+// pollUntilDeploymentActive waits for a freshly-installed deployment (no
+// restore triggered yet) to reach ACTIVE, so POST .../run has a real box to
+// target — the poll step setups.controller.ts's install doc comment
+// documents between install and run.
+func pollUntilDeploymentActive(client *api.Client, deploymentID int, pollInterval, timeout time.Duration, now func() time.Time) error {
+	deadline := now().Add(timeout)
+	first := true
+	for {
+		if now().After(deadline) {
+			return errors.New("timed out waiting for the box to come up")
+		}
+		if !first {
+			time.Sleep(pollInterval)
+		}
+		first = false
+
+		status, err := client.DeploymentStatus(deploymentID)
+		if err != nil {
+			if isPermanentStatusError(err) {
+				return fmt.Errorf("could not check deployment status: %w", err)
+			}
+			continue
+		}
+		if isClosedStatus(status.Deployment.Status) {
+			return fmt.Errorf("deployment ended with status %q before coming up", status.Deployment.Status)
+		}
+		if isActiveStatus(status.Deployment.Status) {
+			return nil
+		}
+	}
 }
 
 // checkObservationSchema rejects an observation from an ogre this aq build
@@ -397,12 +522,19 @@ func runOgreSurvey(ogrePath string, includes, excludes []string, errOut io.Write
 	return out.Observation, nil
 }
 
-// runOgreCapture runs the real capture-and-upload pass. Credentials arrive via
-// env, never argv — argv is world-readable through /proc on any multi-user
-// box, which is exactly the kind of box `aq import` runs on. ogre's human
-// progress goes to stderr, streamed straight through to the user.
-func runOgreCapture(ogrePath, repoURL, mountPath string, includes, excludes []string, env []string, errOut io.Writer) (ogreCaptureOutput, error) {
-	args := append([]string{"capture", "--json", "--repo", repoURL}, surveyPathArgs(includes, excludes)...)
+// runOgreCapture runs the real capture-and-upload pass. ogre builds the
+// restic repo URL itself from these components (its own resticRepositoryURL
+// helper, internal/vm_manage/restic_helpers.go) — aq must not hand-roll a
+// second URL formatter, since the two would silently drift (CONTRACT.md F1).
+// Credentials arrive via env, never argv — argv is world-readable through
+// /proc on any multi-user box, which is exactly the kind of box `aq import`
+// runs on. ogre's human progress goes to stderr, streamed straight through.
+func runOgreCapture(ogrePath, endpoint, bucket, region, prefix, backupID, mountPath string, includes, excludes []string, env []string, errOut io.Writer) (ogreCaptureOutput, error) {
+	args := []string{"capture", "--json", "--endpoint", endpoint, "--bucket", bucket, "--prefix", prefix, "--backup-id", backupID}
+	if region != "" {
+		args = append(args, "--region", region)
+	}
+	args = append(args, surveyPathArgs(includes, excludes)...)
 	if mountPath != "" {
 		args = append(args, "--mount-path", mountPath)
 	}

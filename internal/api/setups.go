@@ -148,6 +148,149 @@ func (c *Client) GetSetupVersion(versionRowID int) (*SetupVersion, error) {
 	return &out, nil
 }
 
+// InstallPreviewStartupScript mirrors InstallPreviewDTO's nested
+// startupScript — willRun only, NEVER the script's content.
+type InstallPreviewStartupScript struct {
+	WillRun bool    `json:"willRun"`
+	Source  *string `json:"source"`
+}
+
+// InstallPreviewHardware mirrors InstallPreviewDTO's suggestedHardware — the
+// version author's own box, offered as a SUGGESTION only, never enforced.
+type InstallPreviewHardware struct {
+	GPU      *string `json:"gpu"`
+	GPUCount *int    `json:"gpuCount"`
+	CPU      *int    `json:"cpu"`
+	Memory   *string `json:"memory"`
+	Storage  *string `json:"storage"`
+}
+
+// InstallPreviewVRAM mirrors InstallPreviewDTO's peakVram. Three-state on the
+// wire — nil (not a zeroed struct) when the author's last save never
+// observed a peak.
+type InstallPreviewVRAM struct {
+	PeakMB  int  `json:"peakMb"`
+	TotalMB *int `json:"totalMb"`
+	Pegged  bool `json:"pegged"`
+}
+
+// InstallPreviewResult mirrors InstallPreviewDTO (snapshot-version.service.ts)
+// exactly — a hand-written object literal, camelCase like the Setup DTO, not
+// run through the snake_case DTO helpers SetupVersion's own routes use. It is
+// everything a prospective installer needs to see BEFORE renting hardware:
+// no startup-script CONTENT, no secrets, no ancestry — every finding here is
+// a warning, never a gate.
+type InstallPreviewResult struct {
+	ID                int                         `json:"id"`
+	Name              string                      `json:"name"`
+	Version           int                         `json:"version"`
+	Provenance        string                      `json:"provenance"`
+	HasRecipe         bool                        `json:"hasRecipe"`
+	Template          *string                     `json:"template"`
+	Image             *string                     `json:"image"`
+	Ports             []int                       `json:"ports"`
+	HasAppURL         bool                        `json:"hasAppUrl"`
+	HasSecureURL      bool                        `json:"hasSecureUrl"`
+	StartupScript     InstallPreviewStartupScript `json:"startupScript"`
+	SuggestedHardware *InstallPreviewHardware     `json:"suggestedHardware"`
+	PeakVRAM          *InstallPreviewVRAM         `json:"peakVram"`
+	Warnings          []string                    `json:"warnings"`
+}
+
+// GetSetupVersionInstallPreview fetches GET /setups/versions/:id/install-preview.
+// gpuModel/gpuCount/vramMB are the caller's PROPOSED target hardware — optional
+// (pass "" / 0 / 0 to omit); when given, the server compares them against the
+// recipe's own observation and returns any mismatch in Warnings.
+func (c *Client) GetSetupVersionInstallPreview(versionRowID int, gpuModel string, gpuCount, vramMB int) (*InstallPreviewResult, error) {
+	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/install-preview"
+	q := url.Values{}
+	if gpuModel != "" {
+		q.Set("gpu", gpuModel)
+	}
+	if gpuCount > 0 {
+		q.Set("gpu_count", strconv.Itoa(gpuCount))
+	}
+	if vramMB > 0 {
+		q.Set("vram_mb", strconv.Itoa(vramMB))
+	}
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var out InstallPreviewResult
+	if err := c.getJSON(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// InstallSetupVersionRequest is the body of POST /setups/versions/:id/install
+// ("provision FROM the recipe"). The caller supplies only what is genuinely
+// theirs — their SSH key and their hardware choice; everything describing the
+// workload (image/template/ports/startup script) comes from the recipe.
+type InstallSetupVersionRequest struct {
+	SSHKeyID   string  `json:"ssh_key_id"`
+	Name       string  `json:"name,omitempty"`
+	GPUModel   string  `json:"gpu_model,omitempty"`
+	MaxPrice   float64 `json:"max_price,omitempty"`
+	Provider   string  `json:"provider,omitempty"`
+	ShareToken string  `json:"share_token,omitempty"`
+}
+
+// InstallSetupVersionResult is the data returned by POST
+// /setups/versions/:id/install: a fresh deployment shaped by the recipe. This
+// does NOT restore the version's bytes yet — poll the deployment until
+// active, then call RunSetupVersion against it.
+type InstallSetupVersionResult struct {
+	DeploymentID int    `json:"deployment_id"`
+	ProjectID    string `json:"project_id"`
+}
+
+// InstallSetupVersion provisions a new deployment shaped by versionRowID's
+// recipe. See InstallSetupVersionResult's doc comment for the required
+// poll-then-run follow-up.
+func (c *Client) InstallSetupVersion(versionRowID int, req InstallSetupVersionRequest) (*InstallSetupVersionResult, error) {
+	var out InstallSetupVersionResult
+	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/install"
+	if err := c.postJSON(path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RunSetupVersionRequest is the body of POST /setups/versions/:id/run —
+// install a version onto hardware the caller already rented (their own, via
+// InstallSetupVersion above, or any other deployment they own).
+type RunSetupVersionRequest struct {
+	TargetDeploymentID int    `json:"target_deployment_id"`
+	ShareToken         string `json:"share_token,omitempty"`
+}
+
+// RunSetupVersionCompatibility mirrors the run response's nested
+// compatibility object — non-blocking findings only. A mismatch never
+// refuses the run; it only ever lands here.
+type RunSetupVersionCompatibility struct {
+	Warnings []string `json:"warnings"`
+}
+
+// RunSetupVersionResult is the data returned by POST
+// /setups/versions/:id/run.
+type RunSetupVersionResult struct {
+	Message       string                       `json:"message"`
+	Compatibility RunSetupVersionCompatibility `json:"compatibility"`
+}
+
+// RunSetupVersion restores versionRowID's bytes onto targetDeploymentID —
+// the second half of the install → poll → run sequence for launching an
+// imported (or any other) setup version onto fresh hardware.
+func (c *Client) RunSetupVersion(versionRowID int, req RunSetupVersionRequest) (*RunSetupVersionResult, error) {
+	var out RunSetupVersionResult
+	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/run"
+	if err := c.postJSON(path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ShareSetupVersionResult is the data returned by POST
 // /setups/versions/:id/share — a bare share TOKEN plus the optional name/
 // expiry the caller passed. The orchestrator's `createVersionShare`
