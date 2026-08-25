@@ -27,6 +27,7 @@ type upOptions struct {
 	template     string
 	name         string
 	gpuModel     string
+	gpuCount     int
 	maxPrice     float64
 	provider     string
 	showSecrets  bool
@@ -48,6 +49,7 @@ func up(args []string) error {
 	jupyter := fs.Bool("jupyter", false, "Install Torch + Jupyter on the box instead")
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
+	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
 	name := fs.String("name", "", "Set the deployment's display name (default: an auto-generated name)")
 	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
@@ -60,6 +62,10 @@ func up(args []string) error {
 
 	if *comfyui && *jupyter {
 		return errors.New("choose only one of --comfyui or --jupyter")
+	}
+
+	if err := validateGPUCount(*gpus); err != nil {
+		return err
 	}
 	template := templateComfyUI
 	if *jupyter {
@@ -84,6 +90,7 @@ func up(args []string) error {
 		template:    template,
 		name:        strings.TrimSpace(*name),
 		gpuModel:    *gpu,
+		gpuCount:    *gpus,
 		maxPrice:    *maxPrice,
 		provider:    *provider,
 		showSecrets: *showSecrets,
@@ -161,10 +168,7 @@ func runUp(opts upOptions) error {
 		opts.probe = httpAppReady
 	}
 
-	apiURL := opts.cred.APIURL
-	if apiURL == "" {
-		apiURL = config.APIURL()
-	}
+	apiURL := resolveAPIURL(opts.cred)
 	client := api.NewAuthed(apiURL, opts.cred.Token, opts.cred.TeamID)
 
 	label := templateLabel(opts.template)
@@ -182,6 +186,7 @@ func runUp(opts upOptions) error {
 		SSHKeyID:   sshKeyID,
 		Name:       opts.name,
 		GPUModel:   opts.gpuModel,
+		GPUCount:   opts.gpuCount,
 		MaxPrice:   opts.maxPrice,
 		Provider:   opts.provider,
 		IdlePolicy: opts.idlePolicy,
@@ -503,4 +508,29 @@ func printServiceCredentials(out, errOut io.Writer, creds *api.ServiceCredential
 		return
 	}
 	fmt.Fprintf(errOut, "  Password: (hidden) — re-run `aq status %d --show-secrets` to print it, or view it in the console.\n", deploymentID)
+}
+
+// maxGPUCount mirrors the orchestrator's MAX_GPU_COUNT rail. Validating here
+// too is not redundant: it turns a 400 from the API into a message that names
+// the flag, and it costs nothing. If the server ever raises its own cap this
+// becomes the binding one — which is the safe direction for a value that
+// decides how expensive a box is.
+const maxGPUCount = 8
+
+// validateGPUCount rejects a --gpus value the API would refuse anyway.
+//
+// Zero is the unset sentinel, not a request for zero GPUs: the flag defaults to
+// 0 so an unspecified request omits the field entirely and the orchestrator
+// applies its own default of one.
+func validateGPUCount(n int) error {
+	switch {
+	case n == 0:
+		return nil
+	case n < 0:
+		return fmt.Errorf("--gpus must be a positive number, got %d", n)
+	case n > maxGPUCount:
+		return fmt.Errorf("--gpus is capped at %d, got %d", maxGPUCount, n)
+	default:
+		return nil
+	}
 }

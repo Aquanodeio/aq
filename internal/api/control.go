@@ -45,6 +45,13 @@ type UpRequest struct {
 	GPUModel string  `json:"gpuModel,omitempty"`
 	MaxPrice float64 `json:"maxPrice,omitempty"`
 	Provider string  `json:"provider,omitempty"`
+	// GPUCount asks for a multi-GPU box. Omitted (0) means "no opinion", which
+	// the orchestrator reads as its own default of one — the same
+	// omit-means-defaults contract IdlePolicy uses below. Never send 1
+	// explicitly for an unspecified request: an older orchestrator that does
+	// not know the field would ignore it either way, but a caller that always
+	// sends a number cannot tell "I want exactly one" from "I did not ask".
+	GPUCount int `json:"gpuCount,omitempty"`
 	// Name sets the deployment's display name. When empty the orchestrator
 	// falls back to a generated "<Adjective> <GPU> from <Region>" name. Passing
 	// a stable `ticket-<N>-<label>` here lets the session-scoped reaper attribute
@@ -88,6 +95,8 @@ type DeployRequest struct {
 	GPUModel       string  `json:"gpuModel,omitempty"`
 	MaxPrice       float64 `json:"maxPrice,omitempty"`
 	Provider       string  `json:"provider,omitempty"`
+	// GPUCount asks for a multi-GPU box; 0 means "no opinion". See UpRequest.
+	GPUCount int `json:"gpuCount,omitempty"`
 	// Name sets the deployment's display name; empty → orchestrator-generated.
 	// A stable `ticket-<N>-<label>` makes the throwaway box reapable (#310).
 	Name string `json:"name,omitempty"`
@@ -177,6 +186,49 @@ type Deployment struct {
 	// RestoreWarningMessages parse them leniently on demand.
 	RestoreCompatibility json.RawMessage `json:"restore_compatibility"`
 	RestoreWarnings      json.RawMessage `json:"restore_warnings"`
+
+	// Inventory fields for `aq ls`. All snake_case only: GET /deployments
+	// returns raw untransformed rows, unlike /:id and /:id/status.
+	Provider  string `json:"provider"`
+	GPU       string `json:"gpu"`
+	GPUCount  int    `json:"gpu_count"`
+	CreatedAt string `json:"created_at"`
+	// PricePerSecond is the rate in Currency's units — NOT necessarily USD.
+	// `deployments.currency` carries the provider's own denomination (USD, AKT,
+	// USPON, ...) and conversion happens only at bucket-mint time, so
+	// price_per_second * 3600 is AKT/hour on an Akash row. Anything rendering
+	// this MUST print the currency code alongside it and must never prefix a
+	// bare "$". The USD rate lives on billing_buckets_v2, which the CLI has no
+	// route to.
+	PricePerSecond FlexFloat `json:"price_per_second"`
+	Currency       string    `json:"currency"`
+}
+
+// FlexFloat decodes a JSON number that may arrive as a bare number or as a
+// quoted string. Prisma serializes Decimal columns as strings, and a strict
+// float64 field would fail the whole row's decode on one — the same defensive
+// reasoning behind ServiceURLs staying raw.
+type FlexFloat float64
+
+func (f *FlexFloat) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "null" || s == `""` {
+		*f = 0
+		return nil
+	}
+	s = strings.Trim(s, `"`)
+	if s == "" {
+		*f = 0
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		// A rate we cannot parse must read as unknown, never as free.
+		*f = 0
+		return nil
+	}
+	*f = FlexFloat(v)
+	return nil
 }
 
 // CompatibilityLabel parses RestoreCompatibility leniently: it may arrive as a

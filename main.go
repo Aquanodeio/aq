@@ -76,6 +76,10 @@ func main() {
 		run(push(args))
 	case "run":
 		run(runCmd(args))
+	case "logs":
+		run(logsCmd(args))
+	case "ls":
+		run(lsCmd(args))
 	case "status":
 		run(status(args))
 	case "save":
@@ -139,6 +143,8 @@ Commands:
   ssh           Open a shell on a setup (managed key + ~/.ssh/config alias)
   push          Send your working directory to a box you already rented
   run           Push the working directory, then run a command on the box
+  logs          Read a detached run's output
+  ls            List your deployments — what is running and what it costs
   status        Show a setup's status, HTTPS URL, and credentials
   save          Save a setup's current state into its named lineage
   share         Get a link to one saved version of a setup
@@ -161,7 +167,10 @@ Commands:
 
 up flags:
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
+  --gpus <n>         How many GPUs the box should have (default 1, max 8).
+                     Only offers with at least this many are considered.
   --max-price <n>    Only rent GPUs at or below this hourly price
+                     (the WHOLE offer's price, not per-GPU)
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
   --auto-pause       Enable idle auto-pause on this deployment (off by default)
@@ -175,7 +184,10 @@ up flags:
 deploy flags:
   --snapshot <id>    Save to deploy (id from aq / the console, e.g. ext-42)
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
+  --gpus <n>         How many GPUs the box should have (default 1, max 8).
+                     Only offers with at least this many are considered.
   --max-price <n>    Only rent GPUs at or below this hourly price
+                     (the WHOLE offer's price, not per-GPU)
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
 
@@ -247,12 +259,31 @@ push / run:
   run also takes:
   --dir <dir>        Directory to run in (default: the push destination)
   --no-push          Run without sending anything first
+  --detach           Start it and return. The run keeps going after you
+                     disconnect; read it back with "aq logs". Prints the run
+                     id on stdout so you can capture it.
 
   A .aqignore file in the directory you send adds exclude patterns, one per
   line, "#" for comments.
 
   Transport: rsync when both ends have it (only changed files move), otherwise
   tar over ssh, which re-sends the whole tree. aq prints which one it used.
+
+ls / logs:
+  aq ls                      Live deployments: id, name, status, GPU, provider,
+                              hourly rate and age
+  aq ls --all                Include closed and failed ones
+
+  The rate column always names its currency (e.g. "0.4200 USD"). It is the
+  provider's own denomination, which is not always dollars.
+
+  aq logs [name|id]          Print the most recent detached run's output
+  aq logs --run <id>         Read one specific run
+  aq logs --list             List this box's runs, their state, and command
+  -f                         Keep streaming as the run writes more
+  -n <lines>                 Trailing lines to show (default 200)
+  --dir <dir>                Working directory the run was launched in
+                              (default: /workspace)
 
 idle:
   A PER-DEPLOYMENT idle-auto-pause policy (warn/pause thresholds, GPU idle %).
