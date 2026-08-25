@@ -8,6 +8,63 @@ import (
 	"testing"
 )
 
+// TestListDeploymentsDecodesRestoreCompatibilityFromUntransformedRow checks
+// that GET /deployments (the list route, which never transforms its rows —
+// see the Deployment doc comment) decodes restore_compatibility/
+// restore_warnings the same way it decodes restore_status/restore_error.
+// This is the surface-the-compatibility-verdict gap: a CUDA-12 environment
+// restored onto a CUDA-11 box previously reported nothing anywhere the CLI
+// could see, even though the orchestrator persisted the verdict on every row.
+func TestListDeploymentsDecodesRestoreCompatibilityFromUntransformedRow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":[{"id":42,"name":"imported-box","status":"ACTIVE",`+
+			`"restore_compatibility":"minor","restore_warnings":["driver CUDA 12.4 on the box vs 12.1 the snapshot expects"]}]}`)
+	}))
+	defer srv.Close()
+
+	deps, err := NewAuthed(srv.URL, "tok", "t").ListDeployments()
+	if err != nil {
+		t.Fatalf("ListDeployments: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("got %d deployments, want 1", len(deps))
+	}
+	if got := deps[0].CompatibilityLabel(); got != "minor" {
+		t.Errorf("CompatibilityLabel() = %q, want %q", got, "minor")
+	}
+	warnings := deps[0].RestoreWarningMessages()
+	if len(warnings) != 1 || warnings[0] != "driver CUDA 12.4 on the box vs 12.1 the snapshot expects" {
+		t.Errorf("RestoreWarningMessages() = %v, want the one warning", warnings)
+	}
+}
+
+// TestListDeploymentsToleratesUnexpectedCompatibilityShape checks that a
+// surprising restore_compatibility/restore_warnings shape (an object, or a
+// bare string for warnings) degrades to an empty verdict rather than failing
+// the whole row's decode — the same defensive reasoning ServiceURLs already
+// follows, now extended to these two fields.
+func TestListDeploymentsToleratesUnexpectedCompatibilityShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":[{"id":42,"name":"box","status":"ACTIVE",`+
+			`"restore_compatibility":{"level":"minor"},"restore_warnings":"a single warning string"}]}`)
+	}))
+	defer srv.Close()
+
+	deps, err := NewAuthed(srv.URL, "tok", "t").ListDeployments()
+	if err != nil {
+		t.Fatalf("ListDeployments must not fail on an unexpected compatibility shape: %v", err)
+	}
+	if got := deps[0].CompatibilityLabel(); got != "" {
+		t.Errorf("CompatibilityLabel() = %q, want \"\" for an object shape", got)
+	}
+	warnings := deps[0].RestoreWarningMessages()
+	if len(warnings) != 1 || warnings[0] != "a single warning string" {
+		t.Errorf("RestoreWarningMessages() = %v, want the single string wrapped in a slice", warnings)
+	}
+}
+
 // TestGetDeploymentReturnsProjectID checks GetDeployment (the raw
 // GET /deployments/:id row) decodes project_id — the field `aq pause` needs
 // to hit the project-scoped pause route, which the transformed /status and

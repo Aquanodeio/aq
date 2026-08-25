@@ -166,6 +166,50 @@ type Deployment struct {
 	// Empty for a plain `aq up` (no restore) or a backend that predates the field.
 	RestoreStatus string `json:"restore_status"`
 	RestoreError  string `json:"restore_error"`
+	// RestoreCompatibility/RestoreWarnings carry the server-side CUDA/vendor
+	// skew verdict computed on every restore (host_compat.go -> the deployment
+	// row via vms/index.ts), previously computed and persisted but never
+	// decoded here — a CLI user restoring a CUDA-12 environment onto a
+	// CUDA-11 box saw nothing unless the restore hard-failed. Both fields stay
+	// raw: their exact shape is not confirmed on the wire, and a decode
+	// surprise here must never fail the whole Deployment/list decode — the
+	// same defensive reasoning as ServiceURLs above. CompatibilityLabel/
+	// RestoreWarningMessages parse them leniently on demand.
+	RestoreCompatibility json.RawMessage `json:"restore_compatibility"`
+	RestoreWarnings      json.RawMessage `json:"restore_warnings"`
+}
+
+// CompatibilityLabel parses RestoreCompatibility leniently: it may arrive as a
+// bare string (e.g. "compatible"/"minor"/"major"/"vendor_mismatch") or be
+// absent on a backend that predates the field. Any other shape yields "" —
+// never an error, since this only ever feeds an informational print.
+func (d Deployment) CompatibilityLabel() string {
+	if len(d.RestoreCompatibility) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(d.RestoreCompatibility, &s); err == nil {
+		return s
+	}
+	return ""
+}
+
+// RestoreWarningMessages parses RestoreWarnings leniently: the field may be a
+// JSON array of strings, a single string, or absent. Never asserted to one
+// shape — see the field's own doc comment for why.
+func (d Deployment) RestoreWarningMessages() []string {
+	if len(d.RestoreWarnings) == 0 {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(d.RestoreWarnings, &list); err == nil {
+		return list
+	}
+	var single string
+	if err := json.Unmarshal(d.RestoreWarnings, &single); err == nil && single != "" {
+		return []string{single}
+	}
+	return nil
 }
 
 // SSHServiceURL returns the deployment's port-22 service URL.

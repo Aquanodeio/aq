@@ -230,6 +230,7 @@ func waitForActive(
 func printRestored(out io.Writer, dep api.Deployment) {
 	fmt.Fprintf(out, "\n✓ Your snapshot was restored onto deployment #%d.\n", dep.ID)
 	printConnection(out, dep)
+	printRestoreWarnings(out, dep)
 	fmt.Fprintf(out, "\nManage it in the console or run `aq whoami` to confirm your login.\n")
 }
 
