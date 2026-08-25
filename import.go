@@ -35,8 +35,14 @@ type importOptions struct {
 	gpuModel string
 	maxPrice float64
 	provider string
-	out      io.Writer
-	errOut   io.Writer
+	// resumeSetupID, when set, skips survey/confirm/start entirely and
+	// resumes a previously started (but not completed) import for this
+	// setup id: re-mint credentials, re-run capture into the SAME
+	// storage_prefix/backup_id (restic dedups what already landed), then
+	// complete with the original single-use import token.
+	resumeSetupID string
+	out           io.Writer
+	errOut        io.Writer
 	// ogrePath overrides ogre-binary discovery. Tests point it at a stub
 	// script; importCmd leaves it empty so runImport resolves a real one.
 	ogrePath string
@@ -67,6 +73,7 @@ func importCmd(args []string) error {
 	gpu := fs.String("gpu", "", "With --launch: filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "With --launch: only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "With --launch: restrict to a single provider (e.g. massecompute)")
+	resume := fs.String("resume", "", "Resume a previously started import for this setup id (re-mints credentials; restic dedups what already landed)")
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
@@ -77,18 +84,19 @@ func importCmd(args []string) error {
 	}
 
 	return runImport(importOptions{
-		cred:     cred,
-		dryRun:   *dryRun,
-		includes: includes,
-		excludes: excludes,
-		name:     strings.TrimSpace(*name),
-		yes:      *yes,
-		launch:   *launch,
-		gpuModel: *gpu,
-		maxPrice: *maxPrice,
-		provider: *provider,
-		out:      os.Stdout,
-		errOut:   os.Stderr,
+		cred:          cred,
+		dryRun:        *dryRun,
+		includes:      includes,
+		excludes:      excludes,
+		name:          strings.TrimSpace(*name),
+		yes:           *yes,
+		launch:        *launch,
+		gpuModel:      *gpu,
+		maxPrice:      *maxPrice,
+		provider:      *provider,
+		resumeSetupID: strings.TrimSpace(*resume),
+		out:           os.Stdout,
+		errOut:        os.Stderr,
 	})
 }
 
@@ -103,6 +111,20 @@ func runImport(opts importOptions) error {
 	}
 
 	client := newControlClient(opts.cred)
+
+	if opts.launchPollInterval <= 0 {
+		opts.launchPollInterval = 5 * time.Second
+	}
+	if opts.launchTimeout <= 0 {
+		opts.launchTimeout = 15 * time.Minute
+	}
+	if opts.launchNow == nil {
+		opts.launchNow = time.Now
+	}
+
+	if opts.resumeSetupID != "" {
+		return runImportResume(client, opts)
+	}
 
 	ogrePath := opts.ogrePath
 	if ogrePath == "" {
@@ -168,15 +190,38 @@ func runImport(opts importOptions) error {
 		env = append(env, "AWS_DEFAULT_REGION="+start.Credentials.Region)
 	}
 
-	// ogre builds the restic repo URL itself (resticRepositoryURL,
-	// internal/vm_manage/restic_helpers.go) from these components — aq must
-	// NOT hand-roll a second formatter, or the two will drift (CONTRACT.md
-	// F1). setup_id doubles as the backup id: it is already the one stable
-	// identifier minted before capture starts, so re-running `aq import`
-	// against the same setup resumes into the same repo path.
-	captured, err := runOgreCapture(ogrePath, start.Credentials.Endpoint, start.Credentials.Bucket, start.Credentials.Region, start.StoragePrefix, start.SetupID, obs.Capture.MountPath, opts.includes, opts.excludes, env, opts.errOut)
+	// The server owns the restic repo layout, not aq (CONTRACT.md section G):
+	// storagePrefix is what makes a setup's repo unique, and ResticBackupID
+	// is the fixed trailing path segment (currently the literal "repo") for
+	// every portable setup. An earlier version of this command used the
+	// setup's own uuid here instead — that silently wrote to a path nothing
+	// ever reads, orphaning the uploaded bytes. So this never guesses or
+	// defaults it: a start response missing it is a hard, loud failure
+	// before a single byte moves.
+	if start.ResticBackupID == "" {
+		return fmt.Errorf("setup %s was created but the orchestrator did not return a restic_backup_id — refusing to guess where in storage to write the capture (see CONTRACT.md section G); update aq or the orchestrator, then resume with `aq import --resume %s`", start.SetupID, start.SetupID)
+	}
+
+	// Persist enough locally to resume — restic_password is shown once here
+	// and never re-servable, and there is no server-side "list my pending
+	// imports" endpoint, so this is the only way `aq import --resume` can
+	// reconstruct the exact repo this attempt is writing into if the capture
+	// below fails or is interrupted.
+	resumeState := importResumeState{
+		SetupID:        start.SetupID,
+		StoragePrefix:  start.StoragePrefix,
+		ResticPassword: start.ResticPassword,
+		ResticBackupID: start.ResticBackupID,
+		ImportToken:    start.ImportToken,
+		MountPath:      obs.Capture.MountPath,
+	}
+	if err := saveImportResumeState(resumeState); err != nil {
+		fmt.Fprintf(opts.errOut, "warning: could not save local resume state for setup %s: %v — a failed capture could not be resumed with --resume\n", start.SetupID, err)
+	}
+
+	captured, err := runOgreCapture(ogrePath, start.Credentials.Endpoint, start.Credentials.Bucket, start.Credentials.Region, start.StoragePrefix, start.ResticBackupID, obs.Capture.MountPath, opts.includes, opts.excludes, env, opts.errOut)
 	if err != nil {
-		return fmt.Errorf("setup %s exists but the capture failed — restic is resumable, so re-running `aq import` will pick up where it left off: %w", start.SetupID, err)
+		return fmt.Errorf("setup %s exists but the capture failed — resume it with `aq import --resume %s` once fixed (restic dedups what already landed): %w", start.SetupID, start.SetupID, err)
 	}
 
 	// 4. Register the version, synthesizing a launchable recipe from what was
@@ -190,21 +235,12 @@ func runImport(opts importOptions) error {
 		Observation:    captured.Observation,
 	})
 	if err != nil {
-		return fmt.Errorf("capture succeeded but registering the setup failed: %w", err)
+		return fmt.Errorf("capture succeeded but registering the setup failed — resume with `aq import --resume %s` to retry: %w", start.SetupID, err)
 	}
+	clearImportResumeState(start.SetupID)
 
 	fmt.Fprintf(opts.out, "\n✓ Imported into setup %s (version %d). See it with `aq setups`.\n", complete.SetupID, complete.VersionID)
 	printImportWarnings(opts.out, complete.Warnings)
-
-	if opts.launchPollInterval <= 0 {
-		opts.launchPollInterval = 5 * time.Second
-	}
-	if opts.launchTimeout <= 0 {
-		opts.launchTimeout = 15 * time.Minute
-	}
-	if opts.launchNow == nil {
-		opts.launchNow = time.Now
-	}
 
 	if opts.launch {
 		if err := launchImportedSetup(client, opts, complete.VersionID, obs); err != nil {
@@ -323,6 +359,149 @@ func printImportWarnings(out io.Writer, warnings []string) {
 	}
 }
 
+// importResumeState is aq's own local record of what it needs to resume an
+// import that was started but never completed. There is no server-side "list
+// my pending imports" endpoint, and restic_password is shown exactly once at
+// /setups/import/start and never re-servable — so this file is the only way
+// `aq import --resume` can reconstruct the exact repo the first attempt was
+// writing into, rather than minting a second Setup that bills in parallel
+// with the first (CONTRACT.md section G's exact failure mode).
+type importResumeState struct {
+	SetupID        string `json:"setup_id"`
+	StoragePrefix  string `json:"storage_prefix"`
+	ResticPassword string `json:"restic_password"`
+	ResticBackupID string `json:"restic_backup_id"`
+	ImportToken    string `json:"import_token"`
+	MountPath      string `json:"mount_path"`
+}
+
+// importResumeStatePath is where importResumeState for setupID is stored —
+// under aq's own config dir, one file per pending import.
+func importResumeStatePath(setupID string) (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "import-resume", setupID+".json"), nil
+}
+
+// saveImportResumeState persists state 0600 (dir 0700) — the same posture as
+// credentials.json, since this carries the same class of secret (a restic
+// password, a single-use import token).
+func saveImportResumeState(state importResumeState) error {
+	path, err := importResumeStatePath(state.SetupID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// loadImportResumeState reads back a previously saved resume record.
+func loadImportResumeState(setupID string) (*importResumeState, error) {
+	path, err := importResumeStatePath(setupID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var state importResumeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// clearImportResumeState removes the local resume record once an import
+// completes. Best-effort: a failure here never fails the command — at worst a
+// stale, harmless file lingers under the config dir.
+func clearImportResumeState(setupID string) {
+	path, err := importResumeStatePath(setupID)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// runImportResume re-mints scoped write credentials for a setup whose import
+// didn't finish, and resumes the capture into the EXACT SAME storage_prefix/
+// backup_id the original attempt used — restic dedups what already landed
+// (a large capture that died at 90% does not restart from zero), and reusing
+// the original single-use import token means completion never mints a
+// second, parallel-billing Setup.
+func runImportResume(client *api.Client, opts importOptions) error {
+	out := opts.out
+
+	state, err := loadImportResumeState(opts.resumeSetupID)
+	if err != nil {
+		return fmt.Errorf("no pending import found locally for setup %s — --resume only works from the machine that started the import: %w", opts.resumeSetupID, err)
+	}
+
+	fmt.Fprintf(out, "Resuming import for setup %s...\n", state.SetupID)
+
+	refreshed, err := client.RefreshImportCredentials(state.SetupID)
+	if err != nil {
+		return fmt.Errorf("could not refresh import credentials: %w", err)
+	}
+
+	ogrePath := opts.ogrePath
+	if ogrePath == "" {
+		resolved, err := ensureOgreBinary(client, out)
+		if err != nil {
+			return err
+		}
+		ogrePath = resolved
+	}
+
+	// Credentials go through the child's environment, never argv — same rule
+	// as the first attempt.
+	env := []string{
+		"RESTIC_PASSWORD=" + state.ResticPassword,
+		"AWS_ACCESS_KEY_ID=" + refreshed.Credentials.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY=" + refreshed.Credentials.SecretAccessKey,
+	}
+	if refreshed.Credentials.Region != "" {
+		env = append(env, "AWS_DEFAULT_REGION="+refreshed.Credentials.Region)
+	}
+
+	captured, err := runOgreCapture(ogrePath, refreshed.Credentials.Endpoint, refreshed.Credentials.Bucket, refreshed.Credentials.Region, state.StoragePrefix, state.ResticBackupID, state.MountPath, opts.includes, opts.excludes, env, opts.errOut)
+	if err != nil {
+		return fmt.Errorf("resume capture failed — re-run `aq import --resume %s` again once fixed: %w", state.SetupID, err)
+	}
+
+	complete, err := client.CompleteImport(api.ImportCompleteRequest{
+		SetupID:        state.SetupID,
+		ImportToken:    state.ImportToken,
+		OgreSnapshotID: captured.OgreSnapshotID,
+		Path:           captured.Path,
+		Size:           captured.Size,
+		Observation:    captured.Observation,
+	})
+	if err != nil {
+		return fmt.Errorf("resume capture succeeded but registering the setup failed: %w", err)
+	}
+	clearImportResumeState(state.SetupID)
+
+	fmt.Fprintf(out, "\n✓ Resumed import into setup %s (version %d). See it with `aq setups`.\n", complete.SetupID, complete.VersionID)
+	printImportWarnings(out, complete.Warnings)
+
+	if opts.launch {
+		if err := launchImportedSetup(client, opts, complete.VersionID, captured.Observation); err != nil {
+			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact — launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
+		}
+	}
+
+	return nil
+}
+
 // launchImportedSetup rents hardware for the just-imported setup version and
 // restores onto it, following setups.controller.ts's documented sequence:
 // install (provision a fresh deployment FROM the recipe) → poll until active
@@ -349,6 +528,13 @@ func launchImportedSetup(client *api.Client, opts importOptions, versionID int, 
 	printInstallPreview(out, preview, gpuModel, opts.maxPrice, opts.provider)
 	if !preview.HasRecipe {
 		return errors.New("this version has no recipe to install from")
+	}
+
+	fmt.Fprintln(out, "\nThis will rent billable hardware.")
+	if opts.maxPrice > 0 {
+		fmt.Fprintf(out, "--max-price $%.2f/hr is the guard on that spend.\n", opts.maxPrice)
+	} else {
+		fmt.Fprintln(out, "No --max-price was given — the cheapest matching offer will be rented at whatever it costs.")
 	}
 
 	sshKeyID, err := ensureSSHKey(client, out)

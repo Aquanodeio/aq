@@ -52,6 +52,33 @@ esac
 	return ogrePath, argsFile, envFile
 }
 
+// writeStubOgreCaptureFails answers a survey-only invocation successfully but
+// fails every real capture invocation — for exercising the resume path,
+// where the first attempt must fail before a second (successful) attempt
+// resumes it.
+func writeStubOgreCaptureFails(t *testing.T, surveyJSON string) string {
+	t.Helper()
+	dir := t.TempDir()
+	ogrePath := filepath.Join(dir, "ogre")
+	script := fmt.Sprintf(`#!/bin/sh
+case " $* " in
+  *" --survey-only "*)
+    cat <<'SURVEY_EOF'
+%s
+SURVEY_EOF
+    ;;
+  *)
+    echo "simulated capture failure" >&2
+    exit 1
+    ;;
+esac
+`, surveyJSON)
+	if err := os.WriteFile(ogrePath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub ogre: %v", err)
+	}
+	return ogrePath
+}
+
 // sampleObservation is a minimal, schema-valid ImportObservation with one
 // capturing entry, one truncated (floor) "not capturing" entry, and one
 // unreadable entry — enough to exercise all three survey blocks.
@@ -221,16 +248,20 @@ func TestRunOgreCapturePassesCredentialsViaEnvNotArgv(t *testing.T) {
 
 // importServer is a minimal fake of the /setups/import/* orchestrator routes.
 type importServer struct {
-	startCalled    bool
-	completeCalled bool
-	warnings       []string
+	startCalled       bool
+	completeCalled    bool
+	credentialsCalled bool
+	warnings          []string
+	// omitBackupID drops restic_backup_id from the /start response, so tests
+	// can exercise the "server didn't return it" refusal (CONTRACT.md G).
+	omitBackupID bool
 }
 
 func (s *importServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups/import/start", func(w http.ResponseWriter, r *http.Request) {
 		s.startCalled = true
-		writeData(w, map[string]any{
+		body := map[string]any{
 			"setup_id":        "setup-1",
 			"storage_prefix":  "team-1/ws-abc",
 			"restic_password": "resticpw",
@@ -241,6 +272,23 @@ func (s *importServer) handler() http.Handler {
 				"bucket":            "aquanode-storage",
 				"access_key_id":     "AKIA...",
 				"secret_access_key": "shh",
+				"region":            "us-east-1",
+			},
+		}
+		if !s.omitBackupID {
+			body["restic_backup_id"] = "repo"
+		}
+		writeData(w, body)
+	})
+	mux.HandleFunc("/setups/import/credentials", func(w http.ResponseWriter, r *http.Request) {
+		s.credentialsCalled = true
+		writeData(w, map[string]any{
+			"expires_at": "2026-08-27T00:00:00Z",
+			"credentials": map[string]any{
+				"endpoint":          "https://s3.example.com",
+				"bucket":            "aquanode-storage",
+				"access_key_id":     "AKIA-REFRESHED",
+				"secret_access_key": "shh-refreshed",
 				"region":            "us-east-1",
 			},
 		})
@@ -452,5 +500,93 @@ func TestRunImportWithLaunchInstallsPollsAndRuns(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "driver CUDA 12.4") {
 		t.Errorf("expected the run's compatibility warning printed; got:\n%s", out.String())
+	}
+}
+
+// TestRunImportRefusesWhenBackupIDMissing checks a start response with no
+// restic_backup_id is a hard, loud failure — CONTRACT.md section G: the
+// server owns this convention, and aq must never guess or default it (an
+// earlier version of this command used the setup's own uuid, which silently
+// wrote to a path nothing ever reads).
+func TestRunImportRefusesWhenBackupIDMissing(t *testing.T) {
+	obs := sampleObservation()
+	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
+	ogrePath, _, _ := writeStubOgre(t, surveyJSON, "{}")
+
+	server := &importServer{omitBackupID: true}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	opts := testImportOptions(cred, ogrePath, &out, &errOut)
+
+	err := runImport(opts)
+	if err == nil || !strings.Contains(err.Error(), "restic_backup_id") {
+		t.Fatalf("expected a missing-backup-id refusal, got: %v", err)
+	}
+	if server.completeCalled {
+		t.Fatal("must never call complete without a real backup id")
+	}
+}
+
+// TestRunImportResumeReusesStoragePrefixAndBackupID drives a failed capture
+// followed by `aq import --resume <setup-id>`, and checks the resumed
+// capture targets the EXACT SAME storage_prefix/backup_id the first attempt
+// used (never a fresh one — that's what lets restic dedup instead of
+// restarting from zero or writing a second, orphaned copy), that credentials
+// are re-minted via /setups/import/credentials, and that the local resume
+// record is cleared once the resume completes.
+func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
+	t.Setenv("AQ_CONFIG_DIR", t.TempDir())
+
+	obs := sampleObservation()
+	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
+	failingOgre := writeStubOgreCaptureFails(t, surveyJSON)
+
+	server := &importServer{}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	opts := testImportOptions(cred, failingOgre, &out, &errOut)
+
+	err := runImport(opts)
+	if err == nil || !strings.Contains(err.Error(), "--resume setup-1") {
+		t.Fatalf("expected the first attempt to fail and point at --resume, got: %v", err)
+	}
+	if server.completeCalled {
+		t.Fatal("complete must not be called when the capture failed")
+	}
+
+	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
+	okOgre, argsFile, _ := writeStubOgre(t, surveyJSON, captureJSON)
+
+	resumeOpts := testImportOptions(cred, okOgre, &out, &errOut)
+	resumeOpts.resumeSetupID = "setup-1"
+
+	if err := runImport(resumeOpts); err != nil {
+		t.Fatalf("runImport --resume: %v", err)
+	}
+	if !server.credentialsCalled {
+		t.Fatal("expected /setups/import/credentials to be called to re-mint write creds")
+	}
+	if !server.completeCalled {
+		t.Fatal("expected complete to be called after a successful resume capture")
+	}
+
+	argsRaw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	for _, want := range []string{"--prefix\nteam-1/ws-abc", "--backup-id\nrepo"} {
+		if !strings.Contains(string(argsRaw), want) {
+			t.Errorf("resumed capture args missing %q; got: %q", want, string(argsRaw))
+		}
+	}
+
+	if _, err := loadImportResumeState("setup-1"); err == nil {
+		t.Error("expected the local resume state to be cleared after a successful resume")
 	}
 }

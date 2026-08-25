@@ -199,6 +199,14 @@ import:
                              template, suggested hardware, compatibility
                              warnings — before anything is rented. Defaults
                              the GPU to the one observed on the source box.
+  aq import --resume <setup-id>
+                             Resume an import that started but didn't finish
+                             (e.g. the upload credentials expired mid-capture).
+                             Re-mints write credentials and re-runs the
+                             capture into the exact same storage location —
+                             restic dedups what already landed, so this never
+                             restarts from zero and never bills a second,
+                             parallel setup for the same box.
 
 ssh:
   aq ssh                     Open a shell on your only live deployment

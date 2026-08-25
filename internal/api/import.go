@@ -159,10 +159,20 @@ type ImportStartRequest struct {
 // ImportStartResult is the data returned by POST /setups/import/start: a real
 // Setup already exists at this point, with a real (billed, visible, deletable)
 // storage prefix, before a single byte has been captured.
+//
+// ResticBackupID is the SERVER's own convention for the trailing path segment
+// of the restic repo (`setup.service.ts`'s resticRepositoryUrl: currently the
+// literal "repo" for every portable setup, since StoragePrefix already makes
+// the repo unique — see CONTRACT.md section G). aq passes it straight through
+// to `ogre capture` uninterpreted; it must NEVER be guessed or defaulted
+// client-side; a value like the setup's own uuid writes to a path nothing
+// ever reads, and the uploaded bytes then sit there billing forever with no
+// error anywhere.
 type ImportStartResult struct {
 	SetupID        string            `json:"setup_id"`
 	StoragePrefix  string            `json:"storage_prefix"`
 	ResticPassword string            `json:"restic_password"`
+	ResticBackupID string            `json:"restic_backup_id"`
 	ImportToken    string            `json:"import_token"`
 	ExpiresAt      string            `json:"expires_at"`
 	Credentials    ImportCredentials `json:"credentials"`
@@ -173,6 +183,32 @@ type ImportStartResult struct {
 func (c *Client) StartImport(req ImportStartRequest) (*ImportStartResult, error) {
 	var out ImportStartResult
 	if err := c.postJSON("/setups/import/start", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ImportCredentialsRefreshRequest is the body of POST
+// /setups/import/credentials — re-mints scoped write credentials for a still-
+// pending import. StoragePrefix/ResticPassword/ResticBackupID are unaffected
+// by this call; only the S3 write credentials themselves are time-limited.
+type ImportCredentialsRefreshRequest struct {
+	SetupID string `json:"setup_id"`
+}
+
+// ImportCredentialsRefreshResult is the data returned by POST
+// /setups/import/credentials.
+type ImportCredentialsRefreshResult struct {
+	Credentials ImportCredentials `json:"credentials"`
+	ExpiresAt   string            `json:"expires_at"`
+}
+
+// RefreshImportCredentials re-mints scoped write credentials for setupID's
+// still-pending import — the mechanism `aq import --resume` uses when the
+// credentials minted at StartImport have expired before the capture finished.
+func (c *Client) RefreshImportCredentials(setupID string) (*ImportCredentialsRefreshResult, error) {
+	var out ImportCredentialsRefreshResult
+	if err := c.postJSON("/setups/import/credentials", ImportCredentialsRefreshRequest{SetupID: setupID}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
