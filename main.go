@@ -80,10 +80,10 @@ func main() {
 		run(fork(args))
 	case "edit-version":
 		run(editVersion(args))
+	case "pause":
+		run(pause(args))
 	case "park":
 		run(park(args))
-	case "autosave":
-		run(autosave(args))
 	case "autopause":
 		run(autopause(args))
 	case "force-detach":
@@ -137,13 +137,12 @@ Commands:
   share         Get a link to one saved version of a setup
   fork          Turn a share link into a new setup in your own library
   edit-version  Edit a saved version's label, description, or visibility
-  park          Save a setup, then release its machine (resume later with up)
-  autosave      Turn a setup's automated snapshotting on or off
-  autopause     Turn a setup's stop-when-idle preference on or off
+  pause         Save a setup, then release its machine (resume later with up)
+  autopause     Turn a setup's auto-pause-when-idle preference on or off
   force-detach  Break a setup's lease even mid-sync (can lose unsynced work)
   sync-now      Force a setup's sync tick right now
   setups        List the setups you own
-  idle          View or change a DEPLOYMENT's idle-auto-stop thresholds
+  idle          View or change a DEPLOYMENT's idle-auto-pause thresholds
   endpoint      Make a setup version callable, repoint it, or remove it
   call          Make a call against an endpoint
   calls         List an endpoint's recent calls
@@ -158,9 +157,9 @@ up flags:
   --max-price <n>    Only rent GPUs at or below this hourly price
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
-  --auto-stop        Enable idle auto-stop on this deployment (off by default)
-  --warn-after <duration>  With --auto-stop: warn after this much idle time
-  --stop-after <duration>  With --auto-stop: auto-stop after this much idle time
+  --auto-pause       Enable idle auto-pause on this deployment (off by default)
+  --warn-after <duration>  With --auto-pause: warn after this much idle time
+  --pause-after <duration> With --auto-pause: auto-pause after this much idle time
 
   App (optional — ComfyUI installs by default if you pick neither):
   --comfyui          Install ComfyUI
@@ -193,18 +192,18 @@ ssh:
   generates a passphrase-less one at ~/.ssh/aquanode_ed25519.
 
 idle:
-  A PER-DEPLOYMENT idle-auto-stop policy (warn/stop thresholds, GPU idle %).
+  A PER-DEPLOYMENT idle-auto-pause policy (warn/pause thresholds, GPU idle %).
   It always outranks a setup's own "aq autopause" preference below — see
   "autopause" for how the two differ.
 
-  aq idle status <name|id>   Show the deployment's idle-auto-stop policy and
+  aq idle status <name|id>   Show the deployment's idle-auto-pause policy and
                               its current live verdict (ACTIVE / IDLE / UNKNOWN)
   aq idle set <name|id>      Update the policy (only the flags you pass change)
 
   --warn-after <duration>   Warn after this much idle time, e.g. 30m, 1h
-  --stop-after <duration>   Auto-stop after this much idle time, e.g. 1h
+  --pause-after <duration>  Auto-pause after this much idle time, e.g. 1h
   --gpu-threshold <percent> GPU utilization below which the box counts idle
-  --on / --off              Enable / disable idle auto-stop
+  --on / --off              Enable / disable idle auto-pause
 
 endpoint:
   aq endpoint create <setup> <version>   Make a setup version callable.
@@ -228,7 +227,7 @@ call / calls:
                               could not get the call a box at all — not that
                               the call's own code failed.
 
-status / save / share / fork / edit-version / park / autosave / autopause /
+status / save / share / fork / edit-version / pause / autopause /
 force-detach / sync-now / setups / down:
   aq status <name|id>        Re-check a provisioning or running setup
                              (add --show-secrets to print the password)
@@ -257,29 +256,18 @@ force-detach / sync-now / setups / down:
                              a label/description back to empty.
                              (--label <text>, --description <text>,
                              --visibility private|team|public)
-  aq park <name|id>          Save the setup, then release its machine.
-                             Pick it back up any time with "aq up". Named
-                             "park", not "pause" — console's own "pause"
-                             already names a different thing (pausing the
-                             automated-snapshot cron on the older Snapshotter
-                             tab), so this avoids the collision.
-  aq autosave <name|id> on|off
-                             Turn automated snapshotting on or off. This
-                             keeps ONE always-current copy — it is NOT a
-                             history and NOT undo: deleting your own work
-                             is replicated into that copy on the next
-                             tick too. Held snapshot storage is billed
-                             at `+heldStorageRateLabel+`; turning it on prints
-                             that rate.
+  aq pause <name|id>         Save the setup, then release its machine.
+                             Pick it back up any time with "aq up". ("aq
+                             park" still works too, as a deprecated alias.)
   aq autopause <name|id> on|off
-                             Turn this SETUP's stop-when-idle preference on
-                             or off, using the platform's default idle
-                             thresholds. This is NOT "aq idle" above: idle
-                             policy is a per-DEPLOYMENT threshold config
-                             that always outranks this, and this carries no
-                             thresholds of its own — use "aq idle set" to
-                             change WHEN idle counts as idle, and this to
-                             turn stopping on setups on/off at all.
+                             Turn this SETUP's auto-pause-when-idle
+                             preference on or off, using the platform's
+                             default idle thresholds. This is NOT "aq idle"
+                             above: idle policy is a per-DEPLOYMENT threshold
+                             config that always outranks this, and this
+                             carries no thresholds of its own — use "aq idle
+                             set" to change WHEN idle counts as idle, and
+                             this to turn auto-pause on setups on/off at all.
   aq force-detach <name|id> --yes
                              Break the setup's lease even mid-sync — for
                              when a deployment died holding it and it needs

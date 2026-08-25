@@ -135,37 +135,6 @@ func TestShareSetupVersionPostsToVersionScopedPath(t *testing.T) {
 	}
 }
 
-// TestSetSetupAutosavePutsEnabledFlag checks `aq autosave` sends a plain
-// {enabled: bool} body via PUT, and decodes the returned Setup row (not a
-// bespoke {enabled} result shape). The fixture uses `autosaveEnabled` —
-// serializeSetup (setups.controller.ts) hand-writes camelCase for every
-// `Setup` field; see the package doc comment in setups.go for why.
-func TestSetSetupAutosavePutsEnabledFlag(t *testing.T) {
-	var gotMethod, gotPath string
-	var gotBody SetupAutosaveRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"id":"11111111-1111-1111-1111-111111111111","name":"comfyui","autosaveEnabled":true}}`)
-	}))
-	defer srv.Close()
-
-	got, err := NewAuthed(srv.URL, "tok", "t").SetSetupAutosave("11111111-1111-1111-1111-111111111111", true)
-	if err != nil {
-		t.Fatalf("SetSetupAutosave: %v", err)
-	}
-	if gotMethod != http.MethodPut || gotPath != "/setups/11111111-1111-1111-1111-111111111111/autosave" {
-		t.Errorf("method/path = %s %s, want PUT /setups/<uuid>/autosave", gotMethod, gotPath)
-	}
-	if !gotBody.Enabled {
-		t.Errorf("body = %+v, want enabled=true", gotBody)
-	}
-	if !got.AutosaveEnabled {
-		t.Errorf("result = %+v, want autosave_enabled=true", got)
-	}
-}
-
 // TestListSetupsDecodesOwnedSetups checks `aq setups` decodes the fields it
 // renders, including deriving Running from leaseDeploymentId — there is no
 // boolean "running" field on the wire. The fixture is camelCase throughout

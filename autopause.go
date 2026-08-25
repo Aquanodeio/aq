@@ -50,17 +50,23 @@ func autopause(args []string) error {
 	return runAutopause(autopauseOptions{cred: cred, target: target, enabled: enabled, out: os.Stdout})
 }
 
-// runAutopause sets the setup-level autopause PREFERENCE.
+// runAutopause sets the setup-level auto-pause PREFERENCE.
+//
+// "Pause" / "auto-pause" is the product's one settled noun for
+// save-then-release (meta-repo ticket #753) — this command keeps the verb
+// "autopause" (it predates the ticket and nothing else collides with it),
+// but every string it prints uses the hyphenated "auto-pause" form to match
+// console/docs/website.
 //
 // This is a different mechanism from `aq idle`, and the two never conflate:
-// `aq idle set` writes a PER-DEPLOYMENT idle-threshold policy (warn/stop
+// `aq idle set` writes a PER-DEPLOYMENT idle-threshold policy (warn/pause
 // after minutes, GPU idle %) that always outranks whatever this sets — see
 // idlePolicyFor in the orchestrator's idle.config.ts, which layers
 // Setup.autopauseEnabled in underneath the deployment's own policy.
-// Autopause carries no thresholds of its own: turning it on just means
-// "stop this setup's box when it goes idle, using the platform's default
+// Auto-pause carries no thresholds of its own: turning it on just means
+// "pause this setup's box when it goes idle, using the platform's default
 // thresholds." Use `aq idle set` to change WHEN idle counts as idle; use
-// this to turn stopping on or off per setup.
+// this to turn auto-pause on or off per setup.
 func runAutopause(opts autopauseOptions) error {
 	out := opts.out
 	if out == nil {
@@ -75,7 +81,7 @@ func runAutopause(opts autopauseOptions) error {
 
 	res, err := client.SetSetupAutopause(setupID, opts.enabled)
 	if err != nil {
-		return fmt.Errorf("could not update autopause for setup %q: %w", opts.target, err)
+		return fmt.Errorf("could not update auto-pause for setup %q: %w", opts.target, err)
 	}
 
 	// AutopauseEnabled is three-state on the wire (nil = unset, follows the
@@ -89,6 +95,6 @@ func runAutopause(opts autopauseOptions) error {
 			state = "on"
 		}
 	}
-	fmt.Fprintf(out, "✓ Autopause is now %s for %s.\n", state, res.Name)
+	fmt.Fprintf(out, "✓ Auto-pause is now %s for %s.\n", state, res.Name)
 	return nil
 }

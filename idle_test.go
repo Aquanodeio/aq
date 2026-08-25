@@ -20,7 +20,7 @@ func TestRunIdleStatusRendersActive(t *testing.T) {
 			"warnAfterMinutes":        30,
 			"actAfterMinutes":         60,
 			"gpuIdleThresholdPercent": 5,
-			"autoStopEnabled":         true,
+			"autoPauseEnabled":        true,
 			"state":                   "ACTIVE",
 			"idleMinutes":             0,
 		})
@@ -49,7 +49,7 @@ func TestRunIdleStatusRendersIdleWarnWithMinutes(t *testing.T) {
 			"warnAfterMinutes":        30,
 			"actAfterMinutes":         60,
 			"gpuIdleThresholdPercent": 5,
-			"autoStopEnabled":         true,
+			"autoPauseEnabled":        true,
 			"state":                   "IDLE_WARN",
 			"idleMinutes":             18,
 		})
@@ -78,7 +78,7 @@ func TestRunIdleStatusRendersUnknownHonestly(t *testing.T) {
 			"warnAfterMinutes":        30,
 			"actAfterMinutes":         60,
 			"gpuIdleThresholdPercent": 5,
-			"autoStopEnabled":         false,
+			"autoPauseEnabled":        false,
 			"state":                   "UNKNOWN",
 			"idleMinutes":             0,
 		})
@@ -125,14 +125,14 @@ func TestParseIdleSetArgsOnlySendsSuppliedFields(t *testing.T) {
 	if opts.warnAfter == nil || *opts.warnAfter != 30 {
 		t.Fatalf("expected warnAfter=30, got %v", opts.warnAfter)
 	}
-	if opts.stopAfter != nil {
-		t.Errorf("stopAfter must stay nil when --stop-after was not passed, got %v", opts.stopAfter)
+	if opts.pauseAfter != nil {
+		t.Errorf("pauseAfter must stay nil when --pause-after was not passed, got %v", opts.pauseAfter)
 	}
 	if opts.gpuThreshold != nil {
 		t.Errorf("gpuThreshold must stay nil when --gpu-threshold was not passed, got %v", opts.gpuThreshold)
 	}
-	if opts.autoStopEnabled != nil {
-		t.Errorf("autoStopEnabled must stay nil when neither --on nor --off was passed, got %v", opts.autoStopEnabled)
+	if opts.autoPauseEnabled != nil {
+		t.Errorf("autoPauseEnabled must stay nil when neither --on nor --off was passed, got %v", opts.autoPauseEnabled)
 	}
 	if opts.target != "4242" {
 		t.Errorf("expected target 4242, got %q", opts.target)
@@ -140,21 +140,21 @@ func TestParseIdleSetArgsOnlySendsSuppliedFields(t *testing.T) {
 }
 
 func TestParseIdleSetArgsAllFlags(t *testing.T) {
-	opts, err := parseIdleSetArgs([]string{"--warn-after", "1h", "--stop-after", "2h", "--gpu-threshold", "10", "--on", "4242"})
+	opts, err := parseIdleSetArgs([]string{"--warn-after", "1h", "--pause-after", "2h", "--gpu-threshold", "10", "--on", "4242"})
 	if err != nil {
 		t.Fatalf("parseIdleSetArgs error: %v", err)
 	}
 	if opts.warnAfter == nil || *opts.warnAfter != 60 {
 		t.Fatalf("expected warnAfter=60, got %v", opts.warnAfter)
 	}
-	if opts.stopAfter == nil || *opts.stopAfter != 120 {
-		t.Fatalf("expected stopAfter=120, got %v", opts.stopAfter)
+	if opts.pauseAfter == nil || *opts.pauseAfter != 120 {
+		t.Fatalf("expected pauseAfter=120, got %v", opts.pauseAfter)
 	}
 	if opts.gpuThreshold == nil || *opts.gpuThreshold != 10 {
 		t.Fatalf("expected gpuThreshold=10, got %v", opts.gpuThreshold)
 	}
-	if opts.autoStopEnabled == nil || *opts.autoStopEnabled != true {
-		t.Fatalf("expected autoStopEnabled=true, got %v", opts.autoStopEnabled)
+	if opts.autoPauseEnabled == nil || *opts.autoPauseEnabled != true {
+		t.Fatalf("expected autoPauseEnabled=true, got %v", opts.autoPauseEnabled)
 	}
 }
 
@@ -163,8 +163,8 @@ func TestParseIdleSetArgsOffSetsFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseIdleSetArgs error: %v", err)
 	}
-	if opts.autoStopEnabled == nil || *opts.autoStopEnabled != false {
-		t.Fatalf("expected autoStopEnabled=false, got %v", opts.autoStopEnabled)
+	if opts.autoPauseEnabled == nil || *opts.autoPauseEnabled != false {
+		t.Fatalf("expected autoPauseEnabled=false, got %v", opts.autoPauseEnabled)
 	}
 }
 
@@ -179,12 +179,12 @@ func TestParseIdleSetArgsRejectsOnAndOff(t *testing.T) {
 // server's `warnAfterMinutes < actAfterMinutes` rule — it must fail before any
 // round trip.
 func TestParseIdleSetArgsRejectsWarnGEStop(t *testing.T) {
-	_, err := parseIdleSetArgs([]string{"4242", "--warn-after", "1h", "--stop-after", "1h"})
+	_, err := parseIdleSetArgs([]string{"4242", "--warn-after", "1h", "--pause-after", "1h"})
 	if err == nil || !strings.Contains(err.Error(), "must be less than") {
 		t.Fatalf("expected warn<stop validation error, got: %v", err)
 	}
 
-	_, err = parseIdleSetArgs([]string{"4242", "--warn-after", "2h", "--stop-after", "1h"})
+	_, err = parseIdleSetArgs([]string{"4242", "--warn-after", "2h", "--pause-after", "1h"})
 	if err == nil || !strings.Contains(err.Error(), "must be less than") {
 		t.Fatalf("expected warn<stop validation error, got: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestRunIdleSetSendsOnlySuppliedFieldsOverTheWire(t *testing.T) {
 			"warnAfterMinutes":        30,
 			"actAfterMinutes":         60,
 			"gpuIdleThresholdPercent": 5,
-			"autoStopEnabled":         true,
+			"autoPauseEnabled":        true,
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -243,7 +243,7 @@ func TestRunIdleSetSendsOnlySuppliedFieldsOverTheWire(t *testing.T) {
 	if _, ok := gotBody["warnAfterMinutes"]; !ok {
 		t.Errorf("expected warnAfterMinutes in request body; got: %v", gotBody)
 	}
-	for _, unset := range []string{"actAfterMinutes", "gpuIdleThresholdPercent", "autoStopEnabled"} {
+	for _, unset := range []string{"actAfterMinutes", "gpuIdleThresholdPercent", "autoPauseEnabled"} {
 		if _, ok := gotBody[unset]; ok {
 			t.Errorf("did not expect %q in request body (flag was never passed); got: %v", unset, gotBody)
 		}
@@ -263,7 +263,7 @@ func TestRunIdleSetOmitsStateLine(t *testing.T) {
 			"warnAfterMinutes":        30,
 			"actAfterMinutes":         60,
 			"gpuIdleThresholdPercent": 5,
-			"autoStopEnabled":         true,
+			"autoPauseEnabled":        true,
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -298,7 +298,7 @@ func TestPrintIdlePolicySettingsOmitsState(t *testing.T) {
 		WarnAfterMinutes:        30,
 		ActAfterMinutes:         60,
 		GPUIdleThresholdPercent: 5,
-		AutoStopEnabled:         true,
+		AutoPauseEnabled:        true,
 		State:                   "ACTIVE",
 		IdleMinutes:             0,
 	})
