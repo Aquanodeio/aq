@@ -70,6 +70,10 @@ func main() {
 		run(deploy(args))
 	case "ssh":
 		run(sshCmd(args))
+	case "push":
+		run(push(args))
+	case "run":
+		run(runCmd(args))
 	case "status":
 		run(status(args))
 	case "save":
@@ -130,6 +134,8 @@ Commands:
   up            Rent the cheapest matching GPU and bring up a working setup
   deploy        Restore a save onto a freshly-rented Aquanode GPU box
   ssh           Open a shell on a setup (managed key + ~/.ssh/config alias)
+  push          Send your working directory to a box you already rented
+  run           Push the working directory, then run a command on the box
   status        Show a setup's status, HTTPS URL, and credentials
   save          Save a setup's current state into its named lineage
   share         Get a link to one saved version of a setup
@@ -188,6 +194,35 @@ ssh:
   "aq-<name>" alias per live box, so ssh, scp, rsync, and VSCode Remote-SSH all
   work with that alias and no aq involved. If you have no SSH key at all, aq
   generates a passphrase-less one at ~/.ssh/aquanode_ed25519.
+
+push / run:
+  The local-code loop: edit on your laptop, execute on the GPU. Both send a
+  directory tree over the same managed "aq-<name>" alias ssh uses — nothing
+  new to authenticate, and scp/rsync against that alias keep working too.
+
+  aq push [name|id]          Send the current directory to /workspace
+  aq run [name|id] -- <cmd>  Send it, then run <cmd> in it with the terminal
+                              attached (Ctrl-C reaches the remote process)
+
+  --from <dir>       Local directory to send (default: the current directory)
+  --to <dir>         Destination on the box (default: /workspace, absolute)
+  --exclude <pat>    Skip paths matching this pattern (repeatable)
+  --no-default-excludes
+                     Send .git, node_modules, __pycache__ and friends too;
+                     by default they are skipped
+  --delete           Make the remote tree mirror the local one, deleting what
+                     you deleted. Needs rsync on the box.
+  --print            Print the command that would run, and exit
+
+  run also takes:
+  --dir <dir>        Directory to run in (default: the push destination)
+  --no-push          Run without sending anything first
+
+  A .aqignore file in the directory you send adds exclude patterns, one per
+  line, "#" for comments.
+
+  Transport: rsync when both ends have it (only changed files move), otherwise
+  tar over ssh, which re-sends the whole tree. aq prints which one it used.
 
 idle:
   A PER-DEPLOYMENT idle-auto-pause policy (warn/pause thresholds, GPU idle %).
