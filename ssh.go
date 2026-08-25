@@ -106,50 +106,11 @@ func runSSH(opts sshOptions) error {
 
 	client := newControlClient(opts.cred)
 
-	deploymentID, err := resolveDeploymentID(client, opts.target, "ssh")
+	alias, err := resolveSSHAlias(client, opts.target, "ssh", opts.errOut)
 	if err != nil {
 		return err
 	}
 
-	res, err := client.DeploymentStatus(deploymentID)
-	if err != nil {
-		return fmt.Errorf("could not fetch status for deployment #%d: %w", deploymentID, err)
-	}
-	dep := res.Deployment
-	if dep.ID == 0 {
-		dep.ID = deploymentID
-	}
-	state := dep.Status
-	if state == "" {
-		state = res.Status
-	}
-
-	switch {
-	case isClosedStatus(state):
-		return fmt.Errorf("deployment #%d is %s — it is no longer running", deploymentID, state)
-	case !isActiveStatus(state):
-		return fmt.Errorf("deployment #%d is still provisioning (%s) — retry in a minute", deploymentID, state)
-	}
-
-	if _, _, ok := sshEndpointFor(dep); !ok {
-		// Distinct from the provisioning message on purpose: a box whose provider
-		// maps no port 22 (an Akash lease without an SSH mapping) will never grow
-		// one, so "retry in a minute" would be a lie.
-		if dep.AppURL == "" && len(dep.ServiceURLs) == 0 {
-			return fmt.Errorf("deployment #%d is up but has not reported an address yet — retry in a moment", deploymentID)
-		}
-		return fmt.Errorf("deployment #%d does not expose SSH", deploymentID)
-	}
-
-	warnIfKeyUnregistered(client, opts.errOut)
-
-	// The alias must exist before we exec, and it is what we exec against — so
-	// unlike the up/status paths this sync is fatal.
-	if err := syncManagedConfig(client, []api.Deployment{dep}, 0); err != nil {
-		return err
-	}
-
-	alias := aliasFor(dep.Name, dep.ID)
 	args := buildSSHArgs(alias, opts.user, opts.forwards, opts.remote)
 
 	if opts.printOnly {

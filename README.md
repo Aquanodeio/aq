@@ -70,6 +70,46 @@ aq down my-box                    # tear it down and stop billing
 `aq` does the renting and provisioning; snapshot/restore is a durable, standalone
 capability of the box itself, so your data outlives any single `aq` session.
 
+## Run your local code on the box
+
+`aq push` sends your working directory up; `aq run` sends it and then runs something
+in it, with your terminal attached:
+
+```sh
+aq push                              # current directory -> /workspace on your only live box
+aq run -- python train.py            # push, then run it there (Ctrl-C reaches the process)
+aq run my-box -- python train.py     # pick the box by name or id
+aq run --no-push -- nvidia-smi       # skip the upload, just run
+```
+
+Edit locally, `aq run` again — that's the loop. Nothing to install on the box, and it
+uses the same SSH alias described below, so `scp`/`rsync`/VSCode keep working alongside it.
+
+| Flag | Meaning |
+|---|---|
+| `--from <dir>` | Directory to send (default: the current one) |
+| `--to <dir>` | Where it lands on the box (default: `/workspace`, must be absolute) |
+| `--exclude <pat>` | Skip matching paths — repeatable |
+| `--no-default-excludes` | Send `.git`, `node_modules`, `__pycache__` and friends too |
+| `--delete` | Make the box mirror your local tree, removing what you deleted |
+| `--print` | Print the transfer command instead of running it |
+| `--dir <dir>` | *(run)* Directory to run in — defaults to where the push landed |
+| `--no-push` | *(run)* Don't send anything first |
+
+Add a `.aqignore` next to your code — one pattern per line, `#` for comments — for
+excludes you want every push to apply. Datasets and checkpoints belong there; pushing
+them over ssh is slower than fetching them on the box.
+
+By default `aq` skips version-control metadata, virtualenvs, module trees and
+interpreter caches, which is what keeps a first push seconds rather than minutes.
+
+**Transport.** If both your machine and the box have `rsync`, `aq` uses it and only
+changed files move. Otherwise it falls back to tar over ssh, which re-sends the whole
+tree — several provider images ship without `rsync`. `aq` prints which one it used, so
+a slow push is never a mystery. `--delete` needs `rsync` and fails loudly without it
+rather than silently leaving deleted files on the box.
+
+
 ## SSH
 
 `aq ssh` is the whole connect story — no key to create, no IP to copy, no id to remember:
