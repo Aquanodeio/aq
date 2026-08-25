@@ -19,6 +19,12 @@ var warnOut io.Writer = os.Stderr
 // DefaultAPIURL is the Aquanode API base used when AQ_API_URL is unset.
 const DefaultAPIURL = "https://server.aquanode.io/api/v1"
 
+// DefaultConsoleURL is the public console host `aq share` builds a link
+// against. Deliberately a separate constant from DefaultAPIURL — the API
+// (server.aquanode.io) and the console app (console.aquanode.io) are
+// different domains, and a share link points at the latter.
+const DefaultConsoleURL = "https://console.aquanode.io"
+
 // Credential is the persisted result of `aq login`.
 type Credential struct {
 	APIURL  string   `json:"apiUrl"`
@@ -34,6 +40,16 @@ func APIURL() string {
 		return v
 	}
 	return DefaultAPIURL
+}
+
+// ConsoleURL returns the configured Aquanode console base URL, honoring
+// AQ_CONSOLE_URL (mirrors APIURL/AQ_API_URL, for pointing at a non-prod
+// console during local dev).
+func ConsoleURL() string {
+	if v := os.Getenv("AQ_CONSOLE_URL"); v != "" {
+		return v
+	}
+	return DefaultConsoleURL
 }
 
 // Dir returns the directory holding aq's config, honoring AQ_CONFIG_DIR then

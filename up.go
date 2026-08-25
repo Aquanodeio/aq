@@ -44,8 +44,8 @@ type upOptions struct {
 // up parses flags and wires the real environment into runUp.
 func up(args []string) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
-	comfyui := fs.Bool("comfyui", false, "Bring up ComfyUI (default)")
-	jupyter := fs.Bool("jupyter", false, "Bring up Torch + Jupyter")
+	comfyui := fs.Bool("comfyui", false, "Install ComfyUI on the box (default app if you don't pick one)")
+	jupyter := fs.Bool("jupyter", false, "Install Torch + Jupyter on the box instead")
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")

@@ -128,6 +128,19 @@ func (c *Client) putJSON(path string, body any, out any) error {
 	return c.do(req, out)
 }
 
+func (c *Client) patchJSON(path string, body any, out any) error {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPatch, c.BaseURL+path, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, out)
+}
+
 func (c *Client) deleteJSON(path string, out any) error {
 	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+path, nil)
 	if err != nil {

@@ -86,36 +86,26 @@ func runShare(opts shareOptions) error {
 // autoincrement key. Treating the typed number as the id directly would mint
 // a share link for whatever row happens to have that id — almost certainly a
 // different setup, quite possibly a different account's data. So this
-// always resolves through the API instead of ever guessing: look up the
-// setup to learn its lineage's name, list every version row sharing that
-// name (the name alone isn't unique to one setup), and pick the one row
-// whose SetupID matches AND whose Version matches what the user typed. No
-// match is a hard error — this never falls back to treating the number as an
-// id.
+// always resolves through the API instead of ever guessing: list every
+// version row the caller can see (ListAllSetupVersions — GET /setups has no
+// nested "latest version"/lineage-name field to start a name-scoped lookup
+// from, see internal/api/setups.go) and pick the one row whose SetupID
+// matches AND whose Version matches what the user typed. No match is a hard
+// error — this never falls back to treating the number as an id.
 func resolveSetupVersionRowID(client *api.Client, setupID string, version int) (int, error) {
 	setup, err := findSetup(client, setupID)
 	if err != nil {
 		return 0, err
 	}
 
-	var lineageName string
-	if setup.LatestVersion != nil {
-		lineageName = setup.LatestVersion.Name
-	} else {
-		lineageName = setup.Name
-	}
-	if lineageName == "" {
-		return 0, fmt.Errorf("%q has no saved versions yet — run `aq snapshot` first", setup.Name)
-	}
-
-	versions, err := client.ListSetupVersions(lineageName)
+	versions, err := client.ListAllSetupVersions()
 	if err != nil {
-		return 0, fmt.Errorf("could not look up versions named %q: %w", lineageName, err)
+		return 0, fmt.Errorf("could not look up versions for %q: %w", setup.Name, err)
 	}
 	for _, v := range versions {
 		if v.SetupID == setupID && v.Version == version {
 			return v.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("no version %d found for %q's save lineage %q", version, setup.Name, lineageName)
+	return 0, fmt.Errorf("no version %d found for %q — run `aq save` first", version, setup.Name)
 }

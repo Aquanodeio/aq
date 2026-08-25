@@ -75,19 +75,51 @@ func TestListSetupVersionsQueriesByName(t *testing.T) {
 	}
 }
 
+// TestListAllSetupVersionsQueriesWithNoNameFilter checks GET /setups/versions
+// with no `name` query param — the path `aq setups`/`aq share` use to recover
+// a setup's latest/named version, since GET /setups carries no such field
+// nested on the row itself (see the Setup doc comment in setups.go).
+func TestListAllSetupVersionsQueriesWithNoNameFilter(t *testing.T) {
+	var gotURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":[
+			{"id":9,"name":"comfyui","version":3,"setup_id":"11111111-1111-1111-1111-111111111111"},
+			{"id":8,"name":"comfyui","version":2,"setup_id":"11111111-1111-1111-1111-111111111111"}
+		]}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewAuthed(srv.URL, "tok", "t").ListAllSetupVersions()
+	if err != nil {
+		t.Fatalf("ListAllSetupVersions: %v", err)
+	}
+	if gotURL != "/setups/versions" {
+		t.Errorf("url = %q, want /setups/versions (no name filter)", gotURL)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d versions, want 2", len(got))
+	}
+}
+
 // TestShareSetupVersionPostsToVersionScopedPath checks `aq share` hits the
 // version-scoped route by the version's global ROW id, not a setup-scoped
 // one and not the per-lineage version number — a share link addresses one
-// immutable version, never a moving lineage head.
+// immutable version, never a moving lineage head. It also pins the real
+// server contract: createVersionShare (snapshot-version.service.ts) returns
+// a bare {token,name,expires_at} — never a url — and ShareSetupVersion must
+// build the public /launch/<token> link itself from Token.
 func TestShareSetupVersionPostsToVersionScopedPath(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"url":"https://aquanode.io/s/abc123"}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"token":"abc123","name":null,"expires_at":null}}`)
 	}))
 	defer srv.Close()
 
+	t.Setenv("AQ_CONSOLE_URL", "https://console.aquanode.io")
 	got, err := NewAuthed(srv.URL, "tok", "t").ShareSetupVersion(9)
 	if err != nil {
 		t.Fatalf("ShareSetupVersion: %v", err)
@@ -95,14 +127,19 @@ func TestShareSetupVersionPostsToVersionScopedPath(t *testing.T) {
 	if gotPath != "/setups/versions/9/share" {
 		t.Errorf("path = %q, want /setups/versions/9/share", gotPath)
 	}
-	if got.URL != "https://aquanode.io/s/abc123" {
+	if got.Token != "abc123" {
+		t.Errorf("Token = %q, want abc123", got.Token)
+	}
+	if got.URL != "https://console.aquanode.io/launch/abc123" {
 		t.Errorf("URL = %q", got.URL)
 	}
 }
 
 // TestSetSetupAutosavePutsEnabledFlag checks `aq autosave` sends a plain
 // {enabled: bool} body via PUT, and decodes the returned Setup row (not a
-// bespoke {enabled} result shape).
+// bespoke {enabled} result shape). The fixture uses `autosaveEnabled` —
+// serializeSetup (setups.controller.ts) hand-writes camelCase for every
+// `Setup` field; see the package doc comment in setups.go for why.
 func TestSetSetupAutosavePutsEnabledFlag(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody SetupAutosaveRequest
@@ -110,7 +147,7 @@ func TestSetSetupAutosavePutsEnabledFlag(t *testing.T) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"id":"11111111-1111-1111-1111-111111111111","name":"comfyui","autosave_enabled":true}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"id":"11111111-1111-1111-1111-111111111111","name":"comfyui","autosaveEnabled":true}}`)
 	}))
 	defer srv.Close()
 
@@ -130,8 +167,16 @@ func TestSetSetupAutosavePutsEnabledFlag(t *testing.T) {
 }
 
 // TestListSetupsDecodesOwnedSetups checks `aq setups` decodes the fields it
-// renders, including deriving Running from lease_deployment_id — there is no
-// boolean "running" field on the wire.
+// renders, including deriving Running from leaseDeploymentId — there is no
+// boolean "running" field on the wire. The fixture is camelCase throughout
+// (serializeSetup's real wire shape, see the package doc comment in
+// setups.go) with `sizeBytes` as the decimal STRING serializeSetup actually
+// sends (BigInt doesn't survive JSON.stringify) — a plain JSON number here
+// would pass against a wrong Go type just as easily as a string, so this
+// pins the real shape, not just a decodable one. There is no
+// "latest_version"/"latestVersion" field at all — GET /setups never sends
+// one (see ListAllSetupVersions's doc comment) — so this fixture omits it
+// rather than asserting a fictional field decodes to nil.
 func TestListSetupsDecodesOwnedSetups(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setups" {
@@ -139,9 +184,8 @@ func TestListSetupsDecodesOwnedSetups(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"success":true,"data":[
-			{"id":"11111111-1111-1111-1111-111111111111","name":"comfyui","status":"ACTIVE","size_bytes":1073741824,"lease_deployment_id":42,
-			 "latest_version":{"id":9,"name":"comfyui","version":3,"setup_id":"11111111-1111-1111-1111-111111111111"}},
-			{"id":"22222222-2222-2222-2222-222222222222","name":"jupyter","status":"CLOSED","size_bytes":0,"lease_deployment_id":null,"latest_version":null}
+			{"id":"11111111-1111-1111-1111-111111111111","name":"comfyui","status":"ACTIVE","sizeBytes":"1073741824","leaseDeploymentId":42},
+			{"id":"22222222-2222-2222-2222-222222222222","name":"jupyter","status":"CLOSED","sizeBytes":null,"leaseDeploymentId":null}
 		]}`)
 	}))
 	defer srv.Close()
@@ -154,18 +198,15 @@ func TestListSetupsDecodesOwnedSetups(t *testing.T) {
 		t.Fatalf("got %d setups, want 2", len(got))
 	}
 	if !got[0].Running() {
-		t.Errorf("got[0].Running() = false, want true (lease_deployment_id=42)")
-	}
-	if got[0].LatestVersion == nil || got[0].LatestVersion.Version != 3 {
-		t.Errorf("got[0].LatestVersion = %+v", got[0].LatestVersion)
+		t.Errorf("got[0].Running() = false, want true (leaseDeploymentId=42)")
 	}
 	if got[0].SizeBytes != 1073741824 {
 		t.Errorf("got[0].SizeBytes = %d", got[0].SizeBytes)
 	}
 	if got[1].Running() {
-		t.Errorf("got[1].Running() = true, want false (lease_deployment_id=null)")
+		t.Errorf("got[1].Running() = true, want false (leaseDeploymentId=null)")
 	}
-	if got[1].LatestVersion != nil {
-		t.Errorf("got[1].LatestVersion = %+v, want nil", got[1].LatestVersion)
+	if got[1].SizeBytes != 0 {
+		t.Errorf("got[1].SizeBytes = %d, want 0 (sizeBytes=null)", got[1].SizeBytes)
 	}
 }
