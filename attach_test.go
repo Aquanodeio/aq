@@ -196,7 +196,10 @@ func TestAttachFailsLoudlyWhenTheProbeFails(t *testing.T) {
 			"ogreJwtSecret": "jwt-secret", "ogreProxyPassword": "proxy-pass",
 			"tlsCertPem": "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n",
 			"tlsKeyPem":  "-----BEGIN PRIVATE KEY-----\nBBB\n-----END PRIVATE KEY-----\n",
-			"ogrePort":   8443, "orchestratorUrl": "https://server.example", "deploymentId": "4242",
+			// A NUMBER, like every other deploymentId the orchestrator emits —
+			// this fixture said "4242" and that quoted string is the whole
+			// reason the type error survived to a live box.
+			"ogrePort": 8443, "orchestratorUrl": "https://server.example", "deploymentId": 4242,
 		})
 	})
 	mux.HandleFunc("/deployments/external/4242/activate", func(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +267,7 @@ func TestAttachRecordsTheBoxOnlyAfterASuccessfulProbe(t *testing.T) {
 		writeData(w, map[string]any{
 			"ogreJwtSecret": "jwt-secret", "ogreProxyPassword": "proxy-pass",
 			"tlsCertPem": "CERTPEM", "tlsKeyPem": "KEYPEM",
-			"ogrePort": 8443, "orchestratorUrl": "https://server.example", "deploymentId": "4242",
+			"ogrePort": 8443, "orchestratorUrl": "https://server.example", "deploymentId": 4242,
 		})
 	})
 	mux.HandleFunc("/deployments/external/4242/activate", func(w http.ResponseWriter, r *http.Request) {
@@ -368,5 +371,33 @@ func TestConfigureOgreRefusesAnUnreadableEnvFile(t *testing.T) {
 	err := configureOgreOnBox(opts, testHost(), &api.ExternalInstallConfig{OgreJWTSecret: "s"}, 4242, 8443)
 	if err == nil || !strings.Contains(err.Error(), "cannot read") {
 		t.Fatalf("expected a refusal on an unreadable env file, got %v", err)
+	}
+}
+
+// The restart script is handed to the remote shell as ONE argv element, so that
+// shell's own /proc/<pid>/cmdline contains the whole script. A literal
+// `ogre -port 8443` in it makes `pkill -f` match the session running the attach
+// — observed live on 2026-08-27: ssh died with status 255 before ogre started,
+// deterministically, on a real box. `pgrep -f` had the mirror bug and reported
+// the daemon alive by matching that same shell.
+func TestRestartOgreScriptNeverSpellsTheMatchPatternLiterally(t *testing.T) {
+	script := restartOgreScript(8443)
+
+	if strings.Contains(script, "ogre -port 8443") {
+		t.Fatalf("script contains the literal match pattern, so pkill/pgrep -f will match the shell running it:\n%s", script)
+	}
+	if !strings.Contains(script, "AQ_OGRE_PORT=8443") {
+		t.Fatalf("port must reach the box as a variable:\n%s", script)
+	}
+	// Self-exclusion must be explicit, not an accident of spelling.
+	if strings.Count(script, `[ "$pid" = "$$" ] && continue`) != 2 {
+		t.Fatalf("both the kill loop and the liveness check must skip $$:\n%s", script)
+	}
+	if strings.Contains(script, "pkill") {
+		t.Fatalf("pkill cannot exclude the caller; use the explicit pgrep loop:\n%s", script)
+	}
+	// The daemon still has to be started with the port it was told.
+	if !strings.Contains(script, `nohup ogre -port "$AQ_OGRE_PORT"`) {
+		t.Fatalf("daemon must still be launched on the requested port:\n%s", script)
 	}
 }

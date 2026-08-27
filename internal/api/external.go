@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 )
@@ -61,13 +62,20 @@ func (c *Client) AdoptExternal(req AdoptExternalRequest) (*AdoptExternalResult, 
 // one-shot: it is never re-fetchable, never cached to disk, and a failure after
 // redeeming means starting the attach over rather than retrying the redemption.
 type ExternalInstallConfig struct {
-	OgreJWTSecret    string `json:"ogreJwtSecret"`
-	OgreProxyPass    string `json:"ogreProxyPassword"`
-	TLSCertPEM       string `json:"tlsCertPem"`
-	TLSKeyPEM        string `json:"tlsKeyPem"`
-	OgrePort         int    `json:"ogrePort"`
-	OrchestratorURL  string `json:"orchestratorUrl"`
-	DeploymentIDEcho string `json:"deploymentId"`
+	OgreJWTSecret   string `json:"ogreJwtSecret"`
+	OgreProxyPass   string `json:"ogreProxyPassword"`
+	TLSCertPEM      string `json:"tlsCertPem"`
+	TLSKeyPEM       string `json:"tlsKeyPem"`
+	OgrePort        int    `json:"ogrePort"`
+	OrchestratorURL string `json:"orchestratorUrl"`
+	// The deployment the token named, echoed back by the orchestrator as a
+	// NUMBER — the same JSON type `AdoptExternalResult.DeploymentID` above
+	// carries, because both fields are the same `Deployment.id`. It was typed
+	// `string` here and nothing read it, so `json.Unmarshal` failed on the very
+	// first live redeem and attach could never complete. Typed and CHECKED now:
+	// an unread echo is worth nothing, and a wrong one means we are about to
+	// write another box's credentials onto this machine.
+	DeploymentID int `json:"deploymentId"`
 }
 
 // RedeemExternalInstallConfig exchanges the single-use install token for the
@@ -95,6 +103,13 @@ func (c *Client) RedeemExternalInstallConfig(deploymentID int, installToken stri
 	var out ExternalInstallConfig
 	if err := c.doBearer(req, &out); err != nil {
 		return nil, err
+	}
+	// The orchestrator already refuses a token that does not name the path's
+	// deployment; this is the same check from the other end. It is cheap, and
+	// the failure it catches — installing one box's credentials onto another —
+	// is the worst outcome this call has.
+	if out.DeploymentID != deploymentID {
+		return nil, fmt.Errorf("install config is for deployment #%d, not #%d", out.DeploymentID, deploymentID)
 	}
 	return &out, nil
 }
