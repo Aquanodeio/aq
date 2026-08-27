@@ -10,9 +10,10 @@ import (
 	"strings"
 
 	"github.com/Aquanodeio/aq/internal/api"
+	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// Markers delimiting the three lines aq owns inside the user's own ~/.ssh/config.
+// Markers delimiting the block aq owns inside the user's own ~/.ssh/config.
 const (
 	beginMarker = "# BEGIN aquanode"
 	endMarker   = "# END aquanode"
@@ -21,6 +22,23 @@ const (
 // managedConfigName is the ssh_config fragment aq owns outright and regenerates
 // wholesale. The user's own config only ever gains an Include pointing here.
 const managedConfigName = "aquanode.config"
+
+// managedHostsConfigName is the second fragment aq owns: one stanza per box in
+// the detached-mode host registry.
+//
+// It is a SEPARATE file from managedConfigName on purpose. Both fragments are
+// regenerated wholesale rather than upserted (that is what self-heals a stanza
+// gone stale), and the two are regenerated from different sources — one from the
+// API's live deployment list, one from the local registry. Sharing a file would
+// mean a detached run had to list deployments to avoid erasing their aliases,
+// which is exactly the API call detached mode must never make. Two files, one
+// Include region, no cross-talk.
+const managedHostsConfigName = "aquanode-hosts.config"
+
+// hostAliasPrefix namespaces detached-host aliases away from the `aq-` aliases
+// generated for deployments, so a host called `train` and a deployment named
+// `train` cannot generate the same stanza and silently shadow each other.
+const hostAliasPrefix = "aqh-"
 
 // sshUser is the login on every Aquanode box. There is no per-deployment user
 // field anywhere in the platform, and none is needed: ogre installs the user's
@@ -35,6 +53,10 @@ type sshEntry struct {
 	Port         string
 	IdentityFile string
 	KnownHosts   string
+	// User overrides the login. Empty means sshUser (root), which is every
+	// Aquanode-provisioned box; a detached host the user leases may well log in
+	// as someone else.
+	User string
 }
 
 func managedConfigPath() (string, error) {
@@ -43,6 +65,14 @@ func managedConfigPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, managedConfigName), nil
+}
+
+func managedHostsConfigPath() (string, error) {
+	dir, err := sshDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, managedHostsConfigName), nil
 }
 
 func userConfigPath() (string, error) {
@@ -117,14 +147,29 @@ func entriesFor(dep api.Deployment, identityFile, knownHosts string) []sshEntry 
 // at a key that isn't there. An absolute path has no expansion step to disagree
 // about.
 func renderManagedConfig(entries []sshEntry) string {
+	return renderStanzas("# Managed by `aq` — regenerated on every aq ssh / up / down.\n", entries)
+}
+
+// renderHostsConfig renders the detached-host fragment. Same stanza shape, its
+// own header so a user reading the file knows which of aq's two fragments they
+// are in and what regenerates it.
+func renderHostsConfig(entries []sshEntry) string {
+	return renderStanzas("# Managed by `aq` — regenerated on every aq host add / rm.\n", entries)
+}
+
+func renderStanzas(header string, entries []sshEntry) string {
 	var b strings.Builder
-	b.WriteString("# Managed by `aq` — regenerated on every aq ssh / up / down.\n")
+	b.WriteString(header)
 	b.WriteString("# Do not edit: your changes will be overwritten.\n")
 	for _, e := range entries {
+		user := e.User
+		if user == "" {
+			user = sshUser
+		}
 		fmt.Fprintf(&b, "\nHost %s\n", e.Alias)
 		fmt.Fprintf(&b, "    HostName %s\n", e.HostName)
 		fmt.Fprintf(&b, "    Port %s\n", e.Port)
-		fmt.Fprintf(&b, "    User %s\n", sshUser)
+		fmt.Fprintf(&b, "    User %s\n", user)
 		fmt.Fprintf(&b, "    IdentityFile %s\n", e.IdentityFile)
 		b.WriteString("    IdentitiesOnly yes\n")
 		fmt.Fprintf(&b, "    UserKnownHostsFile %s\n", e.KnownHosts)
@@ -145,9 +190,27 @@ func renderManagedConfig(entries []sshEntry) string {
 // anywhere. Appending is the intuitive move and it is wrong.
 //
 // Everything outside the markers is preserved byte for byte.
-func applyIncludeRegion(existing, includePath string) (string, error) {
+func applyIncludeRegion(existing string, includePaths ...string) (string, error) {
+	var body strings.Builder
+	for _, p := range includePaths {
+		body.WriteString("Include " + p + "\n")
+	}
+	return applyMarkerRegion(existing, body.String())
+}
+
+// applyMarkerRegion is the general form: return `existing` with exactly one
+// `# BEGIN aquanode` … `# END aquanode` region at the top holding `body`, and
+// every byte outside those markers preserved.
+//
+// This is the ONLY way aq is allowed to edit a file it does not own outright,
+// and it is why `aq attach` can write to a machine on somebody's multi-year
+// lease at all. Merge, never replace. A file with a damaged or half-present
+// marker pair is refused rather than repaired: guessing at the boundary of a
+// region we are about to overwrite is how you delete the keys a team uses to
+// reach a box we cannot restore access to.
+func applyMarkerRegion(existing, body string) (string, error) {
 	region := beginMarker + " — managed by `aq`, do not edit this block\n" +
-		"Include " + includePath + "\n" +
+		body +
 		endMarker + "\n"
 
 	lines := strings.Split(existing, "\n")
@@ -199,13 +262,17 @@ func ensureIncludeRegion() error {
 	if err != nil {
 		return err
 	}
+	hostsIncludePath, err := managedHostsConfigPath()
+	if err != nil {
+		return err
+	}
 
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 
-	updated, err := applyIncludeRegion(string(existing), includePath)
+	updated, err := applyIncludeRegion(string(existing), includePath, hostsIncludePath)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
@@ -333,4 +400,86 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil
+}
+
+// hostAliasFor is the ssh alias for a detached host. Deliberately a different
+// prefix from aliasFor's `aq-`: the two namespaces are generated from different
+// sources into different files, and a collision between them would be resolved
+// silently by ssh_config's first-match-wins rule with nothing printed anywhere.
+func hostAliasFor(alias string) string { return hostAliasPrefix + alias }
+
+// hostEntryFor builds the Host stanza for one registered box.
+//
+// Unlike entriesFor there is exactly one alias per host: a detached host has no
+// server-assigned id to offer a second stable handle for, and the alias the user
+// chose IS the stable handle.
+func hostEntryFor(h config.Host, knownHosts string) sshEntry {
+	user, hostname := splitSSHTarget(h.SSH)
+	port := strconv.Itoa(api.SSHPort)
+	if h.Port > 0 {
+		port = strconv.Itoa(h.Port)
+	}
+	return sshEntry{
+		Alias:        hostAliasFor(h.Alias),
+		HostName:     hostname,
+		Port:         port,
+		IdentityFile: h.Identity,
+		KnownHosts:   knownHosts,
+		User:         user,
+	}
+}
+
+// syncHostConfig regenerates the detached-host fragment from the local registry.
+//
+// It makes NO network call of any kind — no deployment list, no status fetch.
+// That is the whole reason the host stanzas live in their own file: a detached
+// run must be able to refresh the alias it is about to ssh to without an API
+// client existing at all.
+func syncHostConfig(hosts []config.Host) error {
+	dir, err := sshDir()
+	if err != nil {
+		return err
+	}
+	knownHosts := filepath.Join(dir, knownHostsName)
+
+	entries := make([]sshEntry, 0, len(hosts))
+	for _, h := range hosts {
+		identity := h.Identity
+		if identity == "" {
+			if id, _, err := sshPaths(); err == nil {
+				identity = id
+			}
+		}
+		h.Identity = identity
+		entries = append(entries, hostEntryFor(h, knownHosts))
+	}
+
+	if err := ensureIncludeRegion(); err != nil {
+		return err
+	}
+	return writeManagedHostsConfig(entries)
+}
+
+// writeManagedHostsConfig regenerates the host fragment wholesale, for the same
+// self-healing reason writeManagedConfig does.
+func writeManagedHostsConfig(entries []sshEntry) error {
+	path, err := managedHostsConfigPath()
+	if err != nil {
+		return err
+	}
+	data := []byte(renderHostsConfig(entries))
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == string(data) {
+		return nil
+	}
+	return atomicWrite(path, data, 0o600)
+}
+
+// splitSSHTarget splits `user@host` into its parts, defaulting the user to root
+// (every Aquanode box, and the overwhelming default on a rented GPU node).
+func splitSSHTarget(target string) (user, host string) {
+	target = strings.TrimSpace(target)
+	if i := strings.LastIndex(target, "@"); i >= 0 {
+		return target[:i], target[i+1:]
+	}
+	return sshUser, target
 }

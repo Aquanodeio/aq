@@ -15,6 +15,17 @@ import (
 // thing you connect to is the alias — never a raw root@ip. verb names the
 // caller for resolveDeploymentID's error text.
 func resolveSSHAlias(client *api.Client, target, verb string, errOut io.Writer) (string, error) {
+	// A `host:<alias>` target resolves entirely out of the local registry: no
+	// deployment lookup, no status fetch, no ssh-key check — those are three API
+	// calls, and a detached run makes none. This branch runs BEFORE anything
+	// touches client, which is nil on exactly these runs.
+	if alias, ok := parseHostTarget(target); ok {
+		return resolveHostSSHAlias(alias)
+	}
+	if client == nil {
+		return "", fmt.Errorf("cannot %s %q without a login — run `aq login`, or address a detached box as `host:<alias>`", verb, target)
+	}
+
 	deploymentID, err := resolveDeploymentID(client, target, verb)
 	if err != nil {
 		return "", err

@@ -56,12 +56,35 @@ func up(args []string) error {
 	autoPause := fs.Bool("auto-pause", false, "Enable idle auto-pause on this deployment (off by default)")
 	warnAfter := fs.String("warn-after", "", "With --auto-pause: warn after this much idle time, e.g. 30m")
 	pauseAfter := fs.String("pause-after", "", "With --auto-pause: auto-pause after this much idle time, e.g. 1h")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
+	}
+	if len(positional) > 1 {
+		return fmt.Errorf("expected at most one target — got %s", strings.Join(positional, ", "))
 	}
 
 	if *comfyui && *jupyter {
 		return errors.New("choose only one of --comfyui or --jupyter")
+	}
+
+	// `aq up host:<alias>` brings services up on a box that already exists,
+	// which is a different act from the rest of this command: it rents nothing,
+	// prices nothing, and never reaches the API. The only positional `aq up`
+	// accepts is a detached host, because "up" against a marketplace box has
+	// always meant "rent one" and must keep meaning exactly that.
+	if len(positional) == 1 {
+		alias, ok := parseHostTarget(positional[0])
+		if !ok {
+			return fmt.Errorf("`aq up` takes no deployment argument — it rents a new box. To bring services up on a box you already have, use `aq up host:<alias>`; got %q", positional[0])
+		}
+		var extra []string
+		if *jupyter {
+			extra = append(extra, "--jupyter")
+		} else if *comfyui {
+			extra = append(extra, "--comfyui")
+		}
+		return runDetached(detachedOptions{verb: "up", alias: alias, args: extra, out: os.Stdout, errOut: os.Stderr})
 	}
 
 	if err := validateGPUCount(*gpus); err != nil {

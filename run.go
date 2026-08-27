@@ -69,9 +69,19 @@ func runCmd(args []string) error {
 		return fmt.Errorf("a command is required — usage: aq run [name|id] -- <command…>")
 	}
 
-	cred, err := requireLogin()
-	if err != nil {
-		return err
+	var cred *config.Credential
+	if !isHostTarget(target) {
+		if cred, err = requireLogin(); err != nil {
+			return err
+		}
+	}
+
+	// Same as `aq push`: an unflagged destination on a detached box is that
+	// box's registered workspace root. --dir still defaults to wherever the
+	// push landed, so the two cannot disagree.
+	dest := *to
+	if dest == "" {
+		dest = hostMountPathFor(target)
 	}
 
 	return runRun(runOptions{
@@ -86,7 +96,7 @@ func runCmd(args []string) error {
 			cred:       cred,
 			target:     target,
 			from:       *from,
-			to:         *to,
+			to:         dest,
 			excludes:   excludes,
 			noDefaults: *noDefaults,
 			del:        *del,
@@ -108,7 +118,7 @@ func runRun(opts runOptions) error {
 	if opts.resolveAlias == nil {
 		cred := opts.cred
 		opts.resolveAlias = func(target string, errOut io.Writer) (string, error) {
-			return resolveSSHAlias(newControlClient(cred), target, "run on", errOut)
+			return resolveSSHAlias(newControlClientOrNil(cred), target, "run on", errOut)
 		}
 	}
 	if opts.doPush == nil {

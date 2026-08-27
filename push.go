@@ -61,16 +61,25 @@ func push(args []string) error {
 		return fmt.Errorf("invalid deployment %q — it must not start with '-'", target)
 	}
 
-	cred, err := requireLogin()
-	if err != nil {
-		return err
+	var cred *config.Credential
+	if !isHostTarget(target) {
+		if cred, err = requireLogin(); err != nil {
+			return err
+		}
+	}
+
+	// An unflagged push to a detached box goes to that box's registered
+	// workspace root, not to the global default.
+	dest := *to
+	if dest == "" {
+		dest = hostMountPathFor(target)
 	}
 
 	return runPush(pushOptions{
 		cred:       cred,
 		target:     target,
 		from:       *from,
-		to:         *to,
+		to:         dest,
 		excludes:   excludes,
 		noDefaults: *noDefaults,
 		del:        *del,
@@ -142,7 +151,7 @@ func (o pushOptions) withDefaults() pushOptions {
 	if o.resolveAlias == nil {
 		cred := o.cred
 		o.resolveAlias = func(target string, errOut io.Writer) (string, error) {
-			return resolveSSHAlias(newControlClient(cred), target, "push to", errOut)
+			return resolveSSHAlias(newControlClientOrNil(cred), target, "push to", errOut)
 		}
 	}
 	if o.probeRsync == nil {

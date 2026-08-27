@@ -63,9 +63,14 @@ func sshCmd(args []string) error {
 		return fmt.Errorf("invalid deployment %q — it must not start with '-'", target)
 	}
 
-	cred, err := requireLogin()
-	if err != nil {
-		return err
+	// A detached host needs no login at all — not even a credential file. That
+	// is the whole point of detached mode, so the login check is skipped rather
+	// than made lenient.
+	var cred *config.Credential
+	if !isHostTarget(target) {
+		if cred, err = requireLogin(); err != nil {
+			return err
+		}
 	}
 
 	return runSSH(sshOptions{
@@ -104,7 +109,7 @@ func runSSH(opts sshOptions) error {
 		opts.handoff = execSSH
 	}
 
-	client := newControlClient(opts.cred)
+	client := newControlClientOrNil(opts.cred)
 
 	alias, err := resolveSSHAlias(client, opts.target, "ssh", opts.errOut)
 	if err != nil {
