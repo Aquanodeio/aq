@@ -76,6 +76,14 @@ func runCmd(args []string) error {
 		}
 	}
 
+	// Same as `aq push`: an unflagged destination on a detached box is that
+	// box's registered workspace root. --dir still defaults to wherever the
+	// push landed, so the two cannot disagree.
+	dest := *to
+	if dest == "" {
+		dest = hostMountPathFor(target)
+	}
+
 	return runRun(runOptions{
 		cred:    cred,
 		target:  target,
@@ -88,7 +96,7 @@ func runCmd(args []string) error {
 			cred:       cred,
 			target:     target,
 			from:       *from,
-			to:         *to,
+			to:         dest,
 			excludes:   excludes,
 			noDefaults: *noDefaults,
 			del:        *del,

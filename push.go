@@ -68,11 +68,18 @@ func push(args []string) error {
 		}
 	}
 
+	// An unflagged push to a detached box goes to that box's registered
+	// workspace root, not to the global default.
+	dest := *to
+	if dest == "" {
+		dest = hostMountPathFor(target)
+	}
+
 	return runPush(pushOptions{
 		cred:       cred,
 		target:     target,
 		from:       *from,
-		to:         *to,
+		to:         dest,
 		excludes:   excludes,
 		noDefaults: *noDefaults,
 		del:        *del,

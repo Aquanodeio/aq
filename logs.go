@@ -71,11 +71,18 @@ func logsCmd(args []string) error {
 		}
 	}
 
+	// A detached run's logs live under the box's own workspace root, which is
+	// where `aq run host:<alias>` launched it.
+	workdir := *dir
+	if workdir == "" {
+		workdir = hostMountPathFor(target)
+	}
+
 	return runLogs(logsOptions{
 		cred:   cred,
 		target: target,
 		run:    *run,
-		dir:    *dir,
+		dir:    workdir,
 		lines:  *lines,
 		follow: *follow,
 		list:   *list,

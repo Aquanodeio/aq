@@ -288,3 +288,44 @@ func readFileString(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	return string(data), err
 }
+
+// A box registered with a non-default workspace root must actually receive its
+// files there. Landing a push in /workspace on a box whose data volume is
+// /data is silent: the transfer succeeds, and the `aq run` after it executes in
+// a directory nothing was written to.
+func TestDetachedPushAndRunUseTheRegisteredMountPath(t *testing.T) {
+	h := testHost()
+	h.MountPath = "/data"
+
+	t.Run("resolved destination", func(t *testing.T) {
+		detachedSandbox(t, h)
+		if got := hostMountPathFor("host:lease-a"); got != "/data" {
+			t.Fatalf("hostMountPathFor = %q, want /data", got)
+		}
+		if got := hostMountPathFor("4242"); got != "" {
+			t.Fatalf("a marketplace target must resolve no host mount path, got %q", got)
+		}
+		if got := hostMountPathFor("host:unknown"); got != "" {
+			t.Fatalf("an unregistered alias must resolve no mount path, got %q", got)
+		}
+
+		local := t.TempDir()
+		var plan transferPlan
+		err := runPush(pushOptions{
+			cred:       nil,
+			target:     "host:lease-a",
+			from:       local,
+			to:         hostMountPathFor("host:lease-a"),
+			out:        &bytes.Buffer{},
+			errOut:     &bytes.Buffer{},
+			probeRsync: func(string) bool { return false },
+			transfer:   func(p transferPlan, _ io.Writer) error { plan = p; return nil },
+		})
+		if err != nil {
+			t.Fatalf("runPush: %v", err)
+		}
+		if plan.to != "/data" {
+			t.Fatalf("push destination = %q, want the registered /data", plan.to)
+		}
+	})
+}

@@ -238,3 +238,27 @@ func runRemoteCapture(h config.Host, remote string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// hostMountPathFor returns the registered workspace root for a `host:<alias>`
+// target, and "" for anything else.
+//
+// Without it `aq push host:x` would land in /workspace on a box the user
+// registered with `--mount-path /data`, and the `aq run` after it would execute
+// in a directory the push never wrote to. The mount path is recorded per box
+// precisely because it is not /workspace everywhere — a leased machine's data
+// volume is wherever its owner mounted it.
+//
+// A missing registry entry yields "" rather than an error: the caller is about
+// to resolve the alias anyway, and that is where an unknown host gets its real
+// message.
+func hostMountPathFor(target string) string {
+	alias, ok := parseHostTarget(target)
+	if !ok {
+		return ""
+	}
+	h, found, err := config.FindHost(alias)
+	if err != nil || !found {
+		return ""
+	}
+	return h.MountPath
+}
