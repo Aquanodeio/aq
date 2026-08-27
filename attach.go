@@ -451,14 +451,39 @@ func writeOgreEnvScript(content string) string {
 // restartOgreScript starts ogre in managed mode with the credentials just
 // written. It stops only a daemon started this same way — the pattern is aq's
 // own invocation, not every process with "ogre" in its name.
+//
+// THE PATTERN IS ASSEMBLED ON THE BOX, FROM A VARIABLE, AND NEVER APPEARS
+// LITERALLY IN THIS SCRIPT. `ssh host '<script>'` hands the whole script to the
+// remote shell as one argv element, so the shell's own /proc/<pid>/cmdline
+// CONTAINS the script text. With the pattern spelled out, `pkill -f 'ogre -port
+// 8443'` matched that shell and killed the very session running the attach:
+// ssh died with status 255 before ogre was ever started, on every box, every
+// time. `pgrep -f` had the mirror-image bug — it matched the same shell and so
+// reported "ogre stayed up" whether or not anything had started, which is the
+// worse half: a false green on the only check that the daemon is alive.
+//
+// Building the pattern from $AQ_OGRE_PORT keeps the literal out of the script
+// text, and skipping $$ makes the self-exclusion explicit rather than a
+// property of how the string happens to be spelled.
 func restartOgreScript(port int) string {
 	p := strconv.Itoa(port)
 	return "set -a\n" +
 		". " + shellQuote(ogreEnvPath) + "\n" +
 		"set +a\n" +
-		"pkill -f 'ogre -port " + p + "' >/dev/null 2>&1 || true\n" +
+		"AQ_OGRE_PORT=" + p + "\n" +
+		`AQ_OGRE_PAT="ogre -port ${AQ_OGRE_PORT}"` + "\n" +
+		// Kill previous daemons, never this shell or its ancestors.
+		"for pid in $(pgrep -f -- \"$AQ_OGRE_PAT\" 2>/dev/null); do\n" +
+		"  [ \"$pid\" = \"$$\" ] && continue\n" +
+		"  kill \"$pid\" >/dev/null 2>&1 || true\n" +
+		"done\n" +
 		"touch " + shellQuote(ogreLogPath) + " 2>/dev/null || true\n" +
-		"nohup ogre -port " + p + " >> " + shellQuote(ogreLogPath) + " 2>&1 &\n" +
+		"nohup ogre -port \"$AQ_OGRE_PORT\" >> " + shellQuote(ogreLogPath) + " 2>&1 &\n" +
 		"sleep 1\n" +
-		"pgrep -f 'ogre -port " + p + "' >/dev/null 2>&1 || { echo 'ogre did not stay up — see " + ogreLogPath + " on the box' >&2; exit 1; }\n"
+		"AQ_OGRE_UP=0\n" +
+		"for pid in $(pgrep -f -- \"$AQ_OGRE_PAT\" 2>/dev/null); do\n" +
+		"  [ \"$pid\" = \"$$\" ] && continue\n" +
+		"  AQ_OGRE_UP=1\n" +
+		"done\n" +
+		"[ \"$AQ_OGRE_UP\" = 1 ] || { echo 'ogre did not stay up — see " + ogreLogPath + " on the box' >&2; exit 1; }\n"
 }
