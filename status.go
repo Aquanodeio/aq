@@ -39,6 +39,13 @@ func status(args []string) error {
 		return err
 	}
 
+	// A detached box's status comes from the box, not from us: `ogre status` on
+	// the far end reads its own GPU and snapshot state over loopback. No login,
+	// no API call.
+	if alias, ok := parseHostTarget(target); ok {
+		return runDetached(detachedOptions{verb: "status", alias: alias, out: os.Stdout, errOut: os.Stderr})
+	}
+
 	cred, err := requireLogin()
 	if err != nil {
 		return err

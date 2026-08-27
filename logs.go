@@ -64,9 +64,11 @@ func logsCmd(args []string) error {
 		return err
 	}
 
-	cred, err := requireLogin()
-	if err != nil {
-		return err
+	var cred *config.Credential
+	if !isHostTarget(target) {
+		if cred, err = requireLogin(); err != nil {
+			return err
+		}
 	}
 
 	return runLogs(logsOptions{
@@ -111,7 +113,7 @@ func runLogs(opts logsOptions) error {
 	if opts.resolveAlias == nil {
 		cred := opts.cred
 		opts.resolveAlias = func(target string, errOut io.Writer) (string, error) {
-			return resolveSSHAlias(newControlClient(cred), target, "read logs from", errOut)
+			return resolveSSHAlias(newControlClientOrNil(cred), target, "read logs from", errOut)
 		}
 	}
 	if opts.handoff == nil {

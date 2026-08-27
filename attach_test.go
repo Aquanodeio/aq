@@ -1,0 +1,372 @@
+package main
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Aquanodeio/aq/internal/api"
+	"github.com/Aquanodeio/aq/internal/config"
+)
+
+// customerKeys is a real-shaped authorized_keys: several unrelated keys, a
+// comment, and no trailing newline. On a machine somebody holds on a multi-year
+// lease this file is frequently their only way in, and aq cannot restore access
+// to it if we get this wrong.
+const customerKeys = "# ops team\n" +
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAA alice@laptop\n" +
+	"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQAA bob@desktop\n" +
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBB deploy@ci"
+
+// attachPreflightOutput assembles what the box prints for the preflight script.
+func attachPreflightOutput(akState, keys, port string) string {
+	return fullSurvey +
+		"ak=" + akState + "\n" +
+		"ak_begin\n" + keys + "\nak_end\n" +
+		"port=" + port + "\n" +
+		"preflight_ok=1\n"
+}
+
+// A preflight that cannot read the file a later step writes near must refuse.
+// "Could not look" blocks — it never proceeds to a write.
+func TestParseAttachPreflightRefusesAnUnreadableAuthorizedKeys(t *testing.T) {
+	_, err := parseAttachPreflight([]byte(attachPreflightOutput("unreadable", "", "free")))
+	if err == nil || !strings.Contains(err.Error(), "authorized_keys") {
+		t.Fatalf("expected a refusal naming authorized_keys, got %v", err)
+	}
+}
+
+func TestParseAttachPreflightReadsTheKeysAndThePortState(t *testing.T) {
+	pre, err := parseAttachPreflight([]byte(attachPreflightOutput("readable", customerKeys, "busy")))
+	if err != nil {
+		t.Fatalf("parseAttachPreflight: %v", err)
+	}
+	if !strings.Contains(pre.authorizedKeys, "alice@laptop") || !strings.Contains(pre.authorizedKeys, "deploy@ci") {
+		t.Fatalf("keys were not read back: %q", pre.authorizedKeys)
+	}
+	if !pre.portChecked || !pre.portBusy {
+		t.Fatalf("port state decoded wrong: checked=%v busy=%v", pre.portChecked, pre.portBusy)
+	}
+
+	// An absent file is a fact, not a failure — a fresh box has no keys yet.
+	pre, err = parseAttachPreflight([]byte(attachPreflightOutput("absent", "", "unknown")))
+	if err != nil {
+		t.Fatalf("parseAttachPreflight(absent): %v", err)
+	}
+	if pre.portChecked {
+		t.Error(`port=unknown must stay unknown, never collapse to "free"`)
+	}
+}
+
+// The summary tells the user their keys are safe without printing them. Their
+// keys are theirs and do not belong in our terminal output.
+func TestAuthorizedKeysSummaryCountsWithoutEchoing(t *testing.T) {
+	got := authorizedKeysSummary(customerKeys)
+	if !strings.Contains(got, "3 existing key") {
+		t.Errorf("summary = %q, want a count of 3", got)
+	}
+	if strings.Contains(got, "alice@laptop") {
+		t.Errorf("summary must not echo the keys: %q", got)
+	}
+	if got := authorizedKeysSummary(""); !strings.Contains(got, "no existing keys") {
+		t.Errorf("empty summary = %q", got)
+	}
+}
+
+// applyMarkerRegion is the only way aq edits a file on a box it does not own.
+// Merge, never replace: every byte outside the markers survives.
+func TestApplyMarkerRegionLeavesForeignContentByteIdentical(t *testing.T) {
+	merged, err := applyMarkerRegion(customerKeys, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIZZZ aquanode\n")
+	if err != nil {
+		t.Fatalf("applyMarkerRegion: %v", err)
+	}
+	if !strings.HasSuffix(merged, customerKeys) {
+		t.Fatalf("the customer's file must survive byte for byte, got:\n%q", merged)
+	}
+
+	// Re-applying replaces only our own region, and removing it restores the
+	// original exactly — which is what `aq release` has to be able to do.
+	twice, err := applyMarkerRegion(merged, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIYYY aquanode\n")
+	if err != nil {
+		t.Fatalf("applyMarkerRegion (second pass): %v", err)
+	}
+	if strings.Contains(twice, "AAAAIZZZ") {
+		t.Error("the second pass should have replaced our own region")
+	}
+	if !strings.HasSuffix(twice, customerKeys) {
+		t.Fatalf("the customer's file drifted on the second pass:\n%q", twice)
+	}
+	if strings.Count(twice, beginMarker) != 1 {
+		t.Errorf("expected exactly one marker region, got:\n%s", twice)
+	}
+}
+
+// A damaged marker pair is refused rather than repaired: guessing at the
+// boundary of a region we are about to overwrite is how you delete somebody's
+// only access to a box.
+func TestApplyMarkerRegionRefusesDamagedMarkers(t *testing.T) {
+	for _, broken := range []string{
+		beginMarker + "\nkey\n",
+		"key\n" + endMarker + "\n",
+		endMarker + "\nkey\n" + beginMarker + "\n",
+		beginMarker + "\n" + beginMarker + "\nkey\n" + endMarker + "\n",
+	} {
+		if _, err := applyMarkerRegion(broken, "x\n"); err == nil {
+			t.Errorf("expected a refusal for:\n%s", broken)
+		}
+	}
+}
+
+// --dry-run must create nothing in Aquanode and write nothing on the box, and
+// must state the one-box-one-setup ceiling before the user spends anything on
+// the assumption it can be split.
+func TestAttachDryRunCreatesNothingAndStatesTheLimit(t *testing.T) {
+	detachedSandbox(t, testHost())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("dry run called the API: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	run, seen := stubRunner(t, map[string]string{
+		"preflight_ok": attachPreflightOutput("readable", customerKeys, "free"),
+		"ogre status":  `{"gpu":[]}`,
+	})
+
+	var out bytes.Buffer
+	err := runAttach(attachOptions{
+		alias:  "lease-a",
+		dryRun: true,
+		out:    &out,
+		errOut: &bytes.Buffer{},
+		client: api.NewAuthed(srv.URL, "aq_sk_test", "team-1"),
+		run:    run,
+	})
+	if err != nil {
+		t.Fatalf("runAttach --dry-run: %v", err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"one box is one deployment running one setup",
+		"cannot",
+		"partition",
+		"# BEGIN aquanode",
+		"bill nothing",
+		"--dry-run: nothing was written on the box",
+	} {
+		if !strings.Contains(strings.ToLower(text), strings.ToLower(want)) {
+			t.Errorf("attach --dry-run output is missing %q:\n%s", want, text)
+		}
+	}
+	for _, cmd := range *seen {
+		for _, forbidden := range []string{"mv -f", "nohup", "chmod 0600"} {
+			if strings.Contains(cmd, forbidden) {
+				t.Errorf("dry run issued a writing command %q", forbidden)
+			}
+		}
+	}
+	if hosts, _ := config.LoadHosts(); hosts[0].Attached() {
+		t.Fatal("dry run recorded the box as attached")
+	}
+}
+
+// The probe is the gate. A failure must be loud, must surface the
+// orchestrator's own reason verbatim, and must leave nothing recorded as
+// reachable.
+func TestAttachFailsLoudlyWhenTheProbeFails(t *testing.T) {
+	detachedSandbox(t, testHost())
+	const reason = "dial tcp 1.2.3.4:8443: i/o timeout"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/external", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 4242, "installToken": "tok-1", "ogrePort": 8443})
+	})
+	mux.HandleFunc("/deployments/external/4242/install-config", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tok-1" {
+			t.Errorf("install-config must authenticate with the install token, got %q", got)
+		}
+		if r.Header.Get("x-api-key") != "" {
+			t.Error("install-config must not carry the user's API key")
+		}
+		writeData(w, map[string]any{
+			"ogreJwtSecret": "jwt-secret", "ogreProxyPassword": "proxy-pass",
+			"tlsCertPem": "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n",
+			"tlsKeyPem":  "-----BEGIN PRIVATE KEY-----\nBBB\n-----END PRIVATE KEY-----\n",
+			"ogrePort":   8443, "orchestratorUrl": "https://server.example", "deploymentId": "4242",
+		})
+	})
+	mux.HandleFunc("/deployments/external/4242/activate", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error":   "unreachable",
+			"data":    map[string]any{"error": "unreachable", "reason": reason},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var wrote []string
+	run := func(_ config.Host, remote string) ([]byte, error) {
+		wrote = append(wrote, remote)
+		switch {
+		case strings.Contains(remote, "preflight_ok"):
+			return []byte(attachPreflightOutput("readable", customerKeys, "free")), nil
+		case strings.Contains(remote, "__AQ_ABSENT__"):
+			return []byte("__AQ_ABSENT__\n"), nil
+		default:
+			return []byte(""), nil
+		}
+	}
+
+	var out bytes.Buffer
+	err := runAttach(attachOptions{
+		alias: "lease-a", yes: true, out: &out, errOut: &bytes.Buffer{},
+		client: api.NewAuthed(srv.URL, "aq_sk_test", "team-1"),
+		run:    run,
+	})
+	if err == nil {
+		t.Fatal("a failed probe must fail the command")
+	}
+	if !strings.Contains(err.Error(), reason) {
+		t.Errorf("the probe's reason must be surfaced verbatim; got:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), "detached mode") {
+		t.Errorf("the failure should point at detached mode as the complete alternative; got:\n%v", err)
+	}
+	if hosts, _ := config.LoadHosts(); hosts[0].Attached() {
+		t.Fatal("a box whose probe failed must never be recorded as attached")
+	}
+}
+
+func TestAttachRecordsTheBoxOnlyAfterASuccessfulProbe(t *testing.T) {
+	detachedSandbox(t, testHost())
+
+	var envWritten string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/external", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["host"] != "1.2.3.4" {
+			t.Errorf("adopt sent host=%v, want the box's ssh host", body["host"])
+		}
+		if body["ogrePort"] != float64(defaultOgrePort) {
+			t.Errorf("adopt sent ogrePort=%v, want %d", body["ogrePort"], defaultOgrePort)
+		}
+		writeData(w, map[string]any{"deploymentId": 4242, "installToken": "tok-1", "ogrePort": 8443})
+	})
+	mux.HandleFunc("/deployments/external/4242/install-config", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{
+			"ogreJwtSecret": "jwt-secret", "ogreProxyPassword": "proxy-pass",
+			"tlsCertPem": "CERTPEM", "tlsKeyPem": "KEYPEM",
+			"ogrePort": 8443, "orchestratorUrl": "https://server.example", "deploymentId": "4242",
+		})
+	})
+	mux.HandleFunc("/deployments/external/4242/activate", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"status": "ACTIVE", "agentLastSeenAt": "2026-08-27T10:00:00Z"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	run := func(_ config.Host, remote string) ([]byte, error) {
+		switch {
+		case strings.Contains(remote, "preflight_ok"):
+			return []byte(attachPreflightOutput("readable", customerKeys, "free")), nil
+		case strings.Contains(remote, "__AQ_ABSENT__"):
+			return []byte("__AQ_ABSENT__\n"), nil
+		case strings.Contains(remote, ogreEnvHeredocTag):
+			envWritten = remote
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	var out bytes.Buffer
+	err := runAttach(attachOptions{
+		alias: "lease-a", yes: true, out: &out, errOut: &bytes.Buffer{},
+		client: api.NewAuthed(srv.URL, "aq_sk_test", "team-1"),
+		run:    run,
+	})
+	if err != nil {
+		t.Fatalf("runAttach: %v", err)
+	}
+
+	hosts, err := config.LoadHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hosts[0].Attached() || hosts[0].DeploymentID != 4242 {
+		t.Fatalf("the box was not recorded as attached: %+v", hosts[0])
+	}
+	if hosts[0].PublicHost != "1.2.3.4" || hosts[0].OgrePort != 8443 {
+		t.Fatalf("attach state recorded wrong: %+v", hosts[0])
+	}
+
+	// The env file is written inside our markers, base64-encodes the PEM
+	// material, and never lands as a partial file under the real name.
+	for _, want := range []string{
+		beginMarker,
+		endMarker,
+		"JWT_SECRET=",
+		"OGRE_TLS_CERT='" + base64.StdEncoding.EncodeToString([]byte("CERTPEM")) + "'",
+		"mv -f",
+	} {
+		if !strings.Contains(envWritten, want) {
+			t.Errorf("the env write is missing %q:\n%s", want, envWritten)
+		}
+	}
+	if strings.Contains(envWritten, "CERTPEM\n-----") {
+		t.Error("PEM material must be base64-encoded, not embedded raw")
+	}
+
+	text := out.String()
+	for _, want := range []string{"bills nothing", "aq release lease-a", "no provider is ever contacted"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the success message is missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// A box already attached must not be adopted twice — the second row would be a
+// duplicate the user has no way to tell apart.
+func TestAttachRefusesAnAlreadyAttachedBox(t *testing.T) {
+	h := testHost()
+	h.DeploymentID = 4242
+	h.AttachedAt = "2026-08-27T00:00:00Z"
+	detachedSandbox(t, h)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("must not call the API: %s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	err := runAttach(attachOptions{
+		alias: "lease-a", yes: true, out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
+		client: api.NewAuthed(srv.URL, "k", "t"),
+		run: func(config.Host, string) ([]byte, error) {
+			t.Fatal("must not reach the box")
+			return nil, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "aq release") {
+		t.Fatalf("expected a refusal naming `aq release`, got %v", err)
+	}
+}
+
+// configureOgreOnBox must refuse a credential file it could not read rather
+// than replacing something it did not write.
+func TestConfigureOgreRefusesAnUnreadableEnvFile(t *testing.T) {
+	detachedSandbox(t, testHost())
+	opts := attachOptions{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}.withDefaults()
+	opts.run = func(config.Host, string) ([]byte, error) { return []byte("__AQ_UNREADABLE__\n"), nil }
+	err := configureOgreOnBox(opts, testHost(), &api.ExternalInstallConfig{OgreJWTSecret: "s"}, 4242, 8443)
+	if err == nil || !strings.Contains(err.Error(), "cannot read") {
+		t.Fatalf("expected a refusal on an unreadable env file, got %v", err)
+	}
+}

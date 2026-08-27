@@ -69,9 +69,11 @@ func runCmd(args []string) error {
 		return fmt.Errorf("a command is required — usage: aq run [name|id] -- <command…>")
 	}
 
-	cred, err := requireLogin()
-	if err != nil {
-		return err
+	var cred *config.Credential
+	if !isHostTarget(target) {
+		if cred, err = requireLogin(); err != nil {
+			return err
+		}
 	}
 
 	return runRun(runOptions{
@@ -108,7 +110,7 @@ func runRun(opts runOptions) error {
 	if opts.resolveAlias == nil {
 		cred := opts.cred
 		opts.resolveAlias = func(target string, errOut io.Writer) (string, error) {
-			return resolveSSHAlias(newControlClient(cred), target, "run on", errOut)
+			return resolveSSHAlias(newControlClientOrNil(cred), target, "run on", errOut)
 		}
 	}
 	if opts.doPush == nil {

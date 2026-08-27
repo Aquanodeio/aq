@@ -35,6 +35,13 @@ func syncNow(args []string) error {
 		return errors.New("a setup is required — usage: aq sync-now <setup>")
 	}
 
+	// Detached: `ogre push` flushes the box's snapshots to its configured
+	// remote. A detached box runs no scheduler, so "force the tick now" is the
+	// only form the verb has there — and it is the real one, not a stand-in.
+	if alias, ok := parseHostTarget(positional[0]); ok {
+		return runDetached(detachedOptions{verb: "sync-now", alias: alias, out: os.Stdout, errOut: os.Stderr})
+	}
+
 	cred, err := requireLogin()
 	if err != nil {
 		return err

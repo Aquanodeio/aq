@@ -65,6 +65,14 @@ func snapshot(args []string) error {
 		return fmt.Errorf("a setup is required — usage: aq save <setup>")
 	}
 
+	// Detached: the box captures itself into its own bucket via `ogre snapshot`.
+	// There is no lineage to name and no version to increment, because there is
+	// no control plane holding either — the snapshots live in the user's bucket
+	// and `ogre list` on the box is what enumerates them.
+	if alias, ok := parseHostTarget(parsed.target); ok {
+		return runDetached(detachedOptions{verb: "save", alias: alias, out: os.Stdout, errOut: os.Stderr})
+	}
+
 	cred, err := requireLogin()
 	if err != nil {
 		return err

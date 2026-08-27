@@ -70,6 +70,12 @@ func main() {
 		run(deploy(args))
 	case "import":
 		run(importCmd(args))
+	case "host":
+		run(hostCmd(args))
+	case "attach":
+		run(attachCmd(args))
+	case "release":
+		run(releaseCmd(args))
 	case "ssh":
 		run(sshCmd(args))
 	case "push":
@@ -140,6 +146,9 @@ Commands:
   up            Rent the cheapest matching GPU and bring up a working setup
   deploy        Restore a save onto a freshly-rented Aquanode GPU box
   import        Capture a box you rent elsewhere into a new Aquanode setup
+  host          Register a box you own or lease, and drive it with no account
+  attach        Adopt a registered box into your Aquanode control plane
+  release       Hand an attached box back — the box keeps running
   ssh           Open a shell on a setup (managed key + ~/.ssh/config alias)
   push          Send your working directory to a box you already rented
   run           Push the working directory, then run a command on the box
@@ -222,6 +231,75 @@ import:
                              restic dedups what already landed, so this never
                              restarts from zero and never bills a second,
                              parallel setup for the same box.
+
+host / attach / release — boxes we never provisioned:
+  Two modes for a machine you already own or lease, sharing one artifact format.
+
+  DETACHED — your box, no control plane, no Aquanode account required. aq drives
+  ogre on the box over your own ssh session, and ogre's CLI reaches its daemon on
+  loopback, so the box needs no inbound connectivity from us at all. Nothing in
+  detached mode contacts the Aquanode API.
+
+  aq host add <alias> --ssh root@1.2.3.4
+                             Survey the box, verify ogre's daemon answers on
+                             loopback, and register it locally. Survey-first:
+                             you see what aq found before anything changes.
+  aq host add … --dry-run    Survey and print the plan; write nothing, anywhere
+  aq host ls                 List registered boxes
+  aq host rm <alias>         Forget a box. The box itself is untouched.
+
+  --identity <path>    Private key to authenticate with (default: aq's own)
+  --mount-path <dir>   Workspace root on the box (default: /workspace)
+  --ogre-port <n>      Port ogre listens on once attached (default: 8443)
+  --ogre-binary <path> Upload this Linux x86_64 ogre when the box has none.
+                       There is no public ogre installer, so aq will not
+                       download one — it installs the binary you name, or
+                       refuses.
+
+  Then address the box as "host:<alias>" from any box-facing verb:
+    aq ssh host:lease-a              aq push host:lease-a
+    aq run host:lease-a -- nvidia-smi    aq logs host:lease-a
+    aq status host:lease-a           (ogre status, read from the box)
+    aq save host:lease-a             (ogre snapshot, into your own bucket)
+    aq sync-now host:lease-a         (ogre push, to your configured remote)
+    aq up host:lease-a               (bring services up in place; rents nothing)
+
+  ATTACHED — your box, our control plane. The box becomes a deployment we never
+  provisioned and gains the console, version history, fork/share, teams, metrics
+  and endpoints.
+
+  aq attach <alias>          Adopt a registered box (needs a login)
+  aq attach <alias> --dry-run
+                             Print the plan; write nothing on the box and
+                             create nothing in Aquanode
+  aq attach <alias> --yes    Skip the confirmation
+  --host <addr>              Address our orchestrator should dial
+                             (default: the box's ssh host)
+
+  Attach reaches the box one way only: a public address, the port open inbound
+  from our infrastructure, TLS pinned. It probes before it commits, and a box it
+  cannot reach is NOT attached — the failure is reported with the probe's own
+  reason and the box stays fully usable in detached mode.
+
+  Everything aq writes on your box goes inside "# BEGIN aquanode" markers, and
+  aq refuses to write to any file it could not first read. Your existing
+  authorized_keys is never replaced.
+
+  One attached box is ONE deployment running ONE setup at a time. Aquanode
+  cannot partition a multi-GPU box into several independent setups — the whole
+  box attaches as a single target. That does not exist in either mode.
+
+  aq release <alias>         Hand an attached box back: Aquanode revokes its
+                             credentials and drops its deployment row. The box
+                             KEEPS RUNNING and no provider is ever contacted —
+                             this is not a terminate. (--keep-host keeps the
+                             box in your registry for detached use.)
+
+  Detached does: capture, restore, setups, run/logs/ssh/sync, ogre up
+  templates, BYO bucket.
+  Attached adds: teams and RBAC, share/fork, the console, endpoints and
+  aq call, cross-provider burst, the marketplace.
+  Neither does: splitting one box across several independent setups.
 
 ssh:
   aq ssh                     Open a shell on your only live deployment
