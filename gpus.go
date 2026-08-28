@@ -73,8 +73,10 @@ func gpus(args []string) error {
 // resolveAPIURL (down.go), this deliberately never consults a stored
 // credential's APIURL — reading config.Load() at all here would make `aq
 // gpus` depend on ~/.config/aq existing/parsing cleanly, which defeats the
-// point of a zero-account command. The env var still outranks everything,
-// same rule as gotcha #6 in CLAUDE.md.
+// point of a zero-account command. The env var still outranks everything:
+// an explicit environment override must beat any persisted value, so that
+// pointing the CLI at a local or staging API is never silently overruled by
+// whatever host a previous login happened to write to disk.
 func resolvePublicAPIURL() string {
 	if v := config.APIURLOverride(); v != "" {
 		return v
