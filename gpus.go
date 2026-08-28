@@ -19,6 +19,63 @@ import (
 // flood the terminal on the very first thing a no-account visitor runs.
 const defaultGPUsLimit = 20
 
+// akashProvider is the one marketplace provider whose `price` field is
+// already a flat per-GPU hourly rate — every other provider's `price` is the
+// TOTAL for the whole offer (all gpuCount GPUs). Verified empirically
+// against the live feed: akash H100 offers price at 2.709 regardless of gpuCount
+// 1/2/3/4, and RTX5090 at 0.609 for both x1 and x8, while e.g. simplepod
+// RTX3070 scales linearly with gpuCount (a total). This mirrors the
+// exception website/lib/pricing.ts already carries for the same feed.
+// Kept as a single named constant so the exception is greppable and cannot
+// be silently dropped by a future refactor.
+const akashProvider = "akash"
+
+// isAkashFlatRate reports whether an offer's price came from the one
+// provider whose feed semantics differ (see akashProvider).
+func isAkashFlatRate(provider string) bool {
+	return strings.EqualFold(provider, akashProvider)
+}
+
+// safeGPUCount guards the divide in perGPUHourlyRate/totalHourlyRate against
+// a malformed feed row: the marketplace should never emit gpuCount <= 0, but
+// if it does, treating the offer as a single GPU keeps the row visible (at a
+// possibly-wrong rate) rather than dividing by zero or a negative count and
+// crashing or silently dropping the offer.
+func safeGPUCount(o api.MarketplaceOffer) int {
+	if o.GPUCount <= 0 {
+		return 1
+	}
+	return o.GPUCount
+}
+
+// perGPUHourlyRate normalizes an offer's price into a per-GPU hourly rate —
+// the unit that is comparable across providers (see akashProvider for why
+// this isn't just Price/GPUCount for everyone).
+func perGPUHourlyRate(o api.MarketplaceOffer) float64 {
+	if isAkashFlatRate(o.Provider) {
+		return o.Price
+	}
+	return o.Price / float64(safeGPUCount(o))
+}
+
+// totalHourlyRate normalizes an offer's price into the whole-offer hourly
+// total — the inverse normalization of perGPUHourlyRate.
+func totalHourlyRate(o api.MarketplaceOffer) float64 {
+	if isAkashFlatRate(o.Provider) {
+		return o.Price * float64(safeGPUCount(o))
+	}
+	return o.Price
+}
+
+// gpusJSONOffer is what `--json` actually encodes: every raw field the API
+// returned, untouched, plus one derived field. Embedding MarketplaceOffer
+// (rather than copying fields) guarantees the raw contract can't drift from
+// what api.Marketplace() decoded — this file must never mutate Price itself.
+type gpusJSONOffer struct {
+	api.MarketplaceOffer
+	PricePerGPUHour float64 `json:"pricePerGpuHour"`
+}
+
 // gpusOptions configures runGPUs. gpus() fills in the real environment; tests
 // inject a base URL and buffer writers.
 type gpusOptions struct {
@@ -44,7 +101,7 @@ type gpusOptions struct {
 func gpus(args []string) error {
 	fs := flag.NewFlagSet("gpus", flag.ContinueOnError)
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, case-insensitive, e.g. \"B200\")")
-	maxPrice := fs.Float64("max-price", 0, "Only show offers at or below this hourly price (offer total, not per-GPU)")
+	maxPrice := fs.Float64("max-price", 0, "Only show offers at or below this per-GPU hourly rate ($/GPU-HR, see the price columns aq gpus prints)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. runpod)")
 	region := fs.String("region", "", "Filter to a region (substring, case-insensitive)")
 	jsonOut := fs.Bool("json", false, "Print the filtered offers as JSON instead of a table")
@@ -106,7 +163,13 @@ func runGPUs(opts gpusOptions) error {
 	}
 
 	filtered := filterOffers(offers, opts)
-	sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].Price < filtered[j].Price })
+	// Cheapest-per-GPU-first: sorting on the raw Price would let a
+	// multi-GPU Akash offer (already per-GPU) or a multi-GPU total from any
+	// other provider rank by an inflated/deflated multiple of its real
+	// per-GPU cost instead of its real one.
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return perGPUHourlyRate(filtered[i]) < perGPUHourlyRate(filtered[j])
+	})
 
 	if opts.jsonOut {
 		// --json is the scripting path, so the row cap that keeps the table
@@ -117,9 +180,13 @@ func runGPUs(opts gpusOptions) error {
 		if opts.hasLimit && opts.limit > 0 && opts.limit < len(out) {
 			out = out[:opts.limit]
 		}
+		jsonOffers := make([]gpusJSONOffer, len(out))
+		for i, o := range out {
+			jsonOffers[i] = gpusJSONOffer{MarketplaceOffer: o, PricePerGPUHour: perGPUHourlyRate(o)}
+		}
 		enc := json.NewEncoder(opts.out)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
+		if err := enc.Encode(jsonOffers); err != nil {
 			return fmt.Errorf("encode offers: %w", err)
 		}
 		return nil
@@ -157,7 +224,7 @@ func filterOffers(offers []api.MarketplaceOffer, opts gpusOptions) []api.Marketp
 		if gpu != "" && !strings.Contains(strings.ToLower(o.GPUShortName), gpu) {
 			continue
 		}
-		if opts.hasMaxPri && o.Price > opts.maxPrice {
+		if opts.hasMaxPri && perGPUHourlyRate(o) > opts.maxPrice {
 			continue
 		}
 		if provider != "" && strings.ToLower(o.Provider) != provider {
@@ -172,14 +239,18 @@ func filterOffers(offers []api.MarketplaceOffer, opts gpusOptions) []api.Marketp
 }
 
 // printOffers renders the table via tabwriter, columns kept short enough to
-// stay readable at 100 cols: GPU, GPUS, VRAM, PROVIDER, REGION, AVAIL, $/HR.
+// stay readable at 100 cols: GPU, GPUS, VRAM, PROVIDER, REGION, AVAIL,
+// $/GPU-HR, $/HR TOTAL. Two price columns instead of one $/HR because the
+// feed's raw price unit varies by provider (see akashProvider) — printing
+// both, each normalized consistently, means neither column can be misread
+// as the other's unit.
 func printOffers(out io.Writer, offers []api.MarketplaceOffer) {
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "GPU\tGPUS\tVRAM\tPROVIDER\tREGION\tAVAIL\t$/HR")
+	fmt.Fprintln(tw, "GPU\tGPUS\tVRAM\tPROVIDER\tREGION\tAVAIL\t$/GPU-HR\t$/HR TOTAL")
 	for _, o := range offers {
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%d\t%.4f\n",
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%d\t%.4f\t%.4f\n",
 			orDash(o.GPUShortName), o.GPUCount, orDash(o.GPUMemory), orDash(o.Provider),
-			orDash(o.Region), o.Available, o.Price)
+			orDash(o.Region), o.Available, perGPUHourlyRate(o), totalHourlyRate(o))
 	}
 	tw.Flush()
 }

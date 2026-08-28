@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,7 +37,7 @@ func stubMarketplace(t *testing.T) string {
 	return srv.URL
 }
 
-func TestRunGPUsSortsByPriceAscending(t *testing.T) {
+func TestRunGPUsSortsByPerGPUPriceAscending(t *testing.T) {
 	var out, errOut bytes.Buffer
 	err := runGPUs(gpusOptions{apiURL: stubMarketplace(t), limit: defaultGPUsLimit, out: &out, errOut: &errOut})
 	if err != nil {
@@ -47,12 +48,16 @@ func TestRunGPUsSortsByPriceAscending(t *testing.T) {
 	if len(lines) != 5 {
 		t.Fatalf("got %d lines, want 5 (header + 4 offers):\n%s", len(lines), out.String())
 	}
-	// Cheapest (vastai 0.35) must lead, priciest (datacrunch 24.44) must trail.
+	// Per-GPU rates: vastai 0.35, datacrunch 24.44/4=6.11, runpod-A100 1.29,
+	// runpod-B200 6.79. Cheapest (vastai 0.35) must lead, priciest per-GPU
+	// (runpod B200 at 6.79/GPU, NOT datacrunch's 24.44 total) must trail —
+	// this is the whole point of sorting on the normalized rate instead of
+	// the raw offer-total Price.
 	if !strings.Contains(lines[1], "RTX 4090") {
-		t.Errorf("first row = %q, want the cheapest offer (RTX 4090)", lines[1])
+		t.Errorf("first row = %q, want the cheapest per-GPU offer (RTX 4090)", lines[1])
 	}
-	if !strings.Contains(lines[4], "datacrunch") {
-		t.Errorf("last row = %q, want the priciest offer (datacrunch)", lines[4])
+	if !strings.Contains(lines[4], "runpod") || !strings.Contains(lines[4], "B200") {
+		t.Errorf("last row = %q, want the priciest-per-GPU offer (runpod B200 @ 6.79/GPU)", lines[4])
 	}
 }
 
@@ -215,6 +220,52 @@ func TestRunGPUsWorksWithNoCredentialFile(t *testing.T) {
 	}
 }
 
+// TestRunGPUsJSONAddsDerivedPerGPURateWithoutMutatingRawFields confirms
+// --json's new field is additive: the raw `price`/`gpuCount` fields decode
+// unchanged (the upstream contract), and a new `pricePerGpuHour` field
+// carries the normalized number for scripts, correct for both an Akash row
+// (unchanged) and a non-Akash row (divided).
+func TestRunGPUsJSONAddsDerivedPerGPURateWithoutMutatingRawFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, sampleMixedProviderBody)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runGPUs(gpusOptions{apiURL: srv.URL, jsonOut: true, out: &out, errOut: &errOut})
+	if err != nil {
+		t.Fatalf("runGPUs: %v", err)
+	}
+
+	var raw []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
+		t.Fatalf("--json output did not parse: %v\noutput: %s", err, out.String())
+	}
+	if len(raw) != 2 {
+		t.Fatalf("got %d offers, want 2", len(raw))
+	}
+	for _, o := range raw {
+		provider, _ := o["provider"].(string)
+		price, _ := o["price"].(float64)
+		gpuCount, _ := o["gpuCount"].(float64)
+		derived, ok := o["pricePerGpuHour"].(float64)
+		if !ok {
+			t.Fatalf("offer %v missing pricePerGpuHour field", o)
+		}
+		want := price
+		if !isAkashFlatRate(provider) {
+			want = price / gpuCount
+		}
+		if derived != want {
+			t.Errorf("provider %q: pricePerGpuHour = %v, want %v (raw price=%v unchanged)", provider, derived, want, price)
+		}
+		if price != o["price"] {
+			t.Errorf("raw price field mutated for provider %q", provider)
+		}
+	}
+}
+
 func TestResolvePublicAPIURLLetsTheEnvOverrideWin(t *testing.T) {
 	t.Setenv("AQ_API_URL", "http://localhost:11080/api/v1")
 	if got := resolvePublicAPIURL(); got != "http://localhost:11080/api/v1" {
@@ -244,6 +295,103 @@ func TestRunGPUsEnvelopeErrorSurfacesClearly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "marketplace down") {
 		t.Errorf("error = %v, want it to carry the envelope's message", err)
+	}
+}
+
+// TestPerGPUHourlyRateDoesNotDivideAkashButDividesEveryoneElse is the
+// regression guard: Akash's marketplace price is already a
+// flat per-GPU rate (unlike every other provider, whose price is the whole
+// offer's total), so a multi-GPU Akash offer must come back unchanged while
+// a multi-GPU non-Akash offer must be divided by its gpuCount.
+func TestPerGPUHourlyRateDoesNotDivideAkashButDividesEveryoneElse(t *testing.T) {
+	akash := api.MarketplaceOffer{Provider: "akash", GPUCount: 4, Price: 2.709}
+	if got := perGPUHourlyRate(akash); got != 2.709 {
+		t.Errorf("perGPUHourlyRate(akash x4 @ 2.709) = %v, want 2.709 unchanged (akash price is already per-GPU)", got)
+	}
+	if got := totalHourlyRate(akash); got != 2.709*4 {
+		t.Errorf("totalHourlyRate(akash x4 @ 2.709) = %v, want %v (per-GPU * gpuCount)", got, 2.709*4)
+	}
+
+	// Case-insensitive provider match, since the feed's casing isn't
+	// guaranteed to be lowercase everywhere.
+	akashMixedCase := api.MarketplaceOffer{Provider: "Akash", GPUCount: 8, Price: 0.609}
+	if got := perGPUHourlyRate(akashMixedCase); got != 0.609 {
+		t.Errorf("perGPUHourlyRate(Akash x8 @ 0.609) = %v, want 0.609 unchanged", got)
+	}
+
+	simplepod := api.MarketplaceOffer{Provider: "simplepod", GPUCount: 6, Price: 0.30}
+	if got := perGPUHourlyRate(simplepod); math.Abs(got-0.05) > 1e-9 {
+		t.Errorf("perGPUHourlyRate(simplepod x6 @ 0.30 total) = %v, want 0.05 (0.30 / 6)", got)
+	}
+	if got := totalHourlyRate(simplepod); got != 0.30 {
+		t.Errorf("totalHourlyRate(simplepod x6 @ 0.30 total) = %v, want 0.30 unchanged", got)
+	}
+
+	datacrunch := api.MarketplaceOffer{Provider: "datacrunch", GPUCount: 4, Price: 24.44}
+	if got := perGPUHourlyRate(datacrunch); got != 6.11 {
+		t.Errorf("perGPUHourlyRate(datacrunch x4 @ 24.44 total) = %v, want 6.11 (24.44 / 4)", got)
+	}
+}
+
+// TestPerGPUHourlyRateGuardsNonPositiveGPUCount pins the divide-by-zero
+// guard: a malformed feed row with gpuCount <= 0 must not panic or produce
+// Inf/NaN — it is treated as a single GPU so the row stays visible instead
+// of vanishing or crashing `aq gpus`.
+func TestPerGPUHourlyRateGuardsNonPositiveGPUCount(t *testing.T) {
+	for _, count := range []int{0, -1, -8} {
+		o := api.MarketplaceOffer{Provider: "runpod", GPUCount: count, Price: 5.0}
+		if got := perGPUHourlyRate(o); got != 5.0 {
+			t.Errorf("perGPUHourlyRate(gpuCount=%d, price=5.0) = %v, want 5.0 (treated as 1 GPU)", count, got)
+		}
+		if got := totalHourlyRate(o); got != 5.0 {
+			t.Errorf("totalHourlyRate(gpuCount=%d, price=5.0) = %v, want 5.0 (treated as 1 GPU)", count, got)
+		}
+
+		akashO := api.MarketplaceOffer{Provider: "akash", GPUCount: count, Price: 2.709}
+		if got := totalHourlyRate(akashO); got != 2.709 {
+			t.Errorf("totalHourlyRate(akash, gpuCount=%d, price=2.709) = %v, want 2.709 (treated as 1 GPU)", count, got)
+		}
+	}
+}
+
+// sampleAkashUndersellsBody has an Akash multi-GPU offer that is nominally
+// the cheapest raw Price in the set, but is NOT the cheapest per-GPU: the
+// runpod row below costs less per GPU once both are normalized. Before
+// this was fixed, sorting on raw Price let the Akash row (which is
+// already per-GPU, so its "total" reads deceptively low relative to
+// multi-GPU offers whose Price is a true total) rank first.
+const sampleMixedProviderBody = `{"success":true,"data":[
+  {"gpuShortName":"H100","gpuCount":4,"gpuMemory":"80GB","provider":"akash","region":"US-EAST-1","available":1,"price":2.709},
+  {"gpuShortName":"H100","gpuCount":1,"gpuMemory":"80GB","provider":"runpod","region":"US-WEST-1","available":1,"price":1.50}
+]}`
+
+// TestRunGPUsDefaultOrderRanksCheaperPerGPUAboveNominallyCheaperAkash pins
+// the original bug: with the Akash offer's raw Price (2.709)
+// lower than runpod's raw Price (1.50), a naive total-Price sort would rank
+// Akash first — even though Akash's 2.709 is ALREADY per-GPU while runpod's
+// 1.50 is a single-GPU total, so runpod (1.50/GPU) is in fact cheaper than
+// Akash (2.709/GPU). The default view must lead with runpod.
+func TestRunGPUsDefaultOrderRanksCheaperPerGPUAboveNominallyCheaperAkash(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, sampleMixedProviderBody)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runGPUs(gpusOptions{apiURL: srv.URL, limit: defaultGPUsLimit, out: &out, errOut: &errOut})
+	if err != nil {
+		t.Fatalf("runGPUs: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3 (header + 2 offers):\n%s", len(lines), out.String())
+	}
+	if !strings.Contains(lines[1], "runpod") {
+		t.Errorf("first (cheapest-per-GPU) row = %q, want runpod (1.50/GPU beats akash's 2.709/GPU)", lines[1])
+	}
+	if !strings.Contains(lines[2], "akash") {
+		t.Errorf("second row = %q, want akash", lines[2])
 	}
 }
 
