@@ -62,6 +62,8 @@ func main() {
 		fmt.Printf("aq %s\n", version)
 	case "help", "--help", "-h":
 		usage()
+	case "gpus":
+		run(gpus(args))
 	case "login":
 		run(login(args))
 	case "up":
@@ -142,6 +144,7 @@ Usage:
   aq <command> [flags]
 
 Commands:
+  gpus          Browse live GPU offers across every provider (no account needed)
   login         Pair this CLI to your Aquanode account (device login)
   up            Rent the cheapest matching GPU and bring up a working setup
   deploy        Restore a save onto a freshly-rented Aquanode GPU box
@@ -173,6 +176,21 @@ Commands:
   whoami        Show the current login state
   version       Print the aq version
   help          Show this help
+
+gpus:
+  aq gpus                     Browse every live GPU offer across all providers,
+                              cheapest first. Works with no account — nothing
+                              is read from or written to ~/.config/aq.
+
+  --gpu <model>       Filter to a GPU model (substring, case-insensitive,
+                      e.g. "B200")
+  --max-price <n>     Only show offers at or below this hourly price
+                      (the WHOLE offer's price, not per-GPU)
+  --provider <name>   Restrict to a single provider (e.g. runpod)
+  --region <name>     Filter to a region (substring, case-insensitive)
+  --limit <n>         Max rows to print (default 20, 0 = all). With --json,
+                      every match is returned unless you pass this explicitly
+  --json              Print the filtered offers as JSON instead of a table
 
 up flags:
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
