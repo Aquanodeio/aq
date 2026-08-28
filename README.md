@@ -17,13 +17,19 @@ ComfyUI custom nodes at the start of every session, that is the problem it exist
 Aquanode prices GPUs across many providers in one place, so `aq up` rents the cheapest
 box that matches what you asked for.
 
-Docs: **[docs.aquanode.io](https://docs.aquanode.io/docs)** · Live GPU pricing:
-**[aquanode.io/gpu-index](https://www.aquanode.io/gpu-index)**
+Docs: **[docs.aquanode.io](https://docs.aquanode.io/docs)** · Live GPU pricing in the
+browser: **[aquanode.io/gpu-index](https://www.aquanode.io/gpu-index)**
+
+**No account? Run `aq gpus`.** It lists every live GPU offer across all providers —
+cheapest first, filterable by model/price/provider/region — with nothing installed
+or configured beyond the binary. `aq login` is the next step once you've found a box
+worth renting.
 
 ## Capabilities
 
 `aq` is a complete, production-ready CLI for managing Aquanode GPU deployments:
 
+- **`aq gpus`** — browse live GPU offers across every provider; works with no account
 - **`aq login`** — pair the CLI to your Aquanode account via device-login
 - **`aq up`** — rent the cheapest matching GPU, provision it, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
 - **`aq deploy`** — restore a snapshot onto a freshly-rented Aquanode GPU box
