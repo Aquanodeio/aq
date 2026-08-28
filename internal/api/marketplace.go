@@ -19,10 +19,16 @@ type MemorySize struct {
 // MarketplaceOffer mirrors one element of GET /marketplace's data array: one
 // rentable GPU configuration at one provider/region.
 //
-// Price is the TOTAL $/hr for the whole offer (all GpuCount GPUs), not a
-// per-GPU rate — confirmed empirically (runpod 1x B200 = 6.79, datacrunch 4x
-// B200 = 24.44, i.e. ~6.11/GPU). Any renderer must show GpuCount alongside
-// Price so this isn't misread as a per-GPU number.
+// Price is the TOTAL $/hr for the whole offer (all GpuCount GPUs) for every
+// provider EXCEPT Akash, whose feed reports Price as an already-flat
+// per-GPU rate (confirmed empirically: akash H100 prices at 2.709 regardless
+// of gpuCount 1-4; RTX5090 at 0.609 for both x1 and x8) — see akashProvider
+// in gpus.go, the one place that exception is allowed to live. For every
+// other provider it scales linearly with GpuCount (runpod 1x B200 = 6.79,
+// datacrunch 4x B200 = 24.44, i.e. ~6.11/GPU — a total). Any renderer must
+// normalize through gpus.go's perGPUHourlyRate/totalHourlyRate rather than
+// reading Price directly, or Akash and everyone else end up compared in
+// different units.
 type MarketplaceOffer struct {
 	Address          string     `json:"address"`
 	Type             string     `json:"type"`

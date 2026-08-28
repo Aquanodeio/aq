@@ -21,9 +21,13 @@ Docs: **[docs.aquanode.io](https://docs.aquanode.io/docs)** · Live GPU pricing 
 browser: **[aquanode.io/gpu-index](https://www.aquanode.io/gpu-index)**
 
 **No account? Run `aq gpus`.** It lists every live GPU offer across all providers —
-cheapest first, filterable by model/price/provider/region — with nothing installed
-or configured beyond the binary. `aq login` is the next step once you've found a box
-worth renting.
+cheapest per-GPU first, filterable by model/price/provider/region — with nothing
+installed or configured beyond the binary. It prints two price columns, `$/GPU-HR`
+and `$/HR TOTAL`, because the marketplace's raw rate is a whole-offer total for
+every provider except Akash (whose feed reports an already-per-GPU rate); both
+columns are normalized so they mean the same thing for every provider, and
+`--max-price` filters on `$/GPU-HR`. `aq login` is the next step once you've found
+a box worth renting.
 
 ## Capabilities
 
