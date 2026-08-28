@@ -299,7 +299,7 @@ func TestRunGPUsEnvelopeErrorSurfacesClearly(t *testing.T) {
 }
 
 // TestPerGPUHourlyRateDoesNotDivideAkashButDividesEveryoneElse is the
-// regression guard for ticket #787: Akash's marketplace price is already a
+// regression guard: Akash's marketplace price is already a
 // flat per-GPU rate (unlike every other provider, whose price is the whole
 // offer's total), so a multi-GPU Akash offer must come back unchanged while
 // a multi-GPU non-Akash offer must be divided by its gpuCount.
@@ -357,7 +357,7 @@ func TestPerGPUHourlyRateGuardsNonPositiveGPUCount(t *testing.T) {
 // sampleAkashUndersellsBody has an Akash multi-GPU offer that is nominally
 // the cheapest raw Price in the set, but is NOT the cheapest per-GPU: the
 // runpod row below costs less per GPU once both are normalized. Before
-// ticket #787's fix, sorting on raw Price let the Akash row (which is
+// this was fixed, sorting on raw Price let the Akash row (which is
 // already per-GPU, so its "total" reads deceptively low relative to
 // multi-GPU offers whose Price is a true total) rank first.
 const sampleMixedProviderBody = `{"success":true,"data":[
@@ -366,7 +366,7 @@ const sampleMixedProviderBody = `{"success":true,"data":[
 ]}`
 
 // TestRunGPUsDefaultOrderRanksCheaperPerGPUAboveNominallyCheaperAkash pins
-// the actual bug from ticket #787: with the Akash offer's raw Price (2.709)
+// the original bug: with the Akash offer's raw Price (2.709)
 // lower than runpod's raw Price (1.50), a naive total-Price sort would rank
 // Akash first — even though Akash's 2.709 is ALREADY per-GPU while runpod's
 // 1.50 is a single-GPU total, so runpod (1.50/GPU) is in fact cheaper than

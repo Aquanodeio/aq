@@ -22,7 +22,7 @@ const defaultGPUsLimit = 20
 // akashProvider is the one marketplace provider whose `price` field is
 // already a flat per-GPU hourly rate — every other provider's `price` is the
 // TOTAL for the whole offer (all gpuCount GPUs). Verified empirically
-// (ticket #787): akash H100 offers price at 2.709 regardless of gpuCount
+// against the live feed: akash H100 offers price at 2.709 regardless of gpuCount
 // 1/2/3/4, and RTX5090 at 0.609 for both x1 and x8, while e.g. simplepod
 // RTX3070 scales linearly with gpuCount (a total). This mirrors the
 // exception website/lib/pricing.ts already carries for the same feed.
