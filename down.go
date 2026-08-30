@@ -116,6 +116,19 @@ func downWithCheckpoint(
 		defer func() {
 			fmt.Fprintf(out, "\nPick up where you left off with:\n  aq deploy --snapshot %s\n", opts.target)
 		}()
+	} else {
+		// Say plainly that nothing is kept, BEFORE the box is gone. A bare
+		// `aq down` closes with close_reason USER_REQUEST, which the
+		// orchestrator excludes from RESUMABLE_CLOSE_REASONS — the data is
+		// unrecoverable, not merely awkward to reach.
+		//
+		// This is disclosure, not a changed default. --save stays false
+		// because a save WRITES BYTES and bytes are billed, and storing
+		// something on the user's behalf is the user's call to make (see
+		// aquanode-backend orchestrator/src/configs/idle.config.ts). The
+		// defect this fixes was the silence, not the default.
+		fmt.Fprintln(out, "Terminating without saving — nothing on this box is kept, and it cannot be resumed.")
+		fmt.Fprintf(out, "To save your setup before stopping the box, use: aq down --save %s\n", opts.target)
 	}
 
 	return terminate(opts)

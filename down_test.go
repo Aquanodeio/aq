@@ -152,6 +152,36 @@ func TestDownWithoutSnapshotSkipsCheckpoint(t *testing.T) {
 	}
 }
 
+// A bare `aq down` calls the plain close route, which writes close_reason
+// USER_REQUEST — excluded from RESUMABLE_CLOSE_REASONS, i.e. gone for good.
+// This once printed only "termination requested", so the destructive path and
+// the saving one read identically. The disclosure must be
+// printed BEFORE the terminate call, because afterwards the box is already
+// gone, and it must name --save.
+func TestDownWithoutSnapshotDisclosesNothingIsSavedBeforeTerminating(t *testing.T) {
+	var out bytes.Buffer
+	printedBeforeTerminate := ""
+	if err := downWithCheckpoint(
+		downOptions{snapshot: false, target: "4242", out: &out},
+		func(snapshotOptions) (api.SetupVersion, error) {
+			t.Fatal("checkpoint ran without --save")
+			return api.SetupVersion{}, nil
+		},
+		func(downOptions) error {
+			printedBeforeTerminate = out.String()
+			return nil
+		},
+	); err != nil {
+		t.Fatalf("downWithCheckpoint: %v", err)
+	}
+
+	for _, want := range []string{"without saving", "cannot be resumed", "aq down --save 4242"} {
+		if !strings.Contains(printedBeforeTerminate, want) {
+			t.Errorf("output before terminate is missing %q; got:\n%s", want, printedBeforeTerminate)
+		}
+	}
+}
+
 // TestResolveAPIURLLetsTheEnvOverrideWin is a safety test, not a preference
 // test. `aq login` persists the URL it paired against, so before this every
 // logged-in user — everyone — kept talking to production no matter what

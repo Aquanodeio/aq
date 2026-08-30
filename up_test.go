@@ -708,3 +708,64 @@ func TestUpRejectsBothTemplates(t *testing.T) {
 		t.Fatalf("expected mutually-exclusive error, got: %v", err)
 	}
 }
+
+// A bare `aq up` used to install ComfyUI. The console had already
+// moved off its app-first picker on purpose — naming ComfyUI/JupyterLab as the
+// choices made the screen read as a two-app menu instead of "any GPU box,
+// saved" — and the CLI kept contradicting it. No app flag now means no app.
+func TestUpTemplateDefaultsToABareBox(t *testing.T) {
+	cases := []struct {
+		comfyui, jupyter bool
+		want             string
+	}{
+		{false, false, ""},
+		{true, false, templateComfyUI},
+		{false, true, templateJupyter},
+	}
+	for _, c := range cases {
+		if got := upTemplate(c.comfyui, c.jupyter); got != c.want {
+			t.Errorf("upTemplate(comfyui=%v, jupyter=%v) = %q, want %q", c.comfyui, c.jupyter, got, c.want)
+		}
+	}
+}
+
+// The bare-box path must send no template to the orchestrator and must not sit
+// waiting for a template service URL that is never coming — it takes the same
+// waitForActive branch `aq deploy --no-app` does, and says plainly that no app
+// was installed rather than borrowing deploy's "your snapshot was restored".
+func TestRunUpWithNoAppSendsNoTemplateAndReportsABareBox(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
+
+	server := &upServer{
+		keys:          []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}},
+		statusReadyAt: 2,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runUp(upOptions{
+		cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+		template:     "",
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+		now:          time.Now,
+	})
+	if err != nil {
+		t.Fatalf("runUp error: %v", err)
+	}
+	if server.upBody.Template != "" {
+		t.Errorf("bare `aq up` sent template %q; it must send none", server.upBody.Template)
+	}
+	got := out.String()
+	if !strings.Contains(got, "no app installed") {
+		t.Errorf("output does not say no app was installed; got:\n%s", got)
+	}
+	if strings.Contains(got, "ComfyUI is live") || strings.Contains(got, "snapshot was restored") {
+		t.Errorf("bare `aq up` claimed an app or a restore; got:\n%s", got)
+	}
+}

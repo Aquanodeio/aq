@@ -43,10 +43,18 @@ type upOptions struct {
 }
 
 // up parses flags and wires the real environment into runUp.
+//
+// A bare `aq up` rents a plain GPU box and installs NO app. It used to default
+// to ComfyUI, which made the CLI disagree with the console: the console moved
+// off its app-first picker on purpose because naming ComfyUI/JupyterLab as the
+// choices "made this screen read as a two-app menu instead of 'any GPU box,
+// saved'" (console lib/environments/workloads.ts). `aq up --help` listing
+// exactly two app flags read the same way. Apps are now opt-in on both
+// surfaces: --comfyui / --jupyter.
 func up(args []string) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
-	comfyui := fs.Bool("comfyui", false, "Install ComfyUI on the box (default app if you don't pick one)")
-	jupyter := fs.Bool("jupyter", false, "Install Torch + Jupyter on the box instead")
+	comfyui := fs.Bool("comfyui", false, "Also install ComfyUI on the box (no app is installed by default)")
+	jupyter := fs.Bool("jupyter", false, "Also install Torch + Jupyter on the box instead")
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
@@ -90,10 +98,7 @@ func up(args []string) error {
 	if err := validateGPUCount(*gpus); err != nil {
 		return err
 	}
-	template := templateComfyUI
-	if *jupyter {
-		template = templateJupyter
-	}
+	template := upTemplate(*comfyui, *jupyter)
 
 	idlePolicy, err := buildUpIdlePolicy(*autoPause, *warnAfter, *pauseAfter)
 	if err != nil {
@@ -122,6 +127,23 @@ func up(args []string) error {
 		errOut:      os.Stderr,
 		now:         time.Now,
 	})
+}
+
+// upTemplate picks the app template for `aq up` from its two app flags.
+//
+// Neither flag → "" → a bare GPU box with no app. This is deliberate and it is
+// the whole point: an app the user did not ask for costs install time on a
+// billed box, and it makes `aq up --help` read as a two-app menu — the exact
+// framing the console dropped when it put the generic box first.
+func upTemplate(comfyui, jupyter bool) string {
+	switch {
+	case jupyter:
+		return templateJupyter
+	case comfyui:
+		return templateComfyUI
+	default:
+		return ""
+	}
 }
 
 // buildUpIdlePolicy builds the optional `idlePolicy` body for POST
@@ -194,8 +216,6 @@ func runUp(opts upOptions) error {
 	apiURL := resolveAPIURL(opts.cred)
 	client := api.NewAuthed(apiURL, opts.cred.Token, opts.cred.TeamID)
 
-	label := templateLabel(opts.template)
-
 	// 1. Ensure an SSH key is registered (own-key access to the box).
 	sshKeyID, err := ensureSSHKey(client, opts.out)
 	if err != nil {
@@ -203,7 +223,11 @@ func runUp(opts upOptions) error {
 	}
 
 	// 2. Rent the cheapest matching GPU + bring up the env.
-	fmt.Fprintf(opts.out, "Renting the cheapest matching GPU and bringing up %s...\n", label)
+	if opts.template != "" {
+		fmt.Fprintf(opts.out, "Renting the cheapest matching GPU and bringing up %s...\n", templateLabel(opts.template))
+	} else {
+		fmt.Fprintln(opts.out, "Renting the cheapest matching GPU...")
+	}
 	res, err := client.Up(api.UpRequest{
 		Template:   opts.template,
 		SSHKeyID:   sshKeyID,
@@ -220,7 +244,15 @@ func runUp(opts upOptions) error {
 	fmt.Fprintf(opts.out, "Deployment #%d created. Provisioning (this can take a few minutes)...\n", res.DeploymentID)
 
 	// 3. Poll until the template service URL is live.
-	return waitForServiceURL(client, res.DeploymentID, label, opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
+	//
+	// A bare box (no template) never publishes a template service URL, so
+	// report it ready once it is provisioned rather than waiting out the
+	// timeout on a URL that is never coming — same branch `aq deploy --no-app`
+	// already takes.
+	if opts.template == "" {
+		return waitForActive(client, res.DeploymentID, opts.out, opts.errOut, opts.pollInterval, opts.timeout, opts.now, printBareBox)
+	}
+	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
 }
 
 // waitForServiceURL polls a deployment until its template service URL is live,
@@ -385,6 +417,11 @@ func templateLabel(template string) string {
 	switch template {
 	case templateJupyter:
 		return "Torch + Jupyter"
+	case "":
+		// No template is now the DEFAULT for `aq up`, not an impossible case.
+		// Every caller must branch before labelling; returning "ComfyUI" here
+		// would silently announce an app that is not being installed.
+		return "a bare GPU box"
 	default:
 		return "ComfyUI"
 	}
@@ -468,6 +505,18 @@ func printReady(out, errOut io.Writer, label string, dep api.Deployment, showSec
 	printConnection(out, dep)
 	printRestoreWarnings(out, dep)
 	fmt.Fprintln(out, "\nManage it in the console or run `aq whoami` to confirm your login.")
+}
+
+// printBareBox reports a no-app `aq up` box as ready. There is no service URL
+// to hand back — the box IS the deliverable — so it leads with the shell and
+// names the two ways to put something on it, rather than implying the run is
+// incomplete.
+func printBareBox(out io.Writer, dep api.Deployment) {
+	fmt.Fprintf(out, "\n✓ Deployment #%d is up — a bare GPU box, no app installed.\n", dep.ID)
+	printConnection(out, dep)
+	printRestoreWarnings(out, dep)
+	fmt.Fprintln(out, "\nWant an app on it? Re-run with --comfyui or --jupyter.")
+	fmt.Fprintln(out, "Manage it in the console or run `aq whoami` to confirm your login.")
 }
 
 // printRestoreWarnings prints the server-side CUDA/vendor-skew verdict for a
