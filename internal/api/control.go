@@ -40,7 +40,14 @@ func (c *Client) CreateSSHKey(name, publicKey string) (*SSHKey, error) {
 
 // UpRequest is the body of POST /deployments/up.
 type UpRequest struct {
-	Template string  `json:"template"`
+	// Template must be OMITTED, not sent empty, to ask for a bare box. The
+	// orchestrator validates it as an optional enum: absent means a bare box,
+	// while `""` is a present-but-invalid enum value and 400s with the
+	// unhelpful "Invalid request data". `omitempty` is only safe here because
+	// that schema no longer carries a `.default(COMFYUI)` — while it did,
+	// omitting the key silently installed ComfyUI on a box the CLI had just
+	// told the user was bare.
+	Template string  `json:"template,omitempty"`
 	SSHKeyID string  `json:"sshKeyId"`
 	GPUModel string  `json:"gpuModel,omitempty"`
 	MaxPrice float64 `json:"maxPrice,omitempty"`
