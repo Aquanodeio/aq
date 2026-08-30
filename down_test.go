@@ -154,8 +154,8 @@ func TestDownWithoutSnapshotSkipsCheckpoint(t *testing.T) {
 
 // A bare `aq down` calls the plain close route, which writes close_reason
 // USER_REQUEST — excluded from RESUMABLE_CLOSE_REASONS, i.e. gone for good.
-// Before ticket #738 the only thing printed was "termination requested", so the
-// destructive path and the saving one read identically. The disclosure must be
+// This once printed only "termination requested", so the destructive path and
+// the saving one read identically. The disclosure must be
 // printed BEFORE the terminate call, because afterwards the box is already
 // gone, and it must name --save.
 func TestDownWithoutSnapshotDisclosesNothingIsSavedBeforeTerminating(t *testing.T) {

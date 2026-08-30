@@ -10,7 +10,7 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// Ticket #738: `aq pause` used to print `resume it any time with "aq up"`.
+// `aq pause` used to print `resume it any time with "aq up"`.
 // `up()` accepts no setup argument at all — its only positional is
 // `host:<alias>` — so it always rents a FRESH box, and everyone who followed
 // that message landed on a new empty machine instead of their setup. The one

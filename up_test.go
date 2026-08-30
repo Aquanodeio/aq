@@ -709,7 +709,7 @@ func TestUpRejectsBothTemplates(t *testing.T) {
 	}
 }
 
-// Ticket #738: a bare `aq up` used to install ComfyUI. The console had already
+// A bare `aq up` used to install ComfyUI. The console had already
 // moved off its app-first picker on purpose — naming ComfyUI/JupyterLab as the
 // choices made the screen read as a two-app menu instead of "any GPU box,
 // saved" — and the CLI kept contradicting it. No app flag now means no app.
