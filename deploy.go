@@ -172,20 +172,25 @@ func runDeploy(opts deployOptions) error {
 	// URL, so report the box as ready as soon as it is provisioned rather than
 	// waiting out the timeout.
 	if opts.template == "" {
-		return waitForActive(client, res.DeploymentID, opts.out, opts.errOut, opts.pollInterval, opts.timeout, opts.now)
+		return waitForActive(client, res.DeploymentID, opts.out, opts.errOut, opts.pollInterval, opts.timeout, opts.now, printRestored)
 	}
 	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
 }
 
-// waitForActive polls a deployment until it reaches a running state (a
-// restore-only deploy with no template service to expose), the deployment ends,
-// or the timeout elapses.
+// waitForActive polls a deployment until it reaches a running state (a box with
+// no template service to expose), the deployment ends, or the timeout elapses.
+//
+// `announce` prints the success block, because the two callers reach this state
+// having done different things: `aq deploy --no-app` restored a snapshot onto
+// the box, `aq up` with no app flag rented an empty one. Claiming a restore on
+// a box that never had one is exactly the kind of copy this ticket is fixing.
 func waitForActive(
 	client *api.Client,
 	deploymentID int,
 	out, errOut io.Writer,
 	pollInterval, timeout time.Duration,
 	now func() time.Time,
+	announce func(io.Writer, api.Deployment),
 ) error {
 	deadline := now().Add(timeout)
 	first := true
@@ -223,7 +228,7 @@ func waitForActive(
 			}
 			dep := withID(status.Deployment, deploymentID)
 			syncManagedConfigQuiet(client, errOut, []api.Deployment{dep}, 0)
-			printRestored(out, dep)
+			announce(out, dep)
 			return nil
 		}
 	}

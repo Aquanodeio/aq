@@ -23,8 +23,13 @@ type pauseOptions struct {
 // the existing project pause route already snapshots before it lands the
 // deployment PAUSED, so this is a thin CLI wrapper over that guarantee, not a
 // second save path. Unlike `aq down`, pausing keeps the project's one
-// resumable slot: a future `aq up`/`aq deploy` against the same setup picks
-// it back up automatically.
+// resumable slot.
+//
+// Resuming is `aq deploy --snapshot <deploymentId>` — the id of the deployment
+// that was paused, which is what POST /deployments/deploy-snapshot takes as its
+// `snapshotSource`. It is NOT `aq up`: `up` rents a fresh box from a starting
+// point and accepts no setup argument at all (its only positional is
+// `host:<alias>`), so pointing a paused user at it hands them a new empty box.
 //
 // This command used to be named "park". Pause / auto-pause is the one noun
 // the whole product (console, docs, website, aq) now uses for
@@ -88,6 +93,12 @@ func runPause(opts pauseOptions) error {
 		return fmt.Errorf("could not pause %q: %w", setup.Name, err)
 	}
 
-	fmt.Fprintf(out, "✓ Saving %s and releasing the machine — resume it any time with \"aq up\".\n", setup.Name)
+	// Name the deployment id, not the setup: `aq deploy --snapshot` resolves a
+	// numeric deployment id (or an `ext-<backupId>`), and there is no command
+	// that takes a setup name to resume. Printing a command the user can paste
+	// is the whole point — the previous message named `aq up`, which rents a
+	// fresh empty box and cannot target this setup.
+	fmt.Fprintf(out, "✓ Saving %s and releasing the machine.\n", setup.Name)
+	fmt.Fprintf(out, "\nPick up where you left off with:\n  aq deploy --snapshot %d\n", deploymentID)
 	return nil
 }

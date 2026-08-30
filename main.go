@@ -204,9 +204,9 @@ up flags:
   --warn-after <duration>  With --auto-pause: warn after this much idle time
   --pause-after <duration> With --auto-pause: auto-pause after this much idle time
 
-  App (optional — ComfyUI installs by default if you pick neither):
-  --comfyui          Install ComfyUI
-  --jupyter          Install Torch + Jupyter instead
+  App (optional — you get a bare GPU box if you pick neither):
+  --comfyui          Also install ComfyUI
+  --jupyter          Also install Torch + Jupyter instead
 
 deploy flags:
   --snapshot <id>    Save to deploy (id from aq / the console, e.g. ext-42)
@@ -447,7 +447,8 @@ force-detach / sync-now / setups / down:
                              (--label <text>, --description <text>,
                              --visibility private|team|public)
   aq pause <name|id>         Save the setup, then release its machine.
-                             Pick it back up any time with "aq up".
+                             Pick it back up with "aq deploy --snapshot <id>"
+                             (the paused deployment's id, which pause prints).
   aq autopause <name|id> on|off
                              Turn this SETUP's auto-pause-when-idle
                              preference on or off, using the platform's
