@@ -761,6 +761,13 @@ func TestRunUpWithNoAppSendsNoTemplateAndReportsABareBox(t *testing.T) {
 	if server.upBody.Template != "" {
 		t.Errorf("bare `aq up` sent template %q; it must send none", server.upBody.Template)
 	}
+	// Absent, not empty. The orchestrator validates `template` as an OPTIONAL
+	// enum: no key is a bare box, but `"": ` is a present-but-invalid enum
+	// value and 400s with "Invalid request data" — which is exactly how the
+	// first live run of this failed.
+	if _, present := server.rawUpBody["template"]; present {
+		t.Errorf("bare `aq up` sent a \"template\" key; it must be omitted entirely, got body %#v", server.rawUpBody)
+	}
 	got := out.String()
 	if !strings.Contains(got, "no app installed") {
 		t.Errorf("output does not say no app was installed; got:\n%s", got)
