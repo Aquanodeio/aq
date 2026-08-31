@@ -122,16 +122,33 @@ func runSnapshot(opts snapshotOptions) (api.SetupVersion, error) {
 	return *res, nil
 }
 
-// isInteractiveStdin reports whether stdin is an interactive terminal.
-// Overridable by tests. In a non-interactive context (piped/redirected
+// isInteractiveStdin reports whether a person is actually at the other end of
+// stdin. Overridable by tests. In a non-interactive context (piped/redirected
 // stdin, or a CI job) the first-save name prompt must never block, so the
 // default is used silently instead.
+//
+// The character-device test alone is not enough, and the gap is not academic:
+// /dev/null IS a character device, so `aq <cmd> </dev/null` — the shape every
+// script, CI step and automated tool runs in — reported an interactive
+// terminal. Anything trusting that answer to decide whether a human could
+// object was asking a proxy, and getting the confident wrong answer rather
+// than the safe one. os.SameFile against os.DevNull closes it: the two stats
+// agree on device+inode, so the redirect is recognised for what it is.
+//
+// A pipe or a regular-file redirect was always reported correctly (neither is
+// a character device); /dev/null was the one hole.
 var isInteractiveStdin = func() bool {
 	fi, err := os.Stdin.Stat()
 	if err != nil {
 		return false
 	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	if fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(fi, devNull) {
+		return false
+	}
+	return true
 }
 
 // lineageNameForFirstSave returns the name to send with a save, or "" once
