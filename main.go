@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Aquanodeio/aq/internal/api"
+	"github.com/Aquanodeio/aq/internal/config"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...", which is
@@ -57,6 +58,32 @@ func main() {
 	}
 
 	cmd, args := os.Args[1], os.Args[2:]
+
+	// Resolve the host this run will talk to ONCE, here, and apply the two
+	// target rails before anything dispatches — see prodguard.go for why they
+	// live at the dispatch rather than inside each command. Doing it here also
+	// keeps the rails out of the run<Verb> functions the tests drive directly,
+	// so no existing test's captured output changes.
+	//
+	// A credential that fails to load is not an error at this point: the
+	// commands that need one report that themselves, with a message about
+	// logging in. Here it only narrows resolveAPIURL to the env var and the
+	// built-in default, which is the same host the failing command would have
+	// used anyway.
+	cred, _ := config.Load()
+	apiURL := resolveAPIURL(cred)
+
+	if _, billable := billableCommands[cmd]; billable {
+		var prodFlag bool
+		args, prodFlag = stripProdFlag(args)
+		allowProd := prodFlag || os.Getenv("AQ_ALLOW_PROD") == "1"
+		overseen := hasHumanOversight(os.Getenv, isInteractiveStdin())
+		if err := guardBillable(cmd, apiURL, args, allowProd, overseen); err != nil {
+			run(err)
+		}
+	}
+	announceTarget(cmd, apiURL, os.Stderr)
+
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("aq %s\n", version)
@@ -484,5 +511,9 @@ Environment:
   AQ_SSH_KEY      Private key to use for box access (default: your ~/.ssh key,
                   else aq's managed ~/.ssh/aquanode_ed25519)
   AQ_NO_BROWSER   Set to skip auto-opening the approval URL
+  AQ_ALLOW_PROD   Set to 1 to allow "aq up"/"aq deploy"/"aq import" to rent
+                  hardware on a non-local host from a script or other
+                  non-interactive shell. Same effect as passing --prod.
+                  Typing at a terminal needs neither.
 `)
 }
