@@ -65,7 +65,7 @@ type Host struct {
 	// already holds a PROVISIONING row for this box, and this field is the only
 	// local record of it. It exists so `aq release` has something to act on
 	// even when Attached() is false; a refused attach's own "release it with
-	// `aq release <alias>`" was otherwise unfollowable (#777 defect 2). Cleared
+	// `aq release <alias>`" was otherwise unfollowable. Cleared
 	// to 0 the moment attach actually succeeds, and cleared by `aq release`
 	// once the row is gone.
 	PendingDeploymentID int `json:"pendingDeploymentId,omitempty"`

@@ -65,7 +65,7 @@ func TestParseAttachPreflightReadsTheKeysAndThePortState(t *testing.T) {
 	}
 }
 
-// #777 defect 1, the collapse itself. If a box's raw preflight output ever
+// The collapse bug itself. If a box's raw preflight output ever
 // arrives with "ak_end" glued onto the previous line (the shape produced by an
 // authorized_keys file with no trailing newline, before the script-level fix
 // below), the parser loses the "port=" line entirely — it was never observed.
@@ -95,9 +95,9 @@ func TestParseAttachPreflightUnobservedPortStateNeverCollapsesToNoTool(t *testin
 	}
 }
 
-// #777 defect 1, end to end. Runs the actual script `attachPreflightScript`
-// produces through a real shell against a real file on disk lacking a trailing
-// newline — the exact shape seen on the live boxes the ticket names — with a
+// End to end. Runs the actual script `attachPreflightScript` produces through
+// a real shell against a real file on disk lacking a trailing newline — the
+// exact shape seen on the live boxes this fix was written against — with a
 // stub `ss` on PATH standing in for the box's real one (so the test result
 // does not depend on what happens to be listening on the machine running it).
 // Before the attachPreflightScript / parseAttachPreflight fix this fails with
@@ -324,11 +324,11 @@ func TestAttachFailsLoudlyWhenTheProbeFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "detached mode") {
 		t.Errorf("the failure should point at detached mode as the complete alternative; got:\n%v", err)
 	}
-	// #777 defect 3: a port-mapped box (simplepod, vast.ai and similar) can
-	// never satisfy attach's listen-port==dial-port requirement, and a probe
-	// failure there looked identical to any other unreachable box — nothing
-	// told the user why. The refusal must name the port-mapped case explicitly
-	// rather than leaving them to guess from a bare timeout.
+	// A port-mapped box (simplepod, vast.ai and similar) can never satisfy
+	// attach's listen-port==dial-port requirement, and a probe failure there
+	// looked identical to any other unreachable box — nothing told the user
+	// why. The refusal must name the port-mapped case explicitly rather than
+	// leaving them to guess from a bare timeout.
 	if !strings.Contains(err.Error(), "container-pool") || !strings.Contains(err.Error(), "SAME port") {
 		t.Errorf("the failure must explain the port-mapped/container-pool limitation; got:\n%v", err)
 	}
@@ -336,11 +336,11 @@ func TestAttachFailsLoudlyWhenTheProbeFails(t *testing.T) {
 	if hosts[0].Attached() {
 		t.Fatal("a box whose probe failed must never be recorded as attached")
 	}
-	// #777 defect 2: the refusal above tells the user to run `aq release
-	// lease-a`. That command only works if something local marks the row as
-	// releasable — without it, `aq release` answers "not attached, nothing to
-	// release" and the orchestrator's PROVISIONING row is stranded with no CLI
-	// path to clear it.
+	// The refusal above tells the user to run `aq release lease-a`. That
+	// command only works if something local marks the row as releasable —
+	// without it, `aq release` answers "not attached, nothing to release" and
+	// the orchestrator's PROVISIONING row is stranded with no CLI path to
+	// clear it.
 	if !hosts[0].Releasable() {
 		t.Fatal("a refused attach must leave the host releasable — the refusal's own `aq release` command must work")
 	}

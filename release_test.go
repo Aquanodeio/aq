@@ -118,15 +118,15 @@ func TestReleaseWithoutKeepHostForgetsTheBox(t *testing.T) {
 
 // pendingOnlyHost is what `aq attach` leaves behind after AdoptExternal
 // succeeds but everything after it fails (redeem, box configuration, or the
-// reachability probe) — the shape #777 defect 2 was found in. Attached() is
-// false: nothing on the box was ever confirmed reachable.
+// reachability probe). Attached() is false: nothing on the box was ever
+// confirmed reachable.
 func pendingOnlyHost() config.Host {
 	h := testHost()
 	h.PendingDeploymentID = 4242
 	return h
 }
 
-// #777 defect 2. A refused attach prints "release it with `aq release
+// A refused attach prints "release it with `aq release
 // <alias>`". This is that exact command, run against exactly the state a
 // refused attach leaves behind — a host with PendingDeploymentID set and
 // Attached() false — and it must succeed and hit the same release route a

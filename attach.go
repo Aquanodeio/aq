@@ -112,7 +112,7 @@ func (o attachOptions) withDefaults() attachOptions {
 // signal was lost in transit (e.g. glued to the line before it; see
 // attachPreflightScript). Collapsing the second into the first told the user
 // "no ss or netstat on the box" on boxes that had ss and reported busy —
-// exactly the one case attach exists to warn about (#777).
+// exactly the one case attach exists to warn about.
 type portState int
 
 const (
@@ -148,10 +148,10 @@ func attachPreflightScript(mountPath string, ogrePort int) string {
 		// (e.g. "...user@hostak_end"), the parser's ak_end marker would never
 		// match, inKeys would never turn back off, and every line after it —
 		// including "port=busy" — would be silently swallowed into the key
-		// content instead of parsed. This is the actual cause of #777's port
-		// probe collapsing to "no ss or netstat" on boxes that had ss. The
-		// leading newline forces "ak_end" onto its own line regardless of
-		// whether the file the box holds ends in one.
+		// content instead of parsed — this was seen live, on boxes that had
+		// ss, as the port probe collapsing to "no ss or netstat". The leading
+		// newline forces "ak_end" onto its own line regardless of whether the
+		// file the box holds ends in one.
 		`printf '\nak_end\n'`,
 		`if command -v ss >/dev/null 2>&1; then`,
 		`  if ss -lnt 2>/dev/null | grep -q ":` + port + ` "; then echo "port=busy"; else echo "port=free"; fi`,
@@ -313,7 +313,7 @@ func runAttach(opts attachOptions) error {
 	// AttachedAt, set only on success), so a failed activation, redeem or box
 	// configuration left a PROVISIONING row the local CLI had never heard of:
 	// the exact command the refusal printed answered "not attached — nothing to
-	// release" (#777 defect 2). PendingDeploymentID is what `aq release` needs
+	// release". PendingDeploymentID is what `aq release` needs
 	// to find that row even though attach never finished; it does not make
 	// h.Attached() true, and it is cleared the moment attach actually succeeds.
 	pending := h
