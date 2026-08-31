@@ -116,6 +116,58 @@ func TestReleaseWithoutKeepHostForgetsTheBox(t *testing.T) {
 	}
 }
 
+// pendingOnlyHost is what `aq attach` leaves behind after AdoptExternal
+// succeeds but everything after it fails (redeem, box configuration, or the
+// reachability probe). Attached() is false: nothing on the box was ever
+// confirmed reachable.
+func pendingOnlyHost() config.Host {
+	h := testHost()
+	h.PendingDeploymentID = 4242
+	return h
+}
+
+// A refused attach prints "release it with `aq release
+// <alias>`". This is that exact command, run against exactly the state a
+// refused attach leaves behind — a host with PendingDeploymentID set and
+// Attached() false — and it must succeed and hit the same release route a
+// normal attached release does. Before the fix this returned "lease-a is not
+// attached — there is nothing to release", the CLI's own refusal being
+// unfollowable.
+func TestReleaseClearsARefusedAttachsPendingRow(t *testing.T) {
+	detachedSandbox(t, pendingOnlyHost())
+
+	var called []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments/4242/release", func(w http.ResponseWriter, r *http.Request) {
+		called = append(called, r.URL.Path)
+		writeData(w, map[string]any{"released": true})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("release must call no other route; got %s %s", r.Method, r.URL.Path)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	err := runRelease(releaseOptions{
+		alias: "lease-a", yes: true, out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
+		client: api.NewAuthed(srv.URL, "aq_sk_test", "team-1"),
+	})
+	if err != nil {
+		t.Fatalf("runRelease on a pending-only host: %v", err)
+	}
+	if len(called) != 1 {
+		t.Fatalf("expected exactly one release call, got %v", called)
+	}
+
+	hosts, err := config.LoadHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("expected the box forgotten by default, got %+v", hosts)
+	}
+}
+
 func TestReleaseRefusesADetachedBox(t *testing.T) {
 	detachedSandbox(t, testHost())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
