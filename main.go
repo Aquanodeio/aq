@@ -326,6 +326,16 @@ host / attach / release — boxes we never provisioned:
   cannot reach is NOT attached — the failure is reported with the probe's own
   reason and the box stays fully usable in detached mode.
 
+  Attach requires ogre's listen port and the port we dial to be THE SAME port —
+  there is no separate dial port. On a port-mapped box (most container-pool
+  marketplace listings: simplepod, vast.ai and similar, where sshd and the
+  workload get remapped external ports and 8443 inbound does not reach the same
+  8443 the box listens on) that equality can never hold, so attach cannot work
+  there no matter which port you pass. This is a direct-connectivity-only
+  design choice, not a bug: it is scoped to boxes with a real public IP and an
+  inbound path to it (bare metal, most VM-pool providers). Detached mode has no
+  such requirement — it needs no inbound connectivity at all.
+
   Everything aq writes on your box goes inside "# BEGIN aquanode" markers, and
   aq refuses to write to any file it could not first read. Your existing
   authorized_keys is never replaced.

@@ -57,10 +57,37 @@ type Host struct {
 	// reachability probe. A box is never recorded as attached on the strength
 	// of a request that was merely accepted.
 	AttachedAt string `json:"attachedAt,omitempty"`
+
+	// PendingDeploymentID is set the moment `aq attach` registers the box with
+	// the orchestrator (AdoptExternal), before the reachability probe that
+	// gates DeploymentID/AttachedAt below. If attach fails anywhere after that
+	// point — redeem, box configuration, or the probe itself — the orchestrator
+	// already holds a PROVISIONING row for this box, and this field is the only
+	// local record of it. It exists so `aq release` has something to act on
+	// even when Attached() is false; a refused attach's own "release it with
+	// `aq release <alias>`" was otherwise unfollowable (#777 defect 2). Cleared
+	// to 0 the moment attach actually succeeds, and cleared by `aq release`
+	// once the row is gone.
+	PendingDeploymentID int `json:"pendingDeploymentId,omitempty"`
 }
 
 // Attached reports whether this host has a live control-plane row.
 func (h Host) Attached() bool { return h.DeploymentID != 0 && h.AttachedAt != "" }
+
+// Releasable reports whether `aq release` has anything to act on: either a
+// fully attached row, or a row `aq attach` registered server-side but never
+// finished activating.
+func (h Host) Releasable() bool { return h.Attached() || h.PendingDeploymentID != 0 }
+
+// ReleaseTargetID is the deployment id `aq release` should call
+// ReleaseExternal on. Attached() wins when both are somehow set — it is the
+// row that is actually live — but ordinarily only one of the two is nonzero.
+func (h Host) ReleaseTargetID() int {
+	if h.Attached() {
+		return h.DeploymentID
+	}
+	return h.PendingDeploymentID
+}
 
 // hostsFile is the on-disk envelope. An object rather than a bare array so the
 // format can grow a field without every older aq failing to parse it.

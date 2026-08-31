@@ -73,15 +73,26 @@ func runRelease(opts releaseOptions) error {
 	if err != nil {
 		return err
 	}
-	if !h.Attached() {
+	if !h.Releasable() {
 		return fmt.Errorf("%s is not attached — there is nothing to release. Remove it from your registry with `aq host rm %s`", h.Alias, h.Alias)
 	}
+	deploymentID := h.ReleaseTargetID()
 
-	fmt.Fprintf(opts.out, "Release %s (deployment #%d):\n", h.Alias, h.DeploymentID)
-	fmt.Fprintln(opts.out, "  • Aquanode revokes this box's credentials and drops its deployment row")
+	if h.Attached() {
+		fmt.Fprintf(opts.out, "Release %s (deployment #%d):\n", h.Alias, deploymentID)
+	} else {
+		// A row `aq attach` registered but never finished activating — no
+		// credentials were ever written to reach this box, so there is nothing
+		// live to revoke, only a PROVISIONING row to drop server-side.
+		fmt.Fprintf(opts.out, "Release %s (deployment #%d, never finished attaching):\n", h.Alias, deploymentID)
+	}
+	fmt.Fprintln(opts.out, "  • Aquanode drops this box's deployment row")
 	fmt.Fprintln(opts.out, "  • the box keeps running, exactly as it is")
 	fmt.Fprintln(opts.out, "  • no provider is contacted and nothing is torn down — this is not a terminate")
-	fmt.Fprintln(opts.out, "  • the console, version history, sharing and endpoints stop working for it")
+	if h.Attached() {
+		fmt.Fprintln(opts.out, "  • Aquanode revokes this box's credentials")
+		fmt.Fprintln(opts.out, "  • the console, version history, sharing and endpoints stop working for it")
+	}
 	if opts.keep {
 		fmt.Fprintf(opts.out, "  • %s stays in your local registry and keeps working in detached mode\n", h.Alias)
 	} else {
@@ -99,16 +110,17 @@ func runRelease(opts releaseOptions) error {
 		}
 	}
 
-	if _, err := opts.client.ReleaseExternal(h.DeploymentID); err != nil {
-		return fmt.Errorf("could not release deployment #%d: %w", h.DeploymentID, err)
+	if _, err := opts.client.ReleaseExternal(deploymentID); err != nil {
+		return fmt.Errorf("could not release deployment #%d: %w", deploymentID, err)
 	}
 
-	// Clear the attach stamp before anything else. A host left carrying a
-	// deployment id whose row is gone is worse than one carrying none: every
-	// later verb would address a deployment that no longer exists.
+	// Clear every attach/pending stamp before anything else. A host left
+	// carrying a deployment id whose row is gone is worse than one carrying
+	// none: every later verb would address a deployment that no longer exists.
 	h.DeploymentID = 0
 	h.AttachedAt = ""
 	h.PublicHost = ""
+	h.PendingDeploymentID = 0
 	if opts.keep {
 		if err := config.PutHost(h); err != nil {
 			return err

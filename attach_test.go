@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -48,17 +51,96 @@ func TestParseAttachPreflightReadsTheKeysAndThePortState(t *testing.T) {
 	if !strings.Contains(pre.authorizedKeys, "alice@laptop") || !strings.Contains(pre.authorizedKeys, "deploy@ci") {
 		t.Fatalf("keys were not read back: %q", pre.authorizedKeys)
 	}
-	if !pre.portChecked || !pre.portBusy {
-		t.Fatalf("port state decoded wrong: checked=%v busy=%v", pre.portChecked, pre.portBusy)
+	if pre.port != portBusy {
+		t.Fatalf("port state decoded wrong: got %v, want portBusy", pre.port)
 	}
 
 	// An absent file is a fact, not a failure — a fresh box has no keys yet.
-	pre, err = parseAttachPreflight([]byte(attachPreflightOutput("absent", "", "unknown")))
+	pre, err = parseAttachPreflight([]byte(attachPreflightOutput("absent", "", "notool")))
 	if err != nil {
 		t.Fatalf("parseAttachPreflight(absent): %v", err)
 	}
-	if pre.portChecked {
-		t.Error(`port=unknown must stay unknown, never collapse to "free"`)
+	if pre.port != portNoTool {
+		t.Fatalf("port=notool must decode as portNoTool, got %v", pre.port)
+	}
+}
+
+// #777 defect 1, the collapse itself. If a box's raw preflight output ever
+// arrives with "ak_end" glued onto the previous line (the shape produced by an
+// authorized_keys file with no trailing newline, before the script-level fix
+// below), the parser loses the "port=" line entirely — it was never observed.
+// The bug this test pins is what parseAttachPreflight does with that: it must
+// report the LOUD, distinct portUnobserved state, never the misleading
+// portNoTool ("no ss or netstat on the box") that a two-state boolean scheme
+// collapsed it into. A user who had ss and got told "no tool" acted on a false
+// statement about their own box; portUnobserved says only what is true — aq
+// could not tell.
+func TestParseAttachPreflightUnobservedPortStateNeverCollapsesToNoTool(t *testing.T) {
+	raw := fullSurvey +
+		"ak=readable\n" +
+		"ak_begin\n" +
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAA alice@laptopak_end\n" + // no newline before ak_end
+		"port=busy\n" +
+		"preflight_ok=1\n"
+
+	pre, err := parseAttachPreflight([]byte(raw))
+	if err != nil {
+		t.Fatalf("parseAttachPreflight: %v", err)
+	}
+	if pre.port == portNoTool {
+		t.Fatalf("an unobserved port line must never collapse into portNoTool (\"no ss or netstat\") — that is a false claim about the box")
+	}
+	if pre.port != portUnobserved {
+		t.Fatalf("got %v, want portUnobserved", pre.port)
+	}
+}
+
+// #777 defect 1, end to end. Runs the actual script `attachPreflightScript`
+// produces through a real shell against a real file on disk lacking a trailing
+// newline — the exact shape seen on the live boxes the ticket names — with a
+// stub `ss` on PATH standing in for the box's real one (so the test result
+// does not depend on what happens to be listening on the machine running it).
+// Before the attachPreflightScript / parseAttachPreflight fix this fails with
+// portUnobserved/portNoTool instead of portBusy.
+func TestAttachPreflightScriptSurvivesAnAuthorizedKeysWithoutTrailingNewline(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh on PATH")
+	}
+
+	home := t.TempDir()
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// No trailing newline — matches what cloud-init/terraform commonly write.
+	akContent := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAA alice@laptop"
+	if err := os.WriteFile(filepath.Join(sshDir, "authorized_keys"), []byte(akContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fake `ss` that deterministically reports the port busy, so the test
+	// asserts something regardless of what is actually listening on the runner.
+	bin := t.TempDir()
+	ssStub := "#!/bin/sh\necho 'LISTEN 0 128 *:8443 *:*'\n"
+	ssPath := filepath.Join(bin, "ss")
+	if err := os.WriteFile(ssPath, []byte(ssStub), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	script := attachPreflightScript(filepath.Join(home, "workspace"), 8443)
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+bin+":"+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running attachPreflightScript: %v\n%s", err, out)
+	}
+
+	pre, err := parseAttachPreflight(out)
+	if err != nil {
+		t.Fatalf("parseAttachPreflight: %v\nraw output:\n%s", err, out)
+	}
+	if pre.port != portBusy {
+		t.Fatalf("authorized_keys without a trailing newline swallowed the port state: got %v, want portBusy\nraw output:\n%s", pre.port, out)
 	}
 }
 
@@ -242,8 +324,28 @@ func TestAttachFailsLoudlyWhenTheProbeFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "detached mode") {
 		t.Errorf("the failure should point at detached mode as the complete alternative; got:\n%v", err)
 	}
-	if hosts, _ := config.LoadHosts(); hosts[0].Attached() {
+	// #777 defect 3: a port-mapped box (simplepod, vast.ai and similar) can
+	// never satisfy attach's listen-port==dial-port requirement, and a probe
+	// failure there looked identical to any other unreachable box — nothing
+	// told the user why. The refusal must name the port-mapped case explicitly
+	// rather than leaving them to guess from a bare timeout.
+	if !strings.Contains(err.Error(), "container-pool") || !strings.Contains(err.Error(), "SAME port") {
+		t.Errorf("the failure must explain the port-mapped/container-pool limitation; got:\n%v", err)
+	}
+	hosts, _ := config.LoadHosts()
+	if hosts[0].Attached() {
 		t.Fatal("a box whose probe failed must never be recorded as attached")
+	}
+	// #777 defect 2: the refusal above tells the user to run `aq release
+	// lease-a`. That command only works if something local marks the row as
+	// releasable — without it, `aq release` answers "not attached, nothing to
+	// release" and the orchestrator's PROVISIONING row is stranded with no CLI
+	// path to clear it.
+	if !hosts[0].Releasable() {
+		t.Fatal("a refused attach must leave the host releasable — the refusal's own `aq release` command must work")
+	}
+	if hosts[0].ReleaseTargetID() != 4242 {
+		t.Fatalf("release target = %d, want 4242 (the deployment AdoptExternal created)", hosts[0].ReleaseTargetID())
 	}
 }
 

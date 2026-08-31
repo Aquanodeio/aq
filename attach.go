@@ -104,6 +104,24 @@ func (o attachOptions) withDefaults() attachOptions {
 	return o
 }
 
+// portState is FREE / BUSY / UNKNOWN, kept as three genuinely distinct values
+// rather than a pair of booleans. "Unknown" itself has two different causes and
+// they must never render the same warning: portNoTool means the box has
+// neither ss nor netstat (a fact about the box), portUnobserved means the
+// preflight's "port=" line was never seen at all — the script ran but its
+// signal was lost in transit (e.g. glued to the line before it; see
+// attachPreflightScript). Collapsing the second into the first told the user
+// "no ss or netstat on the box" on boxes that had ss and reported busy —
+// exactly the one case attach exists to warn about (#777).
+type portState int
+
+const (
+	portUnobserved portState = iota // zero value: no "port=" line was ever parsed
+	portNoTool                      // box has neither ss nor netstat
+	portFree
+	portBusy
+)
+
 // attachPreflight is what the box told us before anything was created anywhere.
 type attachPreflight struct {
 	survey hostSurvey
@@ -111,11 +129,8 @@ type attachPreflight struct {
 	// It is read — not to be written back, but because a preflight that cannot
 	// READ what a later step will modify must refuse. "Could not look" blocks.
 	authorizedKeys string
-	// portBusy reports whether something already listens on the ogre port.
-	portBusy bool
-	// portChecked distinguishes "nothing is listening" from "we had no tool on
-	// the box to check with".
-	portChecked bool
+	// port is FREE / BUSY / one of two UNKNOWN causes — see portState.
+	port portState
 }
 
 // attachPreflightScript reads. It writes nothing, starts nothing, and installs
@@ -127,12 +142,22 @@ func attachPreflightScript(mountPath string, ogrePort int) string {
 		`if [ ! -e "$ak" ]; then echo "ak=absent"; elif [ -r "$ak" ]; then echo "ak=readable"; else echo "ak=unreadable"; fi`,
 		`echo "ak_begin"`,
 		`[ -r "$ak" ] && cat "$ak"`,
-		`echo "ak_end"`,
+		// `cat` does not guarantee a trailing newline — an authorized_keys file
+		// written by cloud-init/terraform commonly ends without one. Without this
+		// printf, "ak_end" would land glued onto the last key line as one line
+		// (e.g. "...user@hostak_end"), the parser's ak_end marker would never
+		// match, inKeys would never turn back off, and every line after it —
+		// including "port=busy" — would be silently swallowed into the key
+		// content instead of parsed. This is the actual cause of #777's port
+		// probe collapsing to "no ss or netstat" on boxes that had ss. The
+		// leading newline forces "ak_end" onto its own line regardless of
+		// whether the file the box holds ends in one.
+		`printf '\nak_end\n'`,
 		`if command -v ss >/dev/null 2>&1; then`,
 		`  if ss -lnt 2>/dev/null | grep -q ":` + port + ` "; then echo "port=busy"; else echo "port=free"; fi`,
 		`elif command -v netstat >/dev/null 2>&1; then`,
 		`  if netstat -lnt 2>/dev/null | grep -q ":` + port + ` "; then echo "port=busy"; else echo "port=free"; fi`,
-		`else echo "port=unknown"; fi`,
+		`else echo "port=notool"; fi`,
 		`echo "preflight_ok=1"`,
 	}, "\n") + "\n"
 }
@@ -181,8 +206,17 @@ func parseAttachPreflight(raw []byte) (attachPreflight, error) {
 		case "ak":
 			akState = value
 		case "port":
-			p.portChecked = value != "unknown"
-			p.portBusy = value == "busy"
+			switch value {
+			case "free":
+				p.port = portFree
+			case "busy":
+				p.port = portBusy
+			case "notool":
+				p.port = portNoTool
+				// Anything else (including a value we do not recognize) leaves
+				// p.port at its zero value, portUnobserved — loud UNKNOWN, never
+				// laundered into "no tool".
+			}
 		}
 	}
 
@@ -273,6 +307,22 @@ func runAttach(opts attachOptions) error {
 	}
 	fmt.Fprintf(opts.out, "\nRegistered as deployment #%d.\n", adopted.DeploymentID)
 
+	// Recorded now, before anything that can fail — not only after the probe
+	// succeeds. A refused attach used to say "release it with `aq release
+	// <alias>`" while `aq release` itself required h.Attached() (DeploymentID +
+	// AttachedAt, set only on success), so a failed activation, redeem or box
+	// configuration left a PROVISIONING row the local CLI had never heard of:
+	// the exact command the refusal printed answered "not attached — nothing to
+	// release" (#777 defect 2). PendingDeploymentID is what `aq release` needs
+	// to find that row even though attach never finished; it does not make
+	// h.Attached() true, and it is cleared the moment attach actually succeeds.
+	pending := h
+	pending.PendingDeploymentID = adopted.DeploymentID
+	if err := config.PutHost(pending); err != nil {
+		return fmt.Errorf("registered as deployment #%d but could not record it locally: %w\n"+
+			"the box is NOT attached; clear the row with `POST /deployments/%d/release` or contact support", adopted.DeploymentID, err, adopted.DeploymentID)
+	}
+
 	port := adopted.OgrePort
 	if port == 0 {
 		port = ogrePort
@@ -302,8 +352,13 @@ func runAttach(opts attachOptions) error {
 				"  reason: %s\n"+
 				"  Deployment #%d stays PROVISIONING and the probe failure is recorded; release it with `aq release %s`.\n"+
 				"  Open inbound TCP %d from the internet and re-run, or stay in detached mode — it needs no inbound connectivity at all\n"+
-				"  and keeps capture, restore, setups, run, logs, ssh and sync exactly as they are.",
-				publicHost, port, unreachable.Reason, adopted.DeploymentID, h.Alias, port)
+				"  and keeps capture, restore, setups, run, logs, ssh and sync exactly as they are.\n"+
+				"  If this box is on a container-pool marketplace listing (simplepod, vast.ai and similar), this is\n"+
+				"  likely why: attach needs the port ogre listens on and the port we dial to be the SAME port, and a\n"+
+				"  port-mapped box remaps them — so port %d reaching this box from the internet is never possible no\n"+
+				"  matter which --ogre-port you pass. Attach only works on a box with a real public IP and a direct\n"+
+				"  inbound path (bare metal, most VM-pool providers) — detached mode has no such requirement.",
+				publicHost, port, unreachable.Reason, adopted.DeploymentID, h.Alias, port, port)
 		}
 		return fmt.Errorf("could not activate deployment #%d: %w", adopted.DeploymentID, err)
 	}
@@ -312,6 +367,7 @@ func runAttach(opts attachOptions) error {
 	h.PublicHost = publicHost
 	h.OgrePort = port
 	h.AttachedAt = opts.now().UTC().Format(time.RFC3339)
+	h.PendingDeploymentID = 0 // attach succeeded — no longer just pending
 	if err := config.PutHost(h); err != nil {
 		return err
 	}
@@ -343,10 +399,16 @@ func printAttachPlan(out io.Writer, h config.Host, pre attachPreflight, publicHo
 	fmt.Fprintln(out, "  • bill nothing for the hardware — we did not rent it")
 	fmt.Fprintln(out, "  • probe the box from our infrastructure, and refuse to attach it if that fails")
 
-	if pre.portChecked && pre.portBusy {
+	switch pre.port {
+	case portBusy:
 		fmt.Fprintf(out, "\nWarning: something is already listening on port %d. Pass --ogre-port to pick another.\n", ogrePort)
-	} else if !pre.portChecked {
+	case portNoTool:
 		fmt.Fprintf(out, "\nNote: aq could not check whether port %d is free (no ss or netstat on the box).\n", ogrePort)
+	case portUnobserved:
+		fmt.Fprintf(out, "\nNote: aq could not read the box's port check — treat port %d as unknown. "+
+			"If ogre refuses to start, something else already owns it; re-run with --ogre-port to pick another.\n", ogrePort)
+	case portFree:
+		// Nothing to warn about.
 	}
 
 	// Section K, stated up front rather than discovered later by whoever paid
