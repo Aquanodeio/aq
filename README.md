@@ -20,20 +20,22 @@ box that matches what you asked for.
 Docs: **[docs.aquanode.io](https://docs.aquanode.io/docs)** · Live GPU pricing in the
 browser: **[aquanode.io/gpu-index](https://www.aquanode.io/gpu-index)**
 
-**No account? Run `aq gpus`.** It lists every live GPU offer across all providers —
-cheapest per-GPU first, filterable by model/price/provider/region — with nothing
-installed or configured beyond the binary. It prints two price columns, `$/GPU-HR`
-and `$/HR TOTAL`, because the marketplace's raw rate is a whole-offer total for
-every provider except Akash (whose feed reports an already-per-GPU rate); both
-columns are normalized so they mean the same thing for every provider, and
-`--max-price` filters on `$/GPU-HR`. `aq login` is the next step once you've found
-a box worth renting.
+**No account? Run `aq gpus`.** Bare, it prints a market-summary table — one row
+per GPU model, cheapest per-GPU rate first, with how many providers and offers
+back it — with nothing installed or configured beyond the binary. Add a filter
+(`--gpu`, `--provider`, `--region`, `--max-price`) or `--json` and it switches to
+a per-offer table listing every individual offer that matches. That table prints
+two price columns, `$/GPU-HR` and `$/HR TOTAL`, because the marketplace's raw
+rate is a whole-offer total for every provider except Akash (whose feed reports
+an already-per-GPU rate); both columns are normalized so they mean the same
+thing for every provider, and `--max-price` filters on `$/GPU-HR`. `aq login` is
+the next step once you've found a box worth renting.
 
 ## Capabilities
 
 `aq` is a complete, production-ready CLI for managing Aquanode GPU deployments:
 
-- **`aq gpus`** — browse live GPU offers across every provider; works with no account
+- **`aq gpus`** — cheapest rate per GPU model across every provider at a glance; add a filter to see individual offers; works with no account
 - **`aq login`** — pair the CLI to your Aquanode account via device-login
 - **`aq up`** — rent the cheapest matching GPU, provision it, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
 - **`aq deploy`** — restore a snapshot onto a freshly-rented Aquanode GPU box

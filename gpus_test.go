@@ -417,3 +417,136 @@ func TestRunGPUsJSONHonoursAnExplicitLimit(t *testing.T) {
 		t.Errorf("explicit --limit sliced before sorting: %v then %v", offers[0].Price, offers[1].Price)
 	}
 }
+
+// blockyMarketplaceBody reproduces the shape that made the no-argument view
+// useless: the cheapest model arrives as a big block of rows that are
+// identical apart from gpuCount, so a cheapest-first row listing shows one
+// provider's one SKU over and over and never reaches the other models.
+const blockyMarketplaceBody = `{"success":true,"data":[
+  {"gpuShortName":"RTX3070","gpuCount":1,"gpuMemory":"8","provider":"simplepod","region":"CA","available":4,"price":0.05},
+  {"gpuShortName":"RTX3070","gpuCount":1,"gpuMemory":"8","provider":"simplepod","region":"CA","available":4,"price":0.05},
+  {"gpuShortName":"RTX3070","gpuCount":1,"gpuMemory":"8","provider":"simplepod","region":"CA","available":4,"price":0.05},
+  {"gpuShortName":"RTX3070","gpuCount":2,"gpuMemory":"8","provider":"simplepod","region":"CA","available":2,"price":0.10},
+  {"gpuShortName":"RTX3070","gpuCount":2,"gpuMemory":"8","provider":"simplepod","region":"CA","available":2,"price":0.10},
+  {"gpuShortName":"RTX3070","gpuCount":3,"gpuMemory":"8","provider":"simplepod","region":"CA","available":1,"price":0.15},
+  {"gpuShortName":"RTX3070","gpuCount":4,"gpuMemory":"8","provider":"simplepod","region":"CA","available":1,"price":0.20},
+  {"gpuShortName":"RTX3070","gpuCount":1,"gpuMemory":"8","provider":"vastai","region":"US","available":1,"price":0.06},
+  {"gpuShortName":"H100","gpuCount":1,"gpuMemory":"80GB","provider":"hyperstack","region":"CANADA-1","available":1,"price":2.525},
+  {"gpuShortName":"H100","gpuCount":8,"gpuMemory":"80GB","provider":"runpod","region":"US-KS-2","available":1,"price":23.12},
+  {"gpuShortName":"B200","gpuCount":1,"gpuMemory":"180GB","provider":"runpod","region":"EU-RO-1","available":1,"price":6.79}
+]}`
+
+func stubMarketplaceBody(t *testing.T, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// The no-argument view must show the SHAPE of the market — one row per GPU
+// model, spanning models — not the tail of the price sort. Eleven offers,
+// eight of them one near-identical block, used to render as eight rows of
+// RTX3070 before anything else.
+func TestRunGPUsNoArgumentViewCollapsesToOneRowPerModel(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := runGPUs(gpusOptions{apiURL: stubMarketplaceBody(t, blockyMarketplaceBody), summary: true, limit: defaultGPUsLimit, out: &out, errOut: &errOut})
+	if err != nil {
+		t.Fatalf("runGPUs: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	// Header + exactly one row per distinct model (RTX3070, H100, B200).
+	if len(lines) != 4 {
+		t.Fatalf("got %d lines, want 4 (header + 3 models):\n%s", len(lines), out.String())
+	}
+	for _, model := range []string{"RTX3070", "H100", "B200"} {
+		if !strings.Contains(out.String(), model) {
+			t.Errorf("no-argument view is missing %s — it must span models:\n%s", model, out.String())
+		}
+	}
+	// Cheapest model still leads, and its row carries the cheapest per-GPU
+	// rate in the block (0.05) with the provider that offers it — not the
+	// 0.06 vastai row that also carries the model.
+	if !strings.Contains(lines[1], "RTX3070") || !strings.Contains(lines[1], "0.0500") || !strings.Contains(lines[1], "simplepod") {
+		t.Errorf("first row = %q, want RTX3070 from simplepod at 0.0500", lines[1])
+	}
+	// Two providers carry RTX3070, and eight offers do.
+	if !strings.Contains(lines[1], "\t") && !strings.Contains(lines[1], "2") {
+		t.Errorf("first row = %q, want a provider count", lines[1])
+	}
+	if !strings.Contains(errOut.String(), "11 offers across 3 GPU models") {
+		t.Errorf("footer = %q, want the offer/model totals", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "--gpu <model>") {
+		t.Errorf("footer = %q, must say how to see the collapsed offers", errOut.String())
+	}
+}
+
+// The collapse is display-only: the same fixture without the no-argument gate
+// must still print every offer, so no filtered invocation can lose a row to
+// the summary path.
+func TestRunGPUsAnyFlagStillPrintsEveryOffer(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := runGPUs(gpusOptions{apiURL: stubMarketplaceBody(t, blockyMarketplaceBody), limit: 0, out: &out, errOut: &errOut})
+	if err != nil {
+		t.Fatalf("runGPUs: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 12 {
+		t.Fatalf("got %d lines, want 12 (header + 11 offers):\n%s", len(lines), out.String())
+	}
+}
+
+// summarizeByModel counts a model's distinct providers, not its offers, and
+// groups case-insensitively so a feed that spells one model two ways does not
+// split into two rows.
+func TestSummarizeByModelCountsDistinctProvidersCaseInsensitively(t *testing.T) {
+	rows := summarizeByModel([]api.MarketplaceOffer{
+		{GPUShortName: "H100", GPUCount: 1, Provider: "runpod", Price: 2.0},
+		{GPUShortName: "h100", GPUCount: 1, Provider: "RunPod", Price: 2.5},
+		{GPUShortName: "H100", GPUCount: 1, Provider: "hyperstack", Price: 3.0},
+	})
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 — H100/h100 is one model:\n%+v", len(rows), rows)
+	}
+	if rows[0].offers != 3 {
+		t.Errorf("offers = %d, want 3", rows[0].offers)
+	}
+	if rows[0].providers != 2 {
+		t.Errorf("providers = %d, want 2 (runpod, hyperstack — spelling is not a provider)", rows[0].providers)
+	}
+	if rows[0].cheapest != 2.0 {
+		t.Errorf("cheapest = %v, want 2.0 (the first offer, given the caller's sort)", rows[0].cheapest)
+	}
+}
+
+// The market-shape view is reserved for a truly bare `aq gpus`. Any flag —
+// even one that only changes how much is printed — means the caller asked for
+// offers, and must get the unchanged offer table.
+func TestParseGPUsOptionsSummaryOnlyWhenNoFlagGiven(t *testing.T) {
+	cases := []struct {
+		args    []string
+		summary bool
+	}{
+		{nil, true},
+		{[]string{}, true},
+		{[]string{"--gpu", "H100"}, false},
+		{[]string{"--provider", "runpod"}, false},
+		{[]string{"--region", "US"}, false},
+		{[]string{"--max-price", "1"}, false},
+		{[]string{"--limit", "5"}, false},
+		{[]string{"--limit", "0"}, false},
+		{[]string{"--json"}, false},
+	}
+	for _, tc := range cases {
+		opts, err := parseGPUsOptions(tc.args)
+		if err != nil {
+			t.Fatalf("parseGPUsOptions(%v): %v", tc.args, err)
+		}
+		if opts.summary != tc.summary {
+			t.Errorf("parseGPUsOptions(%v).summary = %v, want %v", tc.args, opts.summary, tc.summary)
+		}
+	}
+}
