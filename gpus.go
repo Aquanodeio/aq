@@ -88,6 +88,7 @@ type gpusOptions struct {
 	jsonOut   bool
 	limit     int
 	hasLimit  bool
+	summary   bool
 	out       io.Writer
 	errOut    io.Writer
 }
@@ -99,6 +100,19 @@ type gpusOptions struct {
 // auth headers (api.NewPublic). See resolvePublicAPIURL for why it must not
 // read a stored credential's APIURL the way every other command does.
 func gpus(args []string) error {
+	opts, err := parseGPUsOptions(args)
+	if err != nil {
+		return err
+	}
+	opts.out, opts.errOut = os.Stdout, os.Stderr
+	return runGPUs(opts)
+}
+
+// parseGPUsOptions turns `aq gpus` flags into a gpusOptions, leaving the
+// writers to the caller. Split out of gpus() so the no-argument gate below —
+// the single decision that picks the summary view over the offer table — is
+// testable without a marketplace round trip.
+func parseGPUsOptions(args []string) (gpusOptions, error) {
 	fs := flag.NewFlagSet("gpus", flag.ContinueOnError)
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, case-insensitive, e.g. \"B200\")")
 	maxPrice := fs.Float64("max-price", 0, "Only show offers at or below this per-GPU hourly rate ($/GPU-HR, see the price columns aq gpus prints)")
@@ -107,10 +121,17 @@ func gpus(args []string) error {
 	jsonOut := fs.Bool("json", false, "Print the filtered offers as JSON instead of a table")
 	limit := fs.Int("limit", defaultGPUsLimit, "Max rows to print (0 = all). --json returns every match unless this is set explicitly")
 	if _, err := parseInterspersed(fs, args); err != nil {
-		return err
+		return gpusOptions{}, err
 	}
 
-	return runGPUs(gpusOptions{
+	return gpusOptions{
+		// A bare `aq gpus` — no flag of any kind — gets the market-shape
+		// view (see printModelSummary). The moment the caller expresses ANY
+		// intent, including --limit or --json, they get the full offer list
+		// they asked for. Gating on "was a flag passed" rather than on the
+		// value of any one flag keeps every existing invocation
+		// byte-identical to what it printed before.
+		summary:   fs.NFlag() == 0,
 		apiURL:    resolvePublicAPIURL(),
 		gpu:       *gpu,
 		maxPrice:  *maxPrice,
@@ -120,9 +141,7 @@ func gpus(args []string) error {
 		jsonOut:   *jsonOut,
 		limit:     *limit,
 		hasLimit:  isFlagSet(fs, "limit"),
-		out:       os.Stdout,
-		errOut:    os.Stderr,
-	})
+	}, nil
 }
 
 // resolvePublicAPIURL picks the API base for the one command that must never
@@ -198,6 +217,13 @@ func runGPUs(opts gpusOptions) error {
 		return nil
 	}
 
+	if opts.summary {
+		printModelSummary(opts.out, filtered)
+		printSummaryDrilldown(opts.errOut, filtered)
+		printGPUsSignupPointer(opts.errOut)
+		return nil
+	}
+
 	shown := filtered
 	limit := opts.limit
 	if limit > 0 && limit < len(filtered) {
@@ -253,6 +279,84 @@ func printOffers(out io.Writer, offers []api.MarketplaceOffer) {
 			orDash(o.Region), o.Available, perGPUHourlyRate(o), totalHourlyRate(o))
 	}
 	tw.Flush()
+}
+
+// gpuModelSummary is one row of the no-argument view: a GPU model and the
+// shape of the market for it. Built only from offers that already passed
+// every filter, so it can never show a model the detailed view would hide.
+type gpuModelSummary struct {
+	model     string
+	memory    string
+	cheapest  float64
+	provider  string
+	region    string
+	providers int
+	offers    int
+}
+
+// summarizeByModel collapses offers into one row per GPU model. It REQUIRES
+// offers to be sorted cheapest-per-GPU-first (runGPUs does this before
+// calling): that ordering is what makes the first offer seen for a model its
+// cheapest, and makes the returned slice come out cheapest-model-first
+// without a second sort.
+//
+// This is a display collapse and nothing else — no filter, no --json path,
+// and no --limit path goes through here, so no caller can lose an offer to
+// it. See the no-argument gate in gpus().
+func summarizeByModel(offers []api.MarketplaceOffer) []gpuModelSummary {
+	var rows []gpuModelSummary
+	index := map[string]int{}
+	seenProvider := map[string]map[string]bool{}
+	for _, o := range offers {
+		key := strings.ToLower(strings.TrimSpace(o.GPUShortName))
+		i, ok := index[key]
+		if !ok {
+			// First offer for this model is its cheapest, given the sort.
+			rows = append(rows, gpuModelSummary{
+				model:    o.GPUShortName,
+				memory:   o.GPUMemory,
+				cheapest: perGPUHourlyRate(o),
+				provider: o.Provider,
+				region:   o.Region,
+			})
+			i = len(rows) - 1
+			index[key] = i
+			seenProvider[key] = map[string]bool{}
+		}
+		rows[i].offers++
+		p := strings.ToLower(strings.TrimSpace(o.Provider))
+		if !seenProvider[key][p] {
+			seenProvider[key][p] = true
+			rows[i].providers++
+		}
+	}
+	return rows
+}
+
+// printModelSummary renders the no-argument view: every GPU model in the
+// marketplace, cheapest first, with the price to beat and how many providers
+// compete for it. The detailed offer table this replaces sorted the same way
+// but printed rows, so its first screen was N near-identical rows of one
+// provider's cheapest SKU: the cheapest consumer GPUs arrive as large blocks
+// differing only in gpuCount, and the cross-provider spread that is the whole
+// point of the command was never on screen.
+func printModelSummary(out io.Writer, offers []api.MarketplaceOffer) {
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "GPU\tVRAM\tFROM $/GPU-HR\tCHEAPEST AT\tREGION\tPROVIDERS\tOFFERS")
+	for _, r := range summarizeByModel(offers) {
+		fmt.Fprintf(tw, "%s\t%s\t%.4f\t%s\t%s\t%d\t%d\n",
+			orDash(r.model), orDash(r.memory), r.cheapest, orDash(r.provider),
+			orDash(r.region), r.providers, r.offers)
+	}
+	tw.Flush()
+}
+
+// printSummaryDrilldown says how to get from the collapsed view to the rows
+// it collapsed. Without this the summary would look like the whole feed.
+func printSummaryDrilldown(errOut io.Writer, offers []api.MarketplaceOffer) {
+	models := len(summarizeByModel(offers))
+	fmt.Fprintf(errOut, "%d offers across %d GPU models — `aq gpus --gpu <model>` lists every offer, `--limit 0` the whole feed\n",
+		len(offers), models)
 }
 
 // printGPUsSignupPointer prints a one-line next step, never a gate — `aq
