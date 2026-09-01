@@ -65,7 +65,7 @@ func attachCmd(args []string) error {
 		return err
 	}
 	if len(positional) != 1 {
-		return errors.New("usage: aq attach <alias> — the alias of a box from `aq host ls`")
+		return errors.New("usage: aq attach <alias>: the alias of a box from `aq host ls`")
 	}
 
 	// A dry run still needs a login: the plan it prints names the account the
@@ -177,7 +177,7 @@ func parseAttachPreflight(raw []byte) (attachPreflight, error) {
 
 	text := string(raw)
 	if !strings.Contains(text, "preflight_ok=1") {
-		return attachPreflight{}, errors.New("the box did not complete the attach preflight — aq could not read enough to proceed safely")
+		return attachPreflight{}, errors.New("the box did not complete the attach preflight: aq could not read enough to proceed safely")
 	}
 
 	akState := ""
@@ -226,7 +226,7 @@ func parseAttachPreflight(raw []byte) (attachPreflight, error) {
 	case "absent":
 		p.authorizedKeys = ""
 	default:
-		return attachPreflight{}, errors.New("could not read the box's ~/.ssh/authorized_keys — refusing to attach. " +
+		return attachPreflight{}, errors.New("could not read the box's ~/.ssh/authorized_keys, refusing to attach. " +
 			"That file is how you get onto this machine, and aq will not write anywhere near a box whose access it cannot first read")
 	}
 	return p, nil
@@ -243,7 +243,7 @@ func runAttach(opts attachOptions) error {
 		return err
 	}
 	if h.Attached() {
-		return fmt.Errorf("%s is already attached as deployment #%d — release it first with `aq release %s`", h.Alias, h.DeploymentID, h.Alias)
+		return fmt.Errorf("%s is already attached as deployment #%d, release it first with `aq release %s`", h.Alias, h.DeploymentID, h.Alias)
 	}
 
 	ogrePort := opts.ogrePort
@@ -274,7 +274,7 @@ func runAttach(opts attachOptions) error {
 		pre.survey.Daemon, pre.survey.DaemonReason = probeOgreDaemon(opts.run, h)
 	}
 	if pre.survey.OgrePath == "" {
-		return fmt.Errorf("no `ogre` on %s — run `aq host add`/install ogre there first; attach configures ogre, it does not install it", h.SSH)
+		return fmt.Errorf("no `ogre` on %s: run `aq host add`/install ogre there first; attach configures ogre; it does not install it", h.SSH)
 	}
 
 	printAttachPlan(opts.out, h, pre, publicHost, ogrePort, mountPath)
@@ -286,7 +286,7 @@ func runAttach(opts attachOptions) error {
 
 	if !opts.yes {
 		if !isInteractiveStdin() {
-			return errors.New("refusing to write to a box you lease without confirmation in a non-interactive shell — re-run with --yes")
+			return errors.New("refusing to write to a box you lease without confirmation in a non-interactive shell; re-run with --yes")
 		}
 		fmt.Fprint(opts.out, "\nAttach this box to your Aquanode account? [y/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -348,16 +348,16 @@ func runAttach(opts attachOptions) error {
 	if err != nil {
 		var unreachable *api.ExternalUnreachableError
 		if errors.As(err, &unreachable) {
-			return fmt.Errorf("Aquanode could not reach %s:%d — the box is NOT attached.\n"+
+			return fmt.Errorf("Aquanode could not reach %s:%d: the box is NOT attached.\n"+
 				"  reason: %s\n"+
 				"  Deployment #%d stays PROVISIONING and the probe failure is recorded; release it with `aq release %s`.\n"+
-				"  Open inbound TCP %d from the internet and re-run, or stay in detached mode — it needs no inbound connectivity at all\n"+
+				"  Open inbound TCP %d from the internet and re-run, or stay in detached mode: it needs no inbound connectivity at all\n"+
 				"  and keeps capture, restore, setups, run, logs, ssh and sync exactly as they are.\n"+
 				"  If this box is on a container-pool marketplace listing (simplepod, vast.ai and similar), this is\n"+
 				"  likely why: attach needs the port ogre listens on and the port we dial to be the SAME port, and a\n"+
-				"  port-mapped box remaps them — so port %d reaching this box from the internet is never possible no\n"+
+				"  port-mapped box remaps them, so port %d reaching this box from the internet is never possible no\n"+
 				"  matter which --ogre-port you pass. Attach only works on a box with a real public IP and a direct\n"+
-				"  inbound path (bare metal, most VM-pool providers) — detached mode has no such requirement.",
+				"  inbound path (bare metal, most VM-pool providers). Detached mode has no such requirement.",
 				publicHost, port, unreachable.Reason, adopted.DeploymentID, h.Alias, port, port)
 		}
 		return fmt.Errorf("could not activate deployment #%d: %w", adopted.DeploymentID, err)
@@ -375,7 +375,7 @@ func runAttach(opts attachOptions) error {
 	fmt.Fprintf(opts.out, "\n✓ %s is attached as deployment #%d (%s).\n", h.Alias, adopted.DeploymentID, orUnknown(res.Status))
 	fmt.Fprintf(opts.out, "  Aquanode completed a round-trip to %s:%d.\n", publicHost, port)
 	fmt.Fprintf(opts.out, "  The box bills nothing: we did not rent it and never will.\n")
-	fmt.Fprintf(opts.out, "  Hand it back any time with `aq release %s` — that revokes our credentials and drops the row.\n", h.Alias)
+	fmt.Fprintf(opts.out, "  Hand it back any time with `aq release %s`: that revokes our credentials and drops the row.\n", h.Alias)
 	fmt.Fprintf(opts.out, "  The box keeps running, and no provider is ever contacted.\n")
 	return nil
 }
@@ -390,13 +390,13 @@ func printAttachPlan(out io.Writer, h config.Host, pre attachPreflight, publicHo
 	fmt.Fprintf(out, "  • create %s (0600) holding ogre's credentials, inside `%s` markers\n", ogreEnvPath, beginMarker)
 	fmt.Fprintf(out, "  • restart ogre's daemon on port %d, logging to %s\n", ogrePort, ogreLogPath)
 	fmt.Fprintln(out, "\nWould NOT, on the box:")
-	fmt.Fprintf(out, "  • touch ~/.ssh/authorized_keys outside `%s` markers — read OK, %s\n", beginMarker, authorizedKeysSummary(pre.authorizedKeys))
+	fmt.Fprintf(out, "  • touch ~/.ssh/authorized_keys outside `%s` markers (read OK, %s)\n", beginMarker, authorizedKeysSummary(pre.authorizedKeys))
 	fmt.Fprintln(out, "  • change any file's content outside those markers, install packages, or stop your workload")
 
 	fmt.Fprintln(out, "\nWould, in Aquanode:")
 	fmt.Fprintf(out, "  • create a deployment named %q at %s:%d\n", h.Alias, publicHost, ogrePort)
 	fmt.Fprintf(out, "  • workspace %s; idle auto-pause OFF (your lease is already paid for)\n", mountPath)
-	fmt.Fprintln(out, "  • bill nothing for the hardware — we did not rent it")
+	fmt.Fprintln(out, "  • bill nothing for the hardware: we did not rent it")
 	fmt.Fprintln(out, "  • probe the box from our infrastructure, and refuse to attach it if that fails")
 
 	switch pre.port {
@@ -405,7 +405,7 @@ func printAttachPlan(out io.Writer, h config.Host, pre attachPreflight, publicHo
 	case portNoTool:
 		fmt.Fprintf(out, "\nNote: aq could not check whether port %d is free (no ss or netstat on the box).\n", ogrePort)
 	case portUnobserved:
-		fmt.Fprintf(out, "\nNote: aq could not read the box's port check — treat port %d as unknown. "+
+		fmt.Fprintf(out, "\nNote: aq could not read the box's port check, treat port %d as unknown. "+
 			"If ogre refuses to start, something else already owns it; re-run with --ogre-port to pick another.\n", ogrePort)
 	case portFree:
 		// Nothing to warn about.
@@ -414,7 +414,7 @@ func printAttachPlan(out io.Writer, h config.Host, pre attachPreflight, publicHo
 	// Section K, stated up front rather than discovered later by whoever paid
 	// for eight GPUs and expected to hand three of them to three people.
 	fmt.Fprintln(out, "\nOne box is one deployment running one setup at a time. Aquanode cannot")
-	fmt.Fprintln(out, "partition a multi-GPU box into several independent setups — the whole box")
+	fmt.Fprintln(out, "partition a multi-GPU box into several independent setups: the whole box")
 	fmt.Fprintln(out, "attaches as a single target. That capability does not exist in either mode.")
 }
 
@@ -452,7 +452,7 @@ func configureOgreOnBox(opts attachOptions, h config.Host, install *api.External
 	case strings.Contains(text, "__AQ_READ_OK__"):
 		text = strings.TrimSuffix(text, "__AQ_READ_OK__\n")
 	default:
-		return fmt.Errorf("%s exists on %s but aq cannot read it — refusing to overwrite a file it could not first look at", ogreEnvPath, h.SSH)
+		return fmt.Errorf("%s exists on %s but aq cannot read it, refusing to overwrite a file it could not first look at", ogreEnvPath, h.SSH)
 	}
 
 	body := renderOgreEnv(install, deploymentID, port)
@@ -547,5 +547,5 @@ func restartOgreScript(port int) string {
 		"  [ \"$pid\" = \"$$\" ] && continue\n" +
 		"  AQ_OGRE_UP=1\n" +
 		"done\n" +
-		"[ \"$AQ_OGRE_UP\" = 1 ] || { echo 'ogre did not stay up — see " + ogreLogPath + " on the box' >&2; exit 1; }\n"
+		"[ \"$AQ_OGRE_UP\" = 1 ] || { echo 'ogre did not stay up, see " + ogreLogPath + " on the box' >&2; exit 1; }\n"
 }

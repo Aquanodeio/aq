@@ -127,7 +127,7 @@ func downWithCheckpoint(
 		// something on the user's behalf is the user's call to make (see
 		// aquanode-backend orchestrator/src/configs/idle.config.ts). The
 		// defect this fixes was the silence, not the default.
-		fmt.Fprintln(out, "Terminating without saving — nothing on this box is kept, and it cannot be resumed.")
+		fmt.Fprintln(out, "Terminating without saving: nothing on this box is kept, and it cannot be resumed.")
 		fmt.Fprintf(out, "To save your setup before stopping the box, use: aq down --save %s\n", opts.target)
 	}
 
@@ -161,7 +161,7 @@ func runDown(opts downOptions) error {
 		return fmt.Errorf("could not close deployment #%d: %w", deploymentID, err)
 	}
 
-	fmt.Fprintf(opts.out, "✓ Termination requested for deployment #%d — the box will stop shortly.\n", deploymentID)
+	fmt.Fprintf(opts.out, "✓ Termination requested for deployment #%d. The box will stop shortly.\n", deploymentID)
 
 	// Drop the box's alias explicitly rather than relying on the list: teardown
 	// is asynchronous, so it still reports as live for a while yet.
@@ -226,7 +226,7 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 // a project id — resolveDeploymentID tells the two apart.
 func parseDeploymentTarget(args []string, verb string) (string, error) {
 	if len(args) == 0 || args[0] == "" {
-		return "", fmt.Errorf("a deployment id is required — usage: aq %s <deploymentId>", verb)
+		return "", fmt.Errorf("a deployment id is required, usage: aq %s <deploymentId>", verb)
 	}
 	return args[0], nil
 }
@@ -248,7 +248,7 @@ func resolveDeploymentID(client *api.Client, target, verb string) (int, error) {
 
 	if id, err := strconv.Atoi(target); err == nil {
 		if id <= 0 {
-			return 0, fmt.Errorf("invalid deployment id %q — expected a positive number", target)
+			return 0, fmt.Errorf("invalid deployment id %q, expected a positive number", target)
 		}
 		return id, nil
 	}
@@ -279,12 +279,12 @@ func resolveProjectDeployment(client *api.Client, target, verb string) (int, err
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
-			return 0, fmt.Errorf("no active deployment found for %q — pass the name you gave `--name`, or the numeric deployment id (e.g. aq %s 4242) shown by `aq up`/`aq deploy` or the console", target, verb)
+			return 0, fmt.Errorf("no active deployment found for %q; pass the name you gave `--name`, or the numeric deployment id (e.g. aq %s 4242) shown by `aq up`/`aq deploy` or the console", target, verb)
 		}
 		return 0, fmt.Errorf("could not resolve %q to a deployment: %w", target, err)
 	}
 	if dep.ID <= 0 {
-		return 0, fmt.Errorf("no active deployment found for project %q — pass the numeric deployment id (e.g. aq %s 4242)", target, verb)
+		return 0, fmt.Errorf("no active deployment found for project %q; pass the numeric deployment id (e.g. aq %s 4242)", target, verb)
 	}
 	return dep.ID, nil
 }
@@ -297,7 +297,7 @@ type ambiguousNameError struct {
 
 func (e *ambiguousNameError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%q matches %d deployments — pass one of these ids instead:", e.name, len(e.matches))
+	fmt.Fprintf(&b, "%q matches %d deployments; pass one of these ids instead:", e.name, len(e.matches))
 	for _, d := range e.matches {
 		fmt.Fprintf(&b, "\n  %d  %s  (%s)", d.ID, d.Name, d.Status)
 	}
@@ -341,12 +341,12 @@ func resolveSoleLiveDeployment(client *api.Client, verb string) (int, error) {
 	}
 	switch len(live) {
 	case 0:
-		return 0, errors.New("no live deployments — run `aq up` to start one")
+		return 0, errors.New("no live deployments; run `aq up` to start one")
 	case 1:
 		return live[0].ID, nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d deployments are live — name one, e.g. `aq %s %d`:", len(live), verb, live[0].ID)
+	fmt.Fprintf(&b, "%d deployments are live: name one, e.g. `aq %s %d`:", len(live), verb, live[0].ID)
 	for _, d := range live {
 		name := strings.TrimSpace(d.Name)
 		if name == "" {

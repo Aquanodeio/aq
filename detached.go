@@ -80,7 +80,7 @@ func lookupHost(alias string) (config.Host, error) {
 		return config.Host{}, err
 	}
 	if !ok {
-		return config.Host{}, fmt.Errorf("no host %q in your registry — add it with `aq host add %s --ssh root@<ip>`, or see `aq host ls`", alias, alias)
+		return config.Host{}, fmt.Errorf("no host %q in your registry: add it with `aq host add %s --ssh root@<ip>`, or see `aq host ls`", alias, alias)
 	}
 	return h, nil
 }
@@ -160,7 +160,7 @@ func runDetached(opts detachedOptions) error {
 
 	ogreVerb, ok := detachedOgreVerb[opts.verb]
 	if !ok {
-		return fmt.Errorf("`aq %s` does not work on a detached host — it needs the control plane; see `aq help`", opts.verb)
+		return fmt.Errorf("`aq %s` does not work on a detached host: it needs the control plane; see `aq help`", opts.verb)
 	}
 
 	sshAlias, err := resolveHostSSHAlias(opts.alias)
@@ -234,7 +234,7 @@ func runRemoteCapture(h config.Host, remote string) ([]byte, error) {
 		if msg == "" {
 			return out, fmt.Errorf("ssh %s: %w", h.SSH, err)
 		}
-		return out, fmt.Errorf("ssh %s: %w — %s", h.SSH, err, msg)
+		return out, fmt.Errorf("ssh %s: %w (%s)", h.SSH, err, msg)
 	}
 	return out, nil
 }

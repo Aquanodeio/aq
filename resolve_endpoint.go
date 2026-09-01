@@ -45,7 +45,7 @@ func resolveEndpointID(client *api.Client, target string) (string, error) {
 	case 1:
 		return matches[0].ID, nil
 	default:
-		return "", fmt.Errorf("%q matches %d endpoints — pass the endpoint id instead", target, len(matches))
+		return "", fmt.Errorf("%q matches %d endpoints; pass the endpoint id instead", target, len(matches))
 	}
 }
 

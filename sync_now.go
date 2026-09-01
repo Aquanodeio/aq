@@ -32,7 +32,7 @@ func syncNow(args []string) error {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("a setup is required — usage: aq sync-now <setup>")
+		return errors.New("a setup is required, usage: aq sync-now <setup>")
 	}
 
 	// Detached: `ogre push` flushes the box's snapshots to its configured

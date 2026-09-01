@@ -50,7 +50,7 @@ func sshCmd(args []string) error {
 		return err
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("expected at most one deployment — got %s", strings.Join(positional, ", "))
+		return fmt.Errorf("expected at most one deployment, got %s", strings.Join(positional, ", "))
 	}
 
 	var target string
@@ -60,7 +60,7 @@ func sshCmd(args []string) error {
 	// A positional that looks like a flag would otherwise be smuggled through to
 	// ssh as one, mirroring the validate-before-exec habit openBrowser follows.
 	if strings.HasPrefix(target, "-") {
-		return fmt.Errorf("invalid deployment %q — it must not start with '-'", target)
+		return fmt.Errorf("invalid deployment %q; it must not start with '-'", target)
 	}
 
 	// A detached host needs no login at all — not even a credential file. That
@@ -158,7 +158,7 @@ func buildSSHArgs(alias, user string, forwards, remote []string) []string {
 func warnIfKeyUnregistered(client *api.Client, errOut io.Writer) {
 	key, ok, err := findLocalKey()
 	if err != nil || !ok {
-		fmt.Fprintf(errOut, "warning: no local SSH key found — run `aq up` to have aq create one.\n")
+		fmt.Fprintf(errOut, "warning: no local SSH key found; run `aq up` to have aq create one.\n")
 		return
 	}
 	keys, err := client.ListSSHKeys()
@@ -166,7 +166,7 @@ func warnIfKeyUnregistered(client *api.Client, errOut io.Writer) {
 		return
 	}
 	if _, matched := matchRegisteredKey(key.PublicKey, keys); !matched {
-		fmt.Fprintf(errOut, "warning: %s is not registered on your account — this box may not accept it.\n", key.PublicPath)
+		fmt.Fprintf(errOut, "warning: %s is not registered on your account; this box may not accept it.\n", key.PublicPath)
 	}
 }
 

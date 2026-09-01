@@ -233,7 +233,7 @@ func runGPUs(opts gpusOptions) error {
 	printOffers(opts.out, shown)
 
 	if limit > 0 && limit < len(filtered) {
-		fmt.Fprintf(opts.errOut, "showing %d of %d offers — use --limit 0 for all\n", len(shown), len(filtered))
+		fmt.Fprintf(opts.errOut, "showing %d of %d offers; use --limit 0 for all\n", len(shown), len(filtered))
 	}
 	printGPUsSignupPointer(opts.errOut)
 	return nil
@@ -355,7 +355,7 @@ func printModelSummary(out io.Writer, offers []api.MarketplaceOffer) {
 // it collapsed. Without this the summary would look like the whole feed.
 func printSummaryDrilldown(errOut io.Writer, offers []api.MarketplaceOffer) {
 	models := len(summarizeByModel(offers))
-	fmt.Fprintf(errOut, "%d offers across %d GPU models — `aq gpus --gpu <model>` lists every offer, `--limit 0` the whole feed\n",
+	fmt.Fprintf(errOut, "%d offers across %d GPU models. `aq gpus --gpu <model>` lists every offer, `--limit 0` the whole feed\n",
 		len(offers), models)
 }
 

@@ -133,7 +133,7 @@ func buildPlan(alias, from, to string, excludes []string, del, remoteHasRsync bo
 		// Better to refuse than to quietly leave deleted files on the box: the
 		// user asked for the remote tree to mirror the local one, and tar cannot
 		// do that.
-		return transferPlan{}, fmt.Errorf("--delete needs rsync on both ends, and it is missing — install rsync on the box (or drop --delete)")
+		return transferPlan{}, fmt.Errorf("--delete needs rsync on both ends, and it is missing. Install rsync on the box (or drop --delete)")
 	}
 	p.mode = "tar"
 	p.argv = buildTarArgs(from, excludes, tarSupportsNoXattrs())
@@ -308,7 +308,7 @@ func resolveLocalDir(dir string) (string, error) {
 		return "", fmt.Errorf("could not read %s: %w", abs, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory — aq push sends a directory tree", abs)
+		return "", fmt.Errorf("%s is not a directory, aq push sends a directory tree", abs)
 	}
 	return abs, nil
 }

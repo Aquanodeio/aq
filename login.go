@@ -96,7 +96,7 @@ func runLogin(opts loginOptions) error {
 	first := true
 	for {
 		if opts.now().After(deadline) {
-			return errors.New("login timed out before approval — run `aq login` again")
+			return errors.New("login timed out before approval; run `aq login` again")
 		}
 		// Poll immediately on the first iteration; only sleep *between* polls so we
 		// don't add a full interval of latency before the first status check (#207).
@@ -151,9 +151,9 @@ func runLogin(opts loginOptions) error {
 		case "denied":
 			return errors.New("pairing was denied in the console")
 		case "expired":
-			return errors.New("pairing expired — run `aq login` again")
+			return errors.New("pairing expired; run `aq login` again")
 		case "consumed":
-			return errors.New("this pairing was already used — run `aq login` again")
+			return errors.New("this pairing was already used; run `aq login` again")
 		default:
 			return fmt.Errorf("unexpected pairing status %q", poll.Status)
 		}
@@ -197,9 +197,9 @@ func logout(args []string) error {
 		return err
 	}
 	if existed {
-		fmt.Println("Logged out — stored credential removed.")
+		fmt.Println("Logged out. Stored credential removed.")
 	} else {
-		fmt.Println("Not logged in — nothing to remove.")
+		fmt.Println("Not logged in. Nothing to remove.")
 	}
 	return nil
 }

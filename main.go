@@ -165,7 +165,7 @@ func run(err error) {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `aq — Aquanode control CLI
+	fmt.Fprint(os.Stderr, `aq: Aquanode control CLI
 
 Usage:
   aq <command> [flags]
@@ -178,12 +178,12 @@ Commands:
   import        Capture a box you rent elsewhere into a new Aquanode setup
   host          Register a box you own or lease, and drive it with no account
   attach        Adopt a registered box into your Aquanode control plane
-  release       Hand an attached box back — the box keeps running
+  release       Hand an attached box back. The box keeps running
   ssh           Open a shell on a setup (managed key + ~/.ssh/config alias)
   push          Send your working directory to a box you already rented
   run           Push the working directory, then run a command on the box
   logs          Read a detached run's output
-  ls            List your deployments — what is running and what it costs
+  ls            List your deployments: what is running and what it costs
   status        Show a setup's status, HTTPS URL, and credentials
   save          Save a setup's current state into its named lineage
   share         Get a link to one saved version of a setup
@@ -206,7 +206,7 @@ Commands:
 
 gpus:
   aq gpus                     Browse every live GPU offer across all providers,
-                              cheapest first. Works with no account — nothing
+                              cheapest first. Works with no account: nothing
                               is read from or written to ~/.config/aq.
 
   --gpu <model>       Filter to a GPU model (substring, case-insensitive,
@@ -231,7 +231,7 @@ up flags:
   --warn-after <duration>  With --auto-pause: warn after this much idle time
   --pause-after <duration> With --auto-pause: auto-pause after this much idle time
 
-  App (optional — you get a bare GPU box if you pick neither):
+  App (optional, you get a bare GPU box if you pick neither):
   --comfyui          Also install ComfyUI
   --jupyter          Also install Torch + Jupyter instead
 
@@ -245,14 +245,14 @@ deploy flags:
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
 
-  App (optional — relaunches ComfyUI by default; --no-app restores data only):
+  App (optional, relaunches ComfyUI by default; --no-app restores data only):
   --comfyui          Relaunch ComfyUI on the restored data
   --jupyter          Relaunch Torch + Jupyter on the restored data instead
-  --no-app           Restore only — do not relaunch an app
+  --no-app           Restore only, do not relaunch an app
 
 import:
   Run ON a box you already rent somewhere else (RunPod, Vast, your own
-  hardware) — captures its environment into a new Aquanode setup, so it can
+  hardware). Captures its environment into a new Aquanode setup, so it can
   be launched on any provider we support. Survey-first: aq shows exactly what
   it will and won't capture, and asks before anything is uploaded.
 
@@ -264,23 +264,23 @@ import:
   aq import --yes           Skip the interactive confirmation
   aq import --launch [--gpu <model>] [--max-price <n>] [--provider <name>]
                              After import, rent a GPU and restore onto it
-                             (billable). Prints the install-preview verdict —
+                             (billable). Prints the install-preview verdict:
                              template, suggested hardware, compatibility
-                             warnings — before anything is rented. Defaults
+                             warnings, before anything is rented. Defaults
                              the GPU to the one observed on the source box.
   aq import --resume <setup-id>
                              Resume an import that started but didn't finish
                              (e.g. the upload credentials expired mid-capture).
                              Re-mints write credentials and re-runs the
-                             capture into the exact same storage location —
+                             capture into the exact same storage location:
                              restic dedups what already landed, so this never
                              restarts from zero and never bills a second,
                              parallel setup for the same box.
 
-host / attach / release — boxes we never provisioned:
+host / attach / release (boxes we never provisioned):
   Two modes for a machine you already own or lease, sharing one artifact format.
 
-  DETACHED — your box, no control plane, no Aquanode account required. aq drives
+  DETACHED: your box, no control plane, no Aquanode account required. aq drives
   ogre on the box over your own ssh session, and ogre's CLI reaches its daemon on
   loopback, so the box needs no inbound connectivity from us at all. Nothing in
   detached mode contacts the Aquanode API.
@@ -298,7 +298,7 @@ host / attach / release — boxes we never provisioned:
   --ogre-port <n>      Port ogre listens on once attached (default: 8443)
   --ogre-binary <path> Upload this Linux x86_64 ogre when the box has none.
                        There is no public ogre installer, so aq will not
-                       download one — it installs the binary you name, or
+                       download one: it installs the binary you name, or
                        refuses.
 
   Then address the box as "host:<alias>" from any box-facing verb:
@@ -309,7 +309,7 @@ host / attach / release — boxes we never provisioned:
     aq sync-now host:lease-a         (ogre push, to your configured remote)
     aq up host:lease-a               (bring services up in place; rents nothing)
 
-  ATTACHED — your box, our control plane. The box becomes a deployment we never
+  ATTACHED: your box, our control plane. The box becomes a deployment we never
   provisioned and gains the console, version history, fork/share, teams, metrics
   and endpoints.
 
@@ -323,10 +323,10 @@ host / attach / release — boxes we never provisioned:
 
   Attach reaches the box one way only: a public address, the port open inbound
   from our infrastructure, TLS pinned. It probes before it commits, and a box it
-  cannot reach is NOT attached — the failure is reported with the probe's own
+  cannot reach is NOT attached: the failure is reported with the probe's own
   reason and the box stays fully usable in detached mode.
 
-  Attach requires ogre's listen port and the port we dial to be THE SAME port —
+  Attach requires ogre's listen port and the port we dial to be THE SAME port:
   there is no separate dial port. On a port-mapped box (most container-pool
   marketplace listings: simplepod, vast.ai and similar, where sshd and the
   workload get remapped external ports and 8443 inbound does not reach the same
@@ -334,19 +334,19 @@ host / attach / release — boxes we never provisioned:
   there no matter which port you pass. This is a direct-connectivity-only
   design choice, not a bug: it is scoped to boxes with a real public IP and an
   inbound path to it (bare metal, most VM-pool providers). Detached mode has no
-  such requirement — it needs no inbound connectivity at all.
+  such requirement: it needs no inbound connectivity at all.
 
   Everything aq writes on your box goes inside "# BEGIN aquanode" markers, and
   aq refuses to write to any file it could not first read. Your existing
   authorized_keys is never replaced.
 
   One attached box is ONE deployment running ONE setup at a time. Aquanode
-  cannot partition a multi-GPU box into several independent setups — the whole
+  cannot partition a multi-GPU box into several independent setups: the whole
   box attaches as a single target. That does not exist in either mode.
 
   aq release <alias>         Hand an attached box back: Aquanode revokes its
                              credentials and drops its deployment row. The box
-                             KEEPS RUNNING and no provider is ever contacted —
+                             KEEPS RUNNING and no provider is ever contacted:
                              this is not a terminate. (--keep-host keeps the
                              box in your registry for detached use.)
 
@@ -372,7 +372,7 @@ ssh:
 
 push / run:
   The local-code loop: edit on your laptop, execute on the GPU. Both send a
-  directory tree over the same managed "aq-<name>" alias ssh uses — nothing
+  directory tree over the same managed "aq-<name>" alias ssh uses, nothing
   new to authenticate, and scp/rsync against that alias keep working too.
 
   aq push [name|id]          Send the current directory to /workspace
@@ -420,7 +420,7 @@ ls / logs:
 
 idle:
   A PER-DEPLOYMENT idle-auto-pause policy (warn/pause thresholds, GPU idle %).
-  It always outranks a setup's own "aq autopause" preference below — see
+  It always outranks a setup's own "aq autopause" preference below, see
   "autopause" for how the two differ.
 
   aq idle status <name|id>   Show the deployment's idle-auto-pause policy and
@@ -434,8 +434,8 @@ idle:
 
 endpoint:
   aq endpoint create <setup> <version>   Make a setup version callable.
-                              Requires --max-instances and --spend-cap-cents
-                              — an endpoint hands out a GPU budget, so
+                              Requires --max-instances and --spend-cap-cents:
+                              an endpoint hands out a GPU budget, so
                               neither ever defaults to unbounded.
                               (--name <name>, default: the setup's own name)
   aq endpoint point <name> <version>
@@ -451,7 +451,7 @@ call / calls:
                               made with no inputs.
   aq calls <endpoint>        List an endpoint's recent calls: id, status,
                               phase, and reason. "unservable" means Aquanode
-                              could not get the call a box at all — not that
+                              could not get the call a box at all, not that
                               the call's own code failed.
 
 status / save / share / fork / edit-version / pause / autopause /
@@ -473,7 +473,7 @@ force-detach / sync-now / setups / down:
   aq fork <token|link>       Turn a link from "aq share" (someone else's,
                              or your own team's own share of a team you've
                              since left) into a brand new setup in your own
-                             library. Registers ownership only — it does
+                             library. Registers ownership only. It does
                              not itself boot any hardware.
                              (--name <name>, default: derived from the source)
   aq edit-version <name|id> <ver> [flags]
@@ -492,18 +492,18 @@ force-detach / sync-now / setups / down:
                              default idle thresholds. This is NOT "aq idle"
                              above: idle policy is a per-DEPLOYMENT threshold
                              config that always outranks this, and this
-                             carries no thresholds of its own — use "aq idle
+                             carries no thresholds of its own: use "aq idle
                              set" to change WHEN idle counts as idle, and
                              this to turn auto-pause on setups on/off at all.
   aq force-detach <name|id> --yes
-                             Break the setup's lease even mid-sync — for
+                             Break the setup's lease even mid-sync, for
                              when a deployment died holding it and it needs
                              freeing before anything else can attach.
                              --yes acknowledges work since the last
                              completed sync may be lost; there is no
                              silent form of this command.
   aq sync-now <name|id>      Force a sync tick right now instead of waiting
-                             for the setup's own schedule — e.g. right
+                             for the setup's own schedule, e.g. right
                              before "aq share"/"aq fork" so the link
                              reflects your latest work. Requires the setup
                              to be attached to a running deployment.

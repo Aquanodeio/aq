@@ -68,7 +68,7 @@ func latestVersionsBySetup(versions []api.SetupVersion) map[string]int {
 // from it renders "-".
 func printSetups(out io.Writer, list []api.Setup, latest map[string]int) {
 	if len(list) == 0 {
-		fmt.Fprintln(out, "No setups yet — run `aq up` to start one.")
+		fmt.Fprintln(out, "No setups yet. Run `aq up` to start one.")
 		return
 	}
 

@@ -51,14 +51,14 @@ func push(args []string) error {
 		return err
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("expected at most one deployment — got %s", strings.Join(positional, ", "))
+		return fmt.Errorf("expected at most one deployment, got %s", strings.Join(positional, ", "))
 	}
 	var target string
 	if len(positional) == 1 {
 		target = positional[0]
 	}
 	if strings.HasPrefix(target, "-") {
-		return fmt.Errorf("invalid deployment %q — it must not start with '-'", target)
+		return fmt.Errorf("invalid deployment %q; it must not start with '-'", target)
 	}
 
 	var cred *config.Credential

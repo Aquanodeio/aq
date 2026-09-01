@@ -34,7 +34,7 @@ func fork(args []string) error {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return fmt.Errorf("a share token or link is required — usage: aq fork <token|link>")
+		return fmt.Errorf("a share token or link is required, usage: aq fork <token|link>")
 	}
 
 	cred, err := requireLogin()
@@ -81,6 +81,6 @@ func runFork(opts forkOptions) error {
 		return fmt.Errorf("could not fork shared setup: %w", err)
 	}
 
-	fmt.Fprintf(out, "✓ Forked into %q — see it with `aq setups`. aq has no install/run-version verb yet; bring it online from the console for now.\n", res.Name)
+	fmt.Fprintf(out, "✓ Forked into %q. See it with `aq setups`. aq has no install/run-version verb yet; bring it online from the console for now.\n", res.Name)
 	return nil
 }

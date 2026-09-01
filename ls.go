@@ -59,9 +59,9 @@ func filterDeployments(deps []api.Deployment, all bool) []api.Deployment {
 func printDeployments(out io.Writer, deps []api.Deployment, all bool, now time.Time) {
 	if len(deps) == 0 {
 		if all {
-			fmt.Fprintln(out, "No deployments yet — run `aq up` to start one.")
+			fmt.Fprintln(out, "No deployments yet. Run `aq up` to start one.")
 		} else {
-			fmt.Fprintln(out, "Nothing running — run `aq up` to start a box, or `aq ls --all` to see closed ones.")
+			fmt.Fprintln(out, "Nothing running. Run `aq up` to start a box, or `aq ls --all` to see closed ones.")
 		}
 		return
 	}

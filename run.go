@@ -46,7 +46,7 @@ func runCmd(args []string) error {
 	del := fs.Bool("delete", false, "Delete remote files that no longer exist locally (needs rsync)")
 	noDefaults := fs.Bool("no-default-excludes", false, "Do not skip .git, node_modules, __pycache__, and friends")
 	noPush := fs.Bool("no-push", false, "Run without sending the working directory first")
-	detach := fs.Bool("detach", false, "Start the command and return — it keeps running after you disconnect")
+	detach := fs.Bool("detach", false, "Start the command and return: it keeps running after you disconnect")
 	printOnly := fs.Bool("print", false, "Print the commands that would run, and exit")
 	var excludes stringList
 	fs.Var(&excludes, "exclude", "Skip paths matching this pattern (repeatable)")
@@ -56,17 +56,17 @@ func runCmd(args []string) error {
 		return err
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("expected at most one deployment — got %s", strings.Join(positional, ", "))
+		return fmt.Errorf("expected at most one deployment, got %s", strings.Join(positional, ", "))
 	}
 	var target string
 	if len(positional) == 1 {
 		target = positional[0]
 	}
 	if strings.HasPrefix(target, "-") {
-		return fmt.Errorf("invalid deployment %q — it must not start with '-'", target)
+		return fmt.Errorf("invalid deployment %q; it must not start with '-'", target)
 	}
 	if len(command) == 0 {
-		return fmt.Errorf("a command is required — usage: aq run [name|id] -- <command…>")
+		return fmt.Errorf("a command is required, usage: aq run [name|id] -- <command…>")
 	}
 
 	var cred *config.Credential

@@ -119,7 +119,7 @@ func runStatus(opts statusOptions) error {
 		return nil
 	}
 
-	fmt.Fprintf(opts.out, "\nStill provisioning — re-run `aq status %d` in a minute.\n", deploymentID)
+	fmt.Fprintf(opts.out, "\nStill provisioning. Re-run `aq status %d` in a minute.\n", deploymentID)
 	return nil
 }
 
@@ -139,7 +139,7 @@ func requireLogin() (*config.Credential, error) {
 		return nil, err
 	}
 	if cred == nil || cred.Token == "" {
-		return nil, errors.New("not logged in — run `aq login` first")
+		return nil, errors.New("not logged in; run `aq login` first")
 	}
 	return cred, nil
 }

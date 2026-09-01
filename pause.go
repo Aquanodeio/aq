@@ -42,7 +42,7 @@ func pause(args []string) error {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return fmt.Errorf("a setup is required — usage: aq pause <setup>")
+		return fmt.Errorf("a setup is required, usage: aq pause <setup>")
 	}
 	target := positional[0]
 
@@ -77,7 +77,7 @@ func runPause(opts pauseOptions) error {
 		return err
 	}
 	if setup.LeaseDeploymentID == nil {
-		return fmt.Errorf("%q is not running — nothing to pause", setup.Name)
+		return fmt.Errorf("%q is not running; nothing to pause", setup.Name)
 	}
 	deploymentID := *setup.LeaseDeploymentID
 
@@ -86,7 +86,7 @@ func runPause(opts pauseOptions) error {
 		return fmt.Errorf("could not look up deployment #%d for %q: %w", deploymentID, setup.Name, err)
 	}
 	if dep.ProjectID == "" {
-		return fmt.Errorf("deployment #%d for %q has no project on record — cannot pause it", deploymentID, setup.Name)
+		return fmt.Errorf("deployment #%d for %q has no project on record, cannot pause it", deploymentID, setup.Name)
 	}
 
 	if err := client.PauseDeployment(dep.ProjectID, deploymentID); err != nil {

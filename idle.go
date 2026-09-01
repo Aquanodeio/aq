@@ -30,7 +30,7 @@ func idle(args []string) error {
 	case "set":
 		return idleSet(rest)
 	default:
-		return fmt.Errorf("aq idle: unknown subcommand %q — expected \"status\" or \"set\"", sub)
+		return fmt.Errorf("aq idle: unknown subcommand %q, expected \"status\" or \"set\"", sub)
 	}
 }
 
@@ -120,7 +120,7 @@ func idleStateLabel(state string, idleMinutes int) string {
 	case "IDLE_ACT":
 		return fmt.Sprintf("IDLE, pausing (%d min)", idleMinutes)
 	case "UNKNOWN":
-		return "UNKNOWN — no usage data yet"
+		return "UNKNOWN: no usage data yet"
 	default:
 		// A future server-side state we don't know about — show it verbatim
 		// rather than mapping it into one of the above and risking a wrong claim.
@@ -224,7 +224,7 @@ func parseIdleSetArgs(args []string) (idleSetOptions, error) {
 	}
 
 	if opts.warnAfter == nil && opts.pauseAfter == nil && opts.gpuThreshold == nil && opts.autoPauseEnabled == nil {
-		return idleSetOptions{}, errors.New("nothing to update — pass at least one of --warn-after, --pause-after, --gpu-threshold, --on/--off")
+		return idleSetOptions{}, errors.New("nothing to update; pass at least one of --warn-after, --pause-after, --gpu-threshold, --on/--off")
 	}
 
 	return opts, nil
@@ -255,7 +255,7 @@ func idleSet(args []string) error {
 		return err
 	}
 	if opts.target == "" {
-		return errors.New("a deployment id is required — usage: aq idle set <deploymentId> [flags]")
+		return errors.New("a deployment id is required, usage: aq idle set <deploymentId> [flags]")
 	}
 
 	cred, err := requireLogin()
