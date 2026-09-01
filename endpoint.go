@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
@@ -41,28 +43,41 @@ type endpointCreateOptions struct {
 	name          string // endpoint name (defaults to the setup's own name)
 	maxInstances  int
 	spendCapCents int64
-	out           io.Writer
+	// onAlias is the `--on <alias>` value as typed, kept only for output,
+	// pinnedDeploymentID is what actually goes on the wire.
+	onAlias string
+	// pinnedDeploymentID pins the endpoint to a box the customer already
+	// attached, instead of hardware Aquanode rents. Zero means the ordinary
+	// managed path, never send it as a bare "0" or a negative number; the
+	// wire key must be absent unless this is a real attached deployment id.
+	pinnedDeploymentID int
+	out                io.Writer
 }
 
 // endpointCreate parses `aq endpoint create <setup> <version>` and wires the
 // real environment into runEndpointCreate.
 //
-// --max-instances and --spend-cap-cents are both required. An endpoint is a
-// callable address anyone with its name can hit — handing one out is
-// handing out a GPU budget, so leaving either cap unset is a hard error
-// rather than a silent default to unbounded.
+// --max-instances is always required. --spend-cap-cents is required too,
+// UNLESS --on pins the endpoint to a box the customer already attached: that
+// box bills nothing (Aquanode never rented it), so a spend cap on it can
+// never fire and demanding one just asks for a number that means nothing.
+// An endpoint is a callable address anyone with its name can hit, handing
+// one out is handing out a GPU budget, so leaving a cap unset on the
+// managed (rented-hardware) path is still a hard error, not a silent
+// default to unbounded.
 func endpointCreate(args []string) error {
 	fs := flag.NewFlagSet("endpoint create", flag.ContinueOnError)
 	name := fs.String("name", "", "endpoint name (default: the setup's own name)")
 	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this endpoint may run (required)")
-	spendCapCents := fs.Int64("spend-cap-cents", -1, "spend cap in cents before this endpoint stops accepting calls (required)")
+	spendCapCents := fs.Int64("spend-cap-cents", -1, "spend cap in cents before this endpoint stops accepting calls (required unless --on is set)")
+	on := fs.String("on", "", "run this endpoint on a host you already attached with `aq attach`, instead of renting hardware")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return errors.New("usage: aq endpoint create <setup> <version> --max-instances <n> --spend-cap-cents <n>")
+		return errors.New("usage: aq endpoint create <setup> <version> --max-instances <n> [--spend-cap-cents <n>] [--on <alias>]")
 	}
 	setupTarget := positional[0]
 	version, err := strconv.Atoi(positional[1])
@@ -72,8 +87,36 @@ func endpointCreate(args []string) error {
 	if *maxInstances <= 0 {
 		return errors.New("--max-instances is required and must be a positive number: an endpoint hands out a GPU budget, so it never defaults to unbounded")
 	}
-	if *spendCapCents < 0 {
-		return errors.New("--spend-cap-cents is required and must be >= 0: an endpoint hands out a GPU budget, so it never defaults to unbounded")
+
+	onAlias := strings.TrimSpace(*on)
+	var pinnedDeploymentID int
+	if onAlias != "" {
+		h, err := lookupHost(onAlias)
+		if err != nil {
+			return err
+		}
+		if !h.Attached() {
+			return fmt.Errorf("host %q is not attached: run `aq attach %s` first, then retry `aq endpoint create ... --on %s`", onAlias, onAlias, onAlias)
+		}
+		if h.DeploymentID <= 0 {
+			// Cannot happen given h.Attached() above (it requires a nonzero
+			// DeploymentID), but the wire must never see a non-positive pin
+			// under any circumstance, so this is asserted explicitly rather
+			// than trusted.
+			return fmt.Errorf("host %q has no valid attached deployment id: run `aq attach %s` again", onAlias, onAlias)
+		}
+		pinnedDeploymentID = h.DeploymentID
+	}
+
+	if pinnedDeploymentID == 0 {
+		if *spendCapCents < 0 {
+			return errors.New("--spend-cap-cents is required and must be >= 0: an endpoint hands out a GPU budget, so it never defaults to unbounded")
+		}
+	} else if *spendCapCents < 0 {
+		// --on pins to a box that bills nothing, so no cap was requested.
+		// 0 is the only value that keeps the meaning honest: a cap that can
+		// never fire is a cap of nothing spendable, never "unbounded".
+		*spendCapCents = 0
 	}
 
 	cred, err := requireLogin()
@@ -82,13 +125,15 @@ func endpointCreate(args []string) error {
 	}
 
 	return runEndpointCreate(endpointCreateOptions{
-		cred:          cred,
-		setupTarget:   setupTarget,
-		version:       version,
-		name:          *name,
-		maxInstances:  *maxInstances,
-		spendCapCents: *spendCapCents,
-		out:           os.Stdout,
+		cred:               cred,
+		setupTarget:        setupTarget,
+		version:            version,
+		name:               *name,
+		maxInstances:       *maxInstances,
+		spendCapCents:      *spendCapCents,
+		onAlias:            onAlias,
+		pinnedDeploymentID: pinnedDeploymentID,
+		out:                os.Stdout,
 	})
 }
 
@@ -98,6 +143,14 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 	out := opts.out
 	if out == nil {
 		out = os.Stdout
+	}
+
+	// Never send a zero or negative pin on the wire under any circumstance,
+	// the key must be absent unless it is a real attached deployment id.
+	// CreateEndpointRequest.PinnedDeploymentID carries `omitempty` for the
+	// zero case; this guards the negative case, which omitempty does not.
+	if opts.pinnedDeploymentID < 0 {
+		return fmt.Errorf("internal error: refusing to send a negative pinnedDeploymentId (%d)", opts.pinnedDeploymentID)
 	}
 
 	client := newControlClient(opts.cred)
@@ -116,17 +169,32 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 	}
 
 	ep, err := client.CreateEndpoint(api.CreateEndpointRequest{
-		Name:          name,
-		VersionID:     versionRowID,
-		MaxInstances:  opts.maxInstances,
-		SpendCapCents: opts.spendCapCents,
+		Name:               name,
+		VersionID:          versionRowID,
+		MaxInstances:       opts.maxInstances,
+		SpendCapCents:      opts.spendCapCents,
+		PinnedDeploymentID: opts.pinnedDeploymentID,
 	})
 	if err != nil {
+		// A pin refused server-side (a bad --on bind) already names its own
+		// fix, relay it verbatim rather than burying it inside a generic
+		// "could not create endpoint" wrapper.
+		if opts.pinnedDeploymentID != 0 {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
+				return errors.New(apiErr.Message)
+			}
+		}
 		return fmt.Errorf("could not create endpoint %q: %w", name, err)
 	}
 
-	fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), spend cap %s)\n",
-		ep.Name, opts.version, opts.maxInstances, formatCents(opts.spendCapCents))
+	if opts.pinnedDeploymentID != 0 {
+		fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), pinned to %s, bills nothing)\n",
+			ep.Name, opts.version, opts.maxInstances, opts.onAlias)
+	} else {
+		fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), spend cap %s)\n",
+			ep.Name, opts.version, opts.maxInstances, formatCents(opts.spendCapCents))
+	}
 	return nil
 }
 
