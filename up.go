@@ -69,7 +69,7 @@ func up(args []string) error {
 		return err
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("expected at most one target — got %s", strings.Join(positional, ", "))
+		return fmt.Errorf("expected at most one target, got %s", strings.Join(positional, ", "))
 	}
 
 	if *comfyui && *jupyter {
@@ -84,7 +84,7 @@ func up(args []string) error {
 	if len(positional) == 1 {
 		alias, ok := parseHostTarget(positional[0])
 		if !ok {
-			return fmt.Errorf("`aq up` takes no deployment argument — it rents a new box. To bring services up on a box you already have, use `aq up host:<alias>`; got %q", positional[0])
+			return fmt.Errorf("`aq up` takes no deployment argument: it rents a new box. To bring services up on a box you already have, use `aq up host:<alias>`; got %q", positional[0])
 		}
 		var extra []string
 		if *jupyter {
@@ -110,7 +110,7 @@ func up(args []string) error {
 		return err
 	}
 	if cred == nil || cred.Token == "" {
-		return errors.New("not logged in — run `aq login` first")
+		return errors.New("not logged in; run `aq login` first")
 	}
 
 	return runUp(upOptions{
@@ -322,7 +322,7 @@ func waitForServiceURL(
 			// actually answers, mirroring an app-port health check (#234).
 			if !probe(creds.URL) {
 				if !announcedURL {
-					fmt.Fprintf(out, "Service URL published — waiting for %s to start serving...\n", label)
+					fmt.Fprintf(out, "Service URL published, waiting for %s to start serving...\n", label)
 					announcedURL = true
 				}
 				continue
@@ -485,7 +485,7 @@ func restoreOutcomeError(dep api.Deployment) error {
 	case "", restoreStatusSuccess:
 		return nil
 	case restoreStatusPartial:
-		msg := "the snapshot restore was incomplete — some data may be missing"
+		msg := "the snapshot restore was incomplete, some data may be missing"
 		if dep.RestoreError != "" {
 			msg += " (" + dep.RestoreError + ")"
 		}
@@ -512,7 +512,7 @@ func printReady(out, errOut io.Writer, label string, dep api.Deployment, showSec
 // names the two ways to put something on it, rather than implying the run is
 // incomplete.
 func printBareBox(out io.Writer, dep api.Deployment) {
-	fmt.Fprintf(out, "\n✓ Deployment #%d is up — a bare GPU box, no app installed.\n", dep.ID)
+	fmt.Fprintf(out, "\n✓ Deployment #%d is up: a bare GPU box, no app installed.\n", dep.ID)
 	printConnection(out, dep)
 	printRestoreWarnings(out, dep)
 	fmt.Fprintln(out, "\nWant an app on it? Re-run with --comfyui or --jupyter.")
@@ -579,7 +579,7 @@ func printServiceCredentials(out, errOut io.Writer, creds *api.ServiceCredential
 		fmt.Fprintf(out, "  Password: %s\n", creds.Password)
 		return
 	}
-	fmt.Fprintf(errOut, "  Password: (hidden) — re-run `aq status %d --show-secrets` to print it, or view it in the console.\n", deploymentID)
+	fmt.Fprintf(errOut, "  Password: (hidden). Re-run `aq status %d --show-secrets` to print it, or view it in the console.\n", deploymentID)
 }
 
 // maxGPUCount mirrors the orchestrator's MAX_GPU_COUNT rail. Validating here

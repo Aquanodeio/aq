@@ -147,14 +147,14 @@ func entriesFor(dep api.Deployment, identityFile, knownHosts string) []sshEntry 
 // at a key that isn't there. An absolute path has no expansion step to disagree
 // about.
 func renderManagedConfig(entries []sshEntry) string {
-	return renderStanzas("# Managed by `aq` — regenerated on every aq ssh / up / down.\n", entries)
+	return renderStanzas("# Managed by `aq`, regenerated on every aq ssh / up / down.\n", entries)
 }
 
 // renderHostsConfig renders the detached-host fragment. Same stanza shape, its
 // own header so a user reading the file knows which of aq's two fragments they
 // are in and what regenerates it.
 func renderHostsConfig(entries []sshEntry) string {
-	return renderStanzas("# Managed by `aq` — regenerated on every aq host add / rm.\n", entries)
+	return renderStanzas("# Managed by `aq`, regenerated on every aq host add / rm.\n", entries)
 }
 
 func renderStanzas(header string, entries []sshEntry) string {
@@ -209,7 +209,7 @@ func applyIncludeRegion(existing string, includePaths ...string) (string, error)
 // region we are about to overwrite is how you delete the keys a team uses to
 // reach a box we cannot restore access to.
 func applyMarkerRegion(existing, body string) (string, error) {
-	region := beginMarker + " — managed by `aq`, do not edit this block\n" +
+	region := beginMarker + " (managed by `aq`, do not edit this block)\n" +
 		body +
 		endMarker + "\n"
 
@@ -220,12 +220,12 @@ func applyMarkerRegion(existing, body string) (string, error) {
 		switch {
 		case strings.HasPrefix(trimmed, beginMarker):
 			if begin >= 0 {
-				return "", fmt.Errorf("found a second %q marker at line %d — remove the stray marker and re-run", beginMarker, i+1)
+				return "", fmt.Errorf("found a second %q marker at line %d, remove the stray marker and re-run", beginMarker, i+1)
 			}
 			begin = i
 		case strings.HasPrefix(trimmed, endMarker):
 			if end >= 0 {
-				return "", fmt.Errorf("found a second %q marker at line %d — remove the stray marker and re-run", endMarker, i+1)
+				return "", fmt.Errorf("found a second %q marker at line %d, remove the stray marker and re-run", endMarker, i+1)
 			}
 			end = i
 		}
@@ -240,9 +240,9 @@ func applyMarkerRegion(existing, body string) (string, error) {
 	case begin < 0 || end < 0:
 		// Never guess at repairing a half-marked config — an ssh_config aq
 		// mangles can lock the user out of every host they use.
-		return "", fmt.Errorf("found %q without its matching partner — remove the stray marker and re-run", map[bool]string{true: endMarker, false: beginMarker}[begin < 0])
+		return "", fmt.Errorf("found %q without its matching partner, remove the stray marker and re-run", map[bool]string{true: endMarker, false: beginMarker}[begin < 0])
 	case end < begin:
-		return "", fmt.Errorf("found %q before %q — remove the stray markers and re-run", endMarker, beginMarker)
+		return "", fmt.Errorf("found %q before %q, remove the stray markers and re-run", endMarker, beginMarker)
 	}
 
 	rebuilt := append([]string{}, lines[:begin]...)

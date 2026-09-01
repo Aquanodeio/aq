@@ -35,10 +35,10 @@ func forceDetach(args []string) error {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("a setup is required — usage: aq force-detach <setup> --yes")
+		return errors.New("a setup is required, usage: aq force-detach <setup> --yes")
 	}
 	if !*yes {
-		return errors.New("force-detach can lose work written since the last completed sync — rerun with --yes to confirm")
+		return errors.New("force-detach can lose work written since the last completed sync, rerun with --yes to confirm")
 	}
 
 	cred, err := requireLogin()
@@ -69,7 +69,7 @@ func runForceDetach(opts forceDetachOptions) error {
 	}
 
 	if res.WasSyncing {
-		fmt.Fprintln(out, "✓ Lease force-broken while a sync was in progress — any data written since the last completed sync may be lost.")
+		fmt.Fprintln(out, "✓ Lease force-broken while a sync was in progress. Any data written since the last completed sync may be lost.")
 		return nil
 	}
 	fmt.Fprintln(out, "✓ Lease force-broken.")

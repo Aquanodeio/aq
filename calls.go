@@ -74,7 +74,7 @@ func runCalls(opts callsOptions) error {
 // matters most — whose fault the failure was.
 func printCalls(out io.Writer, list []api.Call) {
 	if len(list) == 0 {
-		fmt.Fprintln(out, "No calls yet — run `aq call <endpoint>` to make one.")
+		fmt.Fprintln(out, "No calls yet. Run `aq call <endpoint>` to make one.")
 		return
 	}
 

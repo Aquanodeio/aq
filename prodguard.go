@@ -135,7 +135,7 @@ func guardBillable(cmd, apiURL string, args []string, allowProd, interactive boo
 	return fmt.Errorf(`refusing to %s: `+"`aq %s`"+` targets %s, which is not a local
 stack, and nothing here looks like a person who could stop it.
 
-Nothing about this shell asked for that host — an unset AQ_API_URL, or the URL
+Nothing about this shell asked for that host: an unset AQ_API_URL, or the URL
 stored by `+"`aq login`"+`, is enough to reach it, so a script or an automated tool
 lands on the real account by default and the first sign is a real bill.
 

@@ -45,7 +45,7 @@ func resolveSetupID(client *api.Client, target string) (string, error) {
 	case 1:
 		return matches[0].ID, nil
 	default:
-		return "", fmt.Errorf("%q matches %d setups — pass the setup id instead", target, len(matches))
+		return "", fmt.Errorf("%q matches %d setups; pass the setup id instead", target, len(matches))
 	}
 }
 
@@ -80,5 +80,5 @@ func setupIDForDeployment(client *api.Client, deploymentID int) (string, error) 
 			return s.ID, nil
 		}
 	}
-	return "", fmt.Errorf("no setup found holding deployment #%d's lease — cannot save before terminating", deploymentID)
+	return "", fmt.Errorf("no setup found holding deployment #%d's lease, cannot save before terminating", deploymentID)
 }

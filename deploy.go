@@ -48,7 +48,7 @@ func deploy(args []string) error {
 	snapshot := fs.String("snapshot", "", "Save to deploy (id from `aq` / the console, e.g. ext-42)")
 	comfyui := fs.Bool("comfyui", false, "Relaunch ComfyUI on the restored data (default app if you don't pick one)")
 	jupyter := fs.Bool("jupyter", false, "Relaunch Torch + Jupyter on the restored data instead")
-	noApp := fs.Bool("no-app", false, "Restore only — do not relaunch an app")
+	noApp := fs.Bool("no-app", false, "Restore only, do not relaunch an app")
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
@@ -66,7 +66,7 @@ func deploy(args []string) error {
 		source = positional[0]
 	}
 	if source == "" {
-		return errors.New("a snapshot is required — pass --snapshot <id> (or `aq deploy <id>`)")
+		return errors.New("a snapshot is required: pass --snapshot <id> (or `aq deploy <id>`)")
 	}
 
 	if err := validateGPUCount(*gpus); err != nil {
@@ -95,7 +95,7 @@ func deploy(args []string) error {
 		return err
 	}
 	if cred == nil || cred.Token == "" {
-		return errors.New("not logged in — run `aq login` first")
+		return errors.New("not logged in; run `aq login` first")
 	}
 
 	return runDeploy(deployOptions{

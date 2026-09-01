@@ -62,7 +62,7 @@ func snapshot(args []string) error {
 		return err
 	}
 	if parsed.target == "" {
-		return fmt.Errorf("a setup is required — usage: aq save <setup>")
+		return fmt.Errorf("a setup is required, usage: aq save <setup>")
 	}
 
 	// Detached: the box captures itself into its own bucket via `ogre snapshot`.

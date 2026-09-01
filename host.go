@@ -58,7 +58,7 @@ type hostOptions struct {
 // connectivity from us at all, and no Aquanode login is required for any of it.
 func hostCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: aq host <add|ls|rm> [flags] — see `aq help`")
+		return errors.New("usage: aq host <add|ls|rm> [flags]; see `aq help`")
 	}
 	sub, rest := args[0], args[1:]
 
@@ -79,7 +79,7 @@ func hostCmd(args []string) error {
 		alias = positional[0]
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("expected at most one alias — got %s", strings.Join(positional, ", "))
+		return fmt.Errorf("expected at most one alias, got %s", strings.Join(positional, ", "))
 	}
 
 	return runHost(hostOptions{
@@ -126,7 +126,7 @@ func runHost(opts hostOptions) error {
 	case "rm", "remove":
 		return runHostRm(opts)
 	default:
-		return fmt.Errorf("unknown host subcommand %q — expected add, ls, or rm", opts.sub)
+		return fmt.Errorf("unknown host subcommand %q, expected add, ls, or rm", opts.sub)
 	}
 }
 
@@ -136,17 +136,17 @@ func runHost(opts hostOptions) error {
 // rather than escaped in five places later.
 func validHostAlias(alias string) error {
 	if alias == "" {
-		return errors.New("an alias is required — usage: aq host add <alias> --ssh root@<ip>")
+		return errors.New("an alias is required, usage: aq host add <alias> --ssh root@<ip>")
 	}
 	if len(alias) > 40 {
-		return fmt.Errorf("alias %q is too long — keep it to 40 characters", alias)
+		return fmt.Errorf("alias %q is too long, keep it to 40 characters", alias)
 	}
 	for i, r := range alias {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 		case (r == '-' || r == '_') && i > 0:
 		default:
-			return fmt.Errorf("invalid alias %q — use lowercase letters, digits, '-' and '_', starting with a letter or digit", alias)
+			return fmt.Errorf("invalid alias %q; use lowercase letters, digits, '-' and '_', starting with a letter or digit", alias)
 		}
 	}
 	return nil
@@ -216,7 +216,7 @@ func parseSurvey(raw []byte) (hostSurvey, error) {
 		// A survey that did not run to completion is not a survey with some
 		// fields missing — it is a box we could not look at, and every decision
 		// downstream depends on having looked.
-		return hostSurvey{}, errors.New("the box did not complete the survey — aq could not read enough to proceed safely")
+		return hostSurvey{}, errors.New("the box did not complete the survey, aq could not read enough to proceed safely")
 	}
 	return s, nil
 }
@@ -228,7 +228,7 @@ func runHostAdd(opts hostOptions) error {
 		return err
 	}
 	if opts.ssh == "" {
-		return fmt.Errorf("--ssh is required — usage: aq host add %s --ssh root@<ip>", opts.alias)
+		return fmt.Errorf("--ssh is required, usage: aq host add %s --ssh root@<ip>", opts.alias)
 	}
 	sshTarget, port, err := parseSSHTarget(opts.ssh)
 	if err != nil {
@@ -262,7 +262,7 @@ func runHostAdd(opts hostOptions) error {
 	if existing, found, err := config.FindHost(opts.alias); err != nil {
 		return err
 	} else if found && !opts.dryRun {
-		return fmt.Errorf("host %q is already registered (%s) — remove it with `aq host rm %s` first", existing.Alias, existing.SSH, existing.Alias)
+		return fmt.Errorf("host %q is already registered (%s), remove it with `aq host rm %s` first", existing.Alias, existing.SSH, existing.Alias)
 	}
 
 	// 1. Survey. No write, on the box or on this machine. Same posture as
@@ -288,7 +288,7 @@ func runHostAdd(opts hostOptions) error {
 	}
 
 	if survey.Uname != "" && survey.Uname != "Linux" {
-		return fmt.Errorf("ogre is a Linux x86_64 binary and this box reports %s/%s — aq cannot drive it", survey.Uname, survey.Arch)
+		return fmt.Errorf("ogre is a Linux x86_64 binary and this box reports %s/%s, aq cannot drive it", survey.Uname, survey.Arch)
 	}
 
 	// 2. Install ogre if the box has none. There is no public installer for
@@ -297,7 +297,7 @@ func runHostAdd(opts hostOptions) error {
 	// they want installed. Refusing beats guessing at a download.
 	if survey.OgrePath == "" {
 		if opts.ogreBin == "" {
-			return fmt.Errorf("no `ogre` on %s and no --ogre-binary given — install ogre on the box, or re-run with --ogre-binary <path to a Linux x86_64 ogre>", h.SSH)
+			return fmt.Errorf("no `ogre` on %s and no --ogre-binary given, install ogre on the box, or re-run with --ogre-binary <path to a Linux x86_64 ogre>", h.SSH)
 		}
 		if err := checkLocalOgreBinary(opts.ogreBin); err != nil {
 			return err
@@ -329,7 +329,7 @@ func runHostAdd(opts hostOptions) error {
 		return err
 	}
 
-	fmt.Fprintf(opts.out, "\n✓ Registered %s (%s) — ogre answers on loopback.\n", h.Alias, h.SSH)
+	fmt.Fprintf(opts.out, "\n✓ Registered %s (%s). Ogre answers on loopback.\n", h.Alias, h.SSH)
 	fmt.Fprintf(opts.out, "  ssh alias: %s\n", hostAliasFor(h.Alias))
 	fmt.Fprintf(opts.out, "  Drive it with `aq ssh host:%s`, `aq run host:%s -- <cmd>`, `aq save host:%s`.\n", h.Alias, h.Alias, h.Alias)
 	fmt.Fprintf(opts.out, "  This is detached mode: no Aquanode account is involved and nothing here calls our API.\n")
@@ -393,7 +393,7 @@ func printHostPlan(out io.Writer, h config.Host, s hostSurvey) {
 	fmt.Fprintf(out, "  • add one `%s` stanza to ~/.ssh/%s (included from your ~/.ssh/config)\n", hostAliasFor(h.Alias), managedHostsConfigName)
 	fmt.Fprintln(out, "\nWould NOT: contact the Aquanode API, change your box's ssh keys, or start any workload.")
 	fmt.Fprintln(out, "\nThe whole box is one target. Aquanode cannot split a multi-GPU box into")
-	fmt.Fprintln(out, "several independent setups — one box runs one setup at a time.")
+	fmt.Fprintln(out, "several independent setups: one box runs one setup at a time.")
 }
 
 func hostsPathForDisplay() string {
@@ -426,12 +426,12 @@ func daemonLabel(state, reason string) string {
 	case "ok":
 		return "answers on loopback"
 	case "unreachable":
-		return "did not answer — " + reason
+		return "did not answer: " + reason
 	default:
 		if strings.TrimSpace(reason) == "" {
-			return "unknown — aq could not check"
+			return "unknown: aq could not check"
 		}
-		return "unknown — " + reason
+		return "unknown: " + reason
 	}
 }
 
@@ -465,17 +465,17 @@ func runHostLs(opts hostOptions) error {
 // leases those two must never be the same operation.
 func runHostRm(opts hostOptions) error {
 	if opts.alias == "" {
-		return errors.New("an alias is required — usage: aq host rm <alias>")
+		return errors.New("an alias is required, usage: aq host rm <alias>")
 	}
 	h, found, err := config.FindHost(opts.alias)
 	if err != nil {
 		return err
 	}
 	if !found {
-		return fmt.Errorf("no host %q in your registry — see `aq host ls`", opts.alias)
+		return fmt.Errorf("no host %q in your registry; see `aq host ls`", opts.alias)
 	}
 	if h.Attached() {
-		return fmt.Errorf("host %q is attached as deployment #%d — run `aq release %s` first, which revokes its credentials and leaves the box running", h.Alias, h.DeploymentID, h.Alias)
+		return fmt.Errorf("host %q is attached as deployment #%d; run `aq release %s` first, which revokes its credentials and leaves the box running", h.Alias, h.DeploymentID, h.Alias)
 	}
 	if _, err := config.RemoveHost(opts.alias); err != nil {
 		return err
@@ -502,26 +502,26 @@ func parseSSHTarget(target string) (sshTarget string, port int, err error) {
 		// A bracketed IPv6 literal, optionally with :port after the bracket.
 		end := strings.Index(hostPart, "]")
 		if end < 0 {
-			return "", 0, fmt.Errorf("invalid --ssh %q — an IPv6 literal needs its closing ']'", target)
+			return "", 0, fmt.Errorf("invalid --ssh %q: an IPv6 literal needs its closing ']'", target)
 		}
 		rest := hostPart[end+1:]
 		hostPart = hostPart[1:end]
 		if strings.HasPrefix(rest, ":") {
 			if port, err = strconv.Atoi(rest[1:]); err != nil {
-				return "", 0, fmt.Errorf("invalid --ssh %q — %q is not a port", target, rest[1:])
+				return "", 0, fmt.Errorf("invalid --ssh %q: %q is not a port", target, rest[1:])
 			}
 		}
 	} else if i := strings.LastIndex(hostPart, ":"); i >= 0 && !strings.Contains(hostPart[i+1:], ":") && strings.Count(hostPart, ":") == 1 {
 		if port, err = strconv.Atoi(hostPart[i+1:]); err != nil {
-			return "", 0, fmt.Errorf("invalid --ssh %q — %q is not a port", target, hostPart[i+1:])
+			return "", 0, fmt.Errorf("invalid --ssh %q: %q is not a port", target, hostPart[i+1:])
 		}
 		hostPart = hostPart[:i]
 	}
 	if hostPart == "" {
-		return "", 0, fmt.Errorf("invalid --ssh %q — it names no host", target)
+		return "", 0, fmt.Errorf("invalid --ssh %q: it names no host", target)
 	}
 	if port < 0 || port > 65535 {
-		return "", 0, fmt.Errorf("invalid --ssh %q — port %d is out of range", target, port)
+		return "", 0, fmt.Errorf("invalid --ssh %q: port %d is out of range", target, port)
 	}
 	return user + "@" + hostPart, port, nil
 }

@@ -23,7 +23,7 @@ func resolveSSHAlias(client *api.Client, target, verb string, errOut io.Writer) 
 		return resolveHostSSHAlias(alias)
 	}
 	if client == nil {
-		return "", fmt.Errorf("cannot %s %q without a login — run `aq login`, or address a detached box as `host:<alias>`", verb, target)
+		return "", fmt.Errorf("cannot %s %q without a login; run `aq login`, or address a detached box as `host:<alias>`", verb, target)
 	}
 
 	deploymentID, err := resolveDeploymentID(client, target, verb)
@@ -46,9 +46,9 @@ func resolveSSHAlias(client *api.Client, target, verb string, errOut io.Writer) 
 
 	switch {
 	case isClosedStatus(state):
-		return "", fmt.Errorf("deployment #%d is %s — it is no longer running", deploymentID, state)
+		return "", fmt.Errorf("deployment #%d is %s; it is no longer running", deploymentID, state)
 	case !isActiveStatus(state):
-		return "", fmt.Errorf("deployment #%d is still provisioning (%s) — retry in a minute", deploymentID, state)
+		return "", fmt.Errorf("deployment #%d is still provisioning (%s), retry in a minute", deploymentID, state)
 	}
 
 	if _, _, ok := sshEndpointFor(dep); !ok {
@@ -56,7 +56,7 @@ func resolveSSHAlias(client *api.Client, target, verb string, errOut io.Writer) 
 		// maps no port 22 (an Akash lease without an SSH mapping) will never grow
 		// one, so "retry in a minute" would be a lie.
 		if dep.AppURL == "" && len(dep.ServiceURLs) == 0 {
-			return "", fmt.Errorf("deployment #%d is up but has not reported an address yet — retry in a moment", deploymentID)
+			return "", fmt.Errorf("deployment #%d is up but has not reported an address yet, retry in a moment", deploymentID)
 		}
 		return "", fmt.Errorf("deployment #%d does not expose SSH", deploymentID)
 	}

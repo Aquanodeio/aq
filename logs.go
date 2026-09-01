@@ -48,14 +48,14 @@ func logsCmd(args []string) error {
 		return err
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("expected at most one deployment — got %s", strings.Join(positional, ", "))
+		return fmt.Errorf("expected at most one deployment, got %s", strings.Join(positional, ", "))
 	}
 	var target string
 	if len(positional) == 1 {
 		target = positional[0]
 	}
 	if strings.HasPrefix(target, "-") {
-		return fmt.Errorf("invalid deployment %q — it must not start with '-'", target)
+		return fmt.Errorf("invalid deployment %q; it must not start with '-'", target)
 	}
 	if *lines < 0 {
 		return fmt.Errorf("-n must not be negative, got %d", *lines)
@@ -103,7 +103,7 @@ func validateRunID(id string) error {
 		switch {
 		case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '-', r == '_':
 		default:
-			return fmt.Errorf("invalid run id %q — run ids look like 20260826-141230", id)
+			return fmt.Errorf("invalid run id %q; run ids look like 20260826-141230", id)
 		}
 	}
 	return nil
@@ -164,7 +164,7 @@ func resolveRunDirSnippet(dir, run string) string {
 	}
 	return "base=" + base + "\n" +
 		"d=$(ls -1d \"$base\"/*/ 2>/dev/null | sort | tail -1)\n" +
-		"[ -n \"$d\" ] || { echo 'no detached runs on this box — start one with `aq run --detach -- <cmd>`' >&2; exit 3; }\n"
+		"[ -n \"$d\" ] || { echo 'no detached runs on this box, start one with `aq run --detach -- <cmd>`' >&2; exit 3; }\n"
 }
 
 // buildTailScript prints a run's log, prefixed by whether it is still running.

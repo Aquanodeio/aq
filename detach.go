@@ -78,7 +78,7 @@ func launchDetached(alias, workdir string, command []string, runner func(args []
 		// The box is supposed to echo the run id as the script's only stdout.
 		// Nothing back means the run may or may not have started, and reporting
 		// a success we cannot name would leave the user with no way to find it.
-		return "", fmt.Errorf("the box did not report a run id — the run may not have started; check `aq logs %s --list`", alias)
+		return "", fmt.Errorf("the box did not report a run id: the run may not have started; check `aq logs %s --list`", alias)
 	}
 	return id, nil
 }

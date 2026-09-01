@@ -42,7 +42,7 @@ func releaseCmd(args []string) error {
 		return err
 	}
 	if len(positional) != 1 {
-		return errors.New("usage: aq release <alias> — the alias of an attached box from `aq host ls`")
+		return errors.New("usage: aq release <alias>: the alias of an attached box from `aq host ls`")
 	}
 
 	cred, err := requireLogin()
@@ -74,7 +74,7 @@ func runRelease(opts releaseOptions) error {
 		return err
 	}
 	if !h.Releasable() {
-		return fmt.Errorf("%s is not attached — there is nothing to release. Remove it from your registry with `aq host rm %s`", h.Alias, h.Alias)
+		return fmt.Errorf("%s is not attached; there is nothing to release. Remove it from your registry with `aq host rm %s`", h.Alias, h.Alias)
 	}
 	deploymentID := h.ReleaseTargetID()
 
@@ -88,7 +88,7 @@ func runRelease(opts releaseOptions) error {
 	}
 	fmt.Fprintln(opts.out, "  • Aquanode drops this box's deployment row")
 	fmt.Fprintln(opts.out, "  • the box keeps running, exactly as it is")
-	fmt.Fprintln(opts.out, "  • no provider is contacted and nothing is torn down — this is not a terminate")
+	fmt.Fprintln(opts.out, "  • no provider is contacted and nothing is torn down. This is not a terminate")
 	if h.Attached() {
 		fmt.Fprintln(opts.out, "  • Aquanode revokes this box's credentials")
 		fmt.Fprintln(opts.out, "  • the console, version history, sharing and endpoints stop working for it")
@@ -101,7 +101,7 @@ func runRelease(opts releaseOptions) error {
 
 	if !opts.yes {
 		if !isInteractiveStdin() {
-			return errors.New("refusing to release without confirmation in a non-interactive shell — re-run with --yes")
+			return errors.New("refusing to release without confirmation in a non-interactive shell; re-run with --yes")
 		}
 		fmt.Fprint(opts.out, "\nRelease it? [y/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -136,6 +136,6 @@ func runRelease(opts releaseOptions) error {
 		return err
 	}
 
-	fmt.Fprintf(opts.out, "\n✓ Released %s. The box is still running — nothing was torn down.\n", h.Alias)
+	fmt.Fprintf(opts.out, "\n✓ Released %s. The box is still running. Nothing was torn down.\n", h.Alias)
 	return nil
 }

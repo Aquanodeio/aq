@@ -156,7 +156,7 @@ func runImport(opts importOptions) error {
 	// guessing — the same rule `aq save`'s first-name prompt follows.
 	if !opts.yes {
 		if !isInteractiveStdin() {
-			return errors.New("refusing to capture and upload without confirmation in a non-interactive shell — re-run with --yes")
+			return errors.New("refusing to capture and upload without confirmation in a non-interactive shell; re-run with --yes")
 		}
 		fmt.Fprint(opts.out, "\nProceed with capture and upload? [y/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -200,7 +200,7 @@ func runImport(opts importOptions) error {
 	// defaults it: a start response missing it is a hard, loud failure
 	// before a single byte moves.
 	if start.ResticBackupID == "" {
-		return fmt.Errorf("setup %s was created but the orchestrator did not return a restic_backup_id — refusing to guess where in storage to write the capture (see CONTRACT.md section G); update aq or the orchestrator, then resume with `aq import --resume %s`", start.SetupID, start.SetupID)
+		return fmt.Errorf("setup %s was created but the orchestrator did not return a restic_backup_id, refusing to guess where in storage to write the capture (see CONTRACT.md section G); update aq or the orchestrator, then resume with `aq import --resume %s`", start.SetupID, start.SetupID)
 	}
 
 	// aq keeps NO local copy of storage_prefix/restic_backup_id/restic_password/
@@ -212,7 +212,7 @@ func runImport(opts importOptions) error {
 	// POST /setups/import/credentials instead (setupImportResume below).
 	captured, err := runOgreCapture(ogrePath, start.Credentials.Endpoint, start.Credentials.Bucket, start.Credentials.Region, start.StoragePrefix, start.ResticBackupID, obs.Capture.MountPath, opts.includes, opts.excludes, env, opts.errOut)
 	if err != nil {
-		return fmt.Errorf("setup %s exists but the capture failed — resume it with `aq import --resume %s` once fixed (restic dedups what already landed): %w", start.SetupID, start.SetupID, err)
+		return fmt.Errorf("setup %s exists but the capture failed, resume it with `aq import --resume %s` once fixed (restic dedups what already landed): %w", start.SetupID, start.SetupID, err)
 	}
 
 	// 4. Register the version, synthesizing a launchable recipe from what was
@@ -226,7 +226,7 @@ func runImport(opts importOptions) error {
 		Observation:    captured.Observation,
 	})
 	if err != nil {
-		return fmt.Errorf("capture succeeded but registering the setup failed — resume with `aq import --resume %s` to retry: %w", start.SetupID, err)
+		return fmt.Errorf("capture succeeded but registering the setup failed, resume with `aq import --resume %s` to retry: %w", start.SetupID, err)
 	}
 
 	fmt.Fprintf(opts.out, "\n✓ Imported into setup %s (version %d). See it with `aq setups`.\n", complete.SetupID, complete.VersionID)
@@ -234,7 +234,7 @@ func runImport(opts importOptions) error {
 
 	if opts.launch {
 		if err := launchImportedSetup(client, opts, complete.VersionID, obs); err != nil {
-			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact — launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
+			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact; launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
 		}
 	}
 
@@ -270,17 +270,17 @@ func printSurvey(out io.Writer, obs api.ImportObservation) {
 	}
 
 	if len(obs.Survey.Unreadable) > 0 {
-		fmt.Fprintln(out, "\nUnreadable (could not even check — not the same as \"not capturing\"):")
+		fmt.Fprintln(out, "\nUnreadable (could not even check, not the same as \"not capturing\"):")
 		for _, e := range obs.Survey.Unreadable {
 			fmt.Fprintf(out, "  %-40s (%s)\n", e.Path, e.Reason)
 		}
 		// The remedy is the point (contract H1): these are not captured, and
 		// the user can fix it.
-		fmt.Fprintln(out, "  not captured — re-run under sudo to include them")
+		fmt.Fprintln(out, "  not captured; re-run under sudo to include them")
 	}
 
 	if obs.Manifest.Collected {
-		fmt.Fprintln(out, "\nRecorded but not restorable (package manifest — reference only, never replayed):")
+		fmt.Fprintln(out, "\nRecorded but not restorable (package manifest, reference only, never replayed):")
 		for _, env := range obs.Manifest.PythonEnvs {
 			suffix := ""
 			if env.Truncated {
@@ -298,7 +298,7 @@ func printSurvey(out io.Writer, obs api.ImportObservation) {
 	}
 
 	if obs.Survey.Incomplete() {
-		fmt.Fprintln(out, "\n⚠ The survey hit a walk/time budget before it finished — sizes marked \">=\" above are floors, and some paths past the budget may be missing from either block entirely.")
+		fmt.Fprintln(out, "\n⚠ The survey hit a walk/time budget before it finished. Sizes marked \">=\" above are floors, and some paths past the budget may be missing from either block entirely.")
 	}
 }
 
@@ -382,7 +382,7 @@ func runImportResume(client *api.Client, opts importOptions) error {
 		return fmt.Errorf("could not resume import for setup %s: %w", opts.resumeSetupID, err)
 	}
 	if refreshed.ResticBackupID == "" {
-		return fmt.Errorf("setup %s: the orchestrator did not return a restic_backup_id — refusing to guess where in storage to write the capture (see CONTRACT.md section G)", opts.resumeSetupID)
+		return fmt.Errorf("setup %s: the orchestrator did not return a restic_backup_id, refusing to guess where in storage to write the capture (see CONTRACT.md section G)", opts.resumeSetupID)
 	}
 
 	ogrePath := opts.ogrePath
@@ -407,7 +407,7 @@ func runImportResume(client *api.Client, opts importOptions) error {
 
 	captured, err := runOgreCapture(ogrePath, refreshed.Credentials.Endpoint, refreshed.Credentials.Bucket, refreshed.Credentials.Region, refreshed.StoragePrefix, refreshed.ResticBackupID, "", opts.includes, opts.excludes, env, opts.errOut)
 	if err != nil {
-		return fmt.Errorf("resume capture failed — re-run `aq import --resume %s` again once fixed: %w", opts.resumeSetupID, err)
+		return fmt.Errorf("resume capture failed; re-run `aq import --resume %s` again once fixed: %w", opts.resumeSetupID, err)
 	}
 
 	complete, err := client.CompleteImport(api.ImportCompleteRequest{
@@ -427,7 +427,7 @@ func runImportResume(client *api.Client, opts importOptions) error {
 
 	if opts.launch {
 		if err := launchImportedSetup(client, opts, complete.VersionID, captured.Observation); err != nil {
-			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact — launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
+			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact; launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
 		}
 	}
 
@@ -466,7 +466,7 @@ func launchImportedSetup(client *api.Client, opts importOptions, versionID int, 
 	if opts.maxPrice > 0 {
 		fmt.Fprintf(out, "--max-price $%.2f/hr is the guard on that spend.\n", opts.maxPrice)
 	} else {
-		fmt.Fprintln(out, "No --max-price was given — the cheapest matching offer will be rented at whatever it costs.")
+		fmt.Fprintln(out, "No --max-price was given, the cheapest matching offer will be rented at whatever it costs.")
 	}
 
 	sshKeyID, err := ensureSSHKey(client, out)
@@ -500,7 +500,7 @@ func launchImportedSetup(client *api.Client, opts importOptions, versionID int, 
 			fmt.Fprintf(out, "  - %s\n", w)
 		}
 	}
-	fmt.Fprintf(out, "\nCheck its status with `aq status %d` — connection details appear once it's ready.\n", installed.DeploymentID)
+	fmt.Fprintf(out, "\nCheck its status with `aq status %d`. Connection details appear once it's ready.\n", installed.DeploymentID)
 	return nil
 }
 
@@ -513,11 +513,11 @@ func launchImportedSetup(client *api.Client, opts importOptions, versionID int, 
 func printInstallPreview(out io.Writer, p *api.InstallPreviewResult, gpuModel string, maxPrice float64, provider string) {
 	fmt.Fprintln(out, "\n--launch: install preview (before renting):")
 	if !p.HasRecipe {
-		fmt.Fprintln(out, "  (no recipe on this version — nothing to provision from)")
+		fmt.Fprintln(out, "  (no recipe on this version; nothing to provision from)")
 		return
 	}
 
-	template := "(none — data-only restore)"
+	template := "(none, data-only restore)"
 	if p.Template != nil && *p.Template != "" {
 		template = *p.Template
 	}
@@ -585,7 +585,7 @@ func pollUntilDeploymentActive(client *api.Client, deploymentID int, pollInterva
 // reject an unknown schema loudly rather than guess at an unfamiliar shape.
 func checkObservationSchema(obs api.ImportObservation) error {
 	if obs.Schema != api.ImportObservationSchema {
-		return fmt.Errorf("this ogre reports observation schema %d, but this aq build only understands schema %d — update aq", obs.Schema, api.ImportObservationSchema)
+		return fmt.Errorf("this ogre reports observation schema %d, but this aq build only understands schema %d. Update aq", obs.Schema, api.ImportObservationSchema)
 	}
 	return nil
 }
@@ -728,10 +728,10 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 		return dest, nil
 	}
 
-	fmt.Fprintln(out, "No `ogre` on PATH — fetching it from Aquanode...")
+	fmt.Fprintln(out, "No `ogre` on PATH, fetching it from Aquanode...")
 	meta, err := client.OgreDownloadURL()
 	if err != nil {
-		return "", fmt.Errorf("could not get an ogre download URL — check your network connection: %w", err)
+		return "", fmt.Errorf("could not get an ogre download URL; check your network connection: %w", err)
 	}
 
 	if err := downloadAndVerify(meta.URL, meta.SHA256, dest); err != nil {
@@ -776,7 +776,7 @@ func downloadAndVerify(url, wantSHA256, dest string) error {
 
 	got := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(got, wantSHA256) {
-		return fmt.Errorf("checksum mismatch — expected %s, got %s (refusing to run an unverified binary)", wantSHA256, got)
+		return fmt.Errorf("checksum mismatch: expected %s, got %s (refusing to run an unverified binary)", wantSHA256, got)
 	}
 
 	if err := os.Chmod(tmpPath, 0o755); err != nil {

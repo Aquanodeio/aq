@@ -142,7 +142,7 @@ func loadKeyPair(privPath string) (localKey, error) {
 func generateManagedKey(path string) error {
 	bin, err := exec.LookPath("ssh-keygen")
 	if err != nil {
-		return fmt.Errorf("no SSH key found and ssh-keygen is not installed — install OpenSSH, or create a key with: ssh-keygen -t ed25519")
+		return fmt.Errorf("no SSH key found and ssh-keygen is not installed. Install OpenSSH, or create a key with: ssh-keygen -t ed25519")
 	}
 	host, _ := os.Hostname()
 	if host == "" {

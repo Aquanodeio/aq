@@ -28,7 +28,7 @@ func endpoint(args []string) error {
 	case "rm":
 		return endpointRemove(rest)
 	default:
-		return fmt.Errorf("aq endpoint: unknown subcommand %q — expected \"create\", \"point\", or \"rm\"", sub)
+		return fmt.Errorf("aq endpoint: unknown subcommand %q, expected \"create\", \"point\", or \"rm\"", sub)
 	}
 }
 
@@ -67,13 +67,13 @@ func endpointCreate(args []string) error {
 	setupTarget := positional[0]
 	version, err := strconv.Atoi(positional[1])
 	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q — pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
+		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
 	}
 	if *maxInstances <= 0 {
-		return errors.New("--max-instances is required and must be a positive number — an endpoint hands out a GPU budget, so it never defaults to unbounded")
+		return errors.New("--max-instances is required and must be a positive number: an endpoint hands out a GPU budget, so it never defaults to unbounded")
 	}
 	if *spendCapCents < 0 {
-		return errors.New("--spend-cap-cents is required and must be >= 0 — an endpoint hands out a GPU budget, so it never defaults to unbounded")
+		return errors.New("--spend-cap-cents is required and must be >= 0: an endpoint hands out a GPU budget, so it never defaults to unbounded")
 	}
 
 	cred, err := requireLogin()
@@ -153,7 +153,7 @@ func endpointPoint(args []string) error {
 	target := positional[0]
 	version, err := strconv.Atoi(positional[1])
 	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q — pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
+		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
 	}
 
 	cred, err := requireLogin()

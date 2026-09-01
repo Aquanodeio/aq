@@ -198,11 +198,11 @@ const maxBodySnippet = 200
 func nonJSONError(status int, raw []byte) error {
 	switch status {
 	case http.StatusBadGateway:
-		return fmt.Errorf("the Aquanode server is temporarily unreachable (HTTP 502 Bad Gateway) — please retry in a moment")
+		return fmt.Errorf("the Aquanode server is temporarily unreachable (HTTP 502 Bad Gateway), please retry in a moment")
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("the Aquanode server is temporarily unavailable (HTTP 503 Service Unavailable) — please retry in a moment")
+		return fmt.Errorf("the Aquanode server is temporarily unavailable (HTTP 503 Service Unavailable), please retry in a moment")
 	case http.StatusGatewayTimeout:
-		return fmt.Errorf("the Aquanode server took too long to respond (HTTP 504 Gateway Timeout) — please retry in a moment")
+		return fmt.Errorf("the Aquanode server took too long to respond (HTTP 504 Gateway Timeout), please retry in a moment")
 	}
 	return fmt.Errorf("unexpected response (HTTP %d): %s", status, snippet(raw))
 }
