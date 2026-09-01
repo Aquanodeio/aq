@@ -11,7 +11,7 @@
 # that script — never edit a vendored copy directly;
 # scripts/govern/lint-harness-refs.sh detects and fails on drift between a
 # vendored copy and this file.
-# SOURCE-HASH: a405f80293e9ad5da9ff1ce5fd04a8d4c52f0c0e6074bd5ec36277bd6b1224f1
+# SOURCE-HASH: 536240b5020f8d045f7fdfa169c9aab1cdf9de6d47c01dcd633c1b23e44ed5a5
 #
 # Background: this repo is one of several independent git repos cloned inside
 # an `aquanode` meta-repo workspace. The workspace root's CLAUDE.md carries a
@@ -102,10 +102,30 @@ SELF_REL="${SELF_ABS#"${REPO_ROOT}"/}"
 MATCHER_REL="${MATCHER#"${REPO_ROOT}"/}"
 BASELINE_REL="$(dirname "$SELF_REL")/.harness-refs-baseline.txt"
 BASELINE_FILE="${REPO_ROOT}/${BASELINE_REL}"
-# The workflow file that invokes this guard necessarily DESCRIBES the
+# Any workflow file that INVOKES this guard necessarily DESCRIBES the
 # patterns it checks for (e.g. names "queue/tickets.md" in a comment) —
-# exclude it too, same rationale as excluding this script's own source.
-WORKFLOW_REL=".github/workflows/check-harness-refs.yml"
+# exclude those too, same rationale as excluding this script's own source.
+#
+# DERIVED, never hardcoded. This used to be a single literal path
+# (".github/workflows/check-harness-refs.yml"). That file was later folded
+# into a consolidated `guards.yml` in the website repo, and because the
+# exclusion still named the file that no longer existed, the guard began
+# flagging the NEW workflow's own explanatory comment — a violation nothing
+# could fix by editing product source, on a check that had just started
+# blocking again. A hardcoded caller-supplied path is exactly the seam
+# CLAUDE.md warns about: it diverges the moment someone renames the caller,
+# and the stale path still "succeeds" (excludes nothing) rather than
+# erroring. So derive the list from what actually calls us — grep the
+# workflow dir for this script's own basename. A repo with no workflows, or
+# none invoking the guard, yields an empty list and excludes nothing.
+WORKFLOW_EXCLUDES=()
+_self_base="$(basename "$SELF_REL")"
+if [[ -d "${REPO_ROOT}/.github/workflows" ]]; then
+  while IFS= read -r _wf; do
+    [[ -z "$_wf" ]] && continue
+    WORKFLOW_EXCLUDES+=(":!${_wf#"${REPO_ROOT}"/}")
+  done < <(grep -rlF "$_self_base" "${REPO_ROOT}/.github/workflows" 2>/dev/null || true)
+fi
 
 # Tracked files only (gitignored/generated output never trips this), minus
 # lockfiles/vendor/node_modules/this guard's own files. The matcher itself
@@ -113,7 +133,8 @@ WORKFLOW_REL=".github/workflows/check-harness-refs.yml"
 matches="$(git ls-files -z -- . \
   ':!go.sum' ':!go.mod' ':!package-lock.json' \
   ':!vendor/**' ':!node_modules/**' \
-  ":!${SELF_REL}" ":!${MATCHER_REL}" ":!${BASELINE_REL}" ":!${WORKFLOW_REL}" \
+  ":!${SELF_REL}" ":!${MATCHER_REL}" ":!${BASELINE_REL}" \
+  ${WORKFLOW_EXCLUDES[@]+"${WORKFLOW_EXCLUDES[@]}"} \
   | python3 "$MATCHER" || true)"
 
 declare -A baseline_keys=()
