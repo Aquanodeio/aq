@@ -13,7 +13,7 @@ import (
 )
 
 // endpointTestSetupID is a UUID so resolveSetupID resolves it locally
-// (looksLikeUUID) without a GET /setups round trip — the tests below only
+// (looksLikeUUID) without a GET /setups round trip, the tests below only
 // care about what runEndpointCreate sends to POST /endpoints.
 const endpointTestSetupID = "11111111-1111-1111-1111-111111111111"
 
@@ -46,7 +46,7 @@ func baseCreateOpts(serverURL string) endpointCreateOptions {
 }
 
 // The managed (non-pinned) path must never put a pinnedDeploymentId key on
-// the wire at all — CreateEndpointRequest.PinnedDeploymentID carries
+// the wire at all, CreateEndpointRequest.PinnedDeploymentID carries
 // `omitempty` for exactly this, and this test asserts the wire, not just
 // the parsed request struct.
 func TestCreateEndpointOmitsPinnedDeploymentIDWhenNotPinned(t *testing.T) {
@@ -67,7 +67,7 @@ func TestCreateEndpointOmitsPinnedDeploymentIDWhenNotPinned(t *testing.T) {
 }
 
 // The --on path must send the resolved attached deployment id verbatim, and
-// only that id — never a derived or rounded value.
+// only that id, never a derived or rounded value.
 func TestCreateEndpointSendsThePinnedDeploymentIDOnTheWire(t *testing.T) {
 	var body []byte
 	srv := endpointCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -94,9 +94,9 @@ func TestCreateEndpointSendsThePinnedDeploymentIDOnTheWire(t *testing.T) {
 }
 
 // A pin the backend refuses (400, message names the fix) must reach the user
-// verbatim — never buried inside "could not create endpoint ...: <msg>".
+// verbatim, never buried inside "could not create endpoint ...: <msg>".
 func TestCreateEndpointSurfacesA400VerbatimWhenPinned(t *testing.T) {
-	const backendMsg = "deployment #4242 is not attached — attach it first with `aq attach`"
+	const backendMsg = "deployment 4242 is not attached, attach it first with `aq attach`"
 	srv := endpointCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, backendMsg)
 	})
@@ -114,7 +114,7 @@ func TestCreateEndpointSurfacesA400VerbatimWhenPinned(t *testing.T) {
 	}
 }
 
-// The managed path keeps today's wrapped-error behaviour — this pins that
+// The managed path keeps today's wrapped-error behaviour, this pins that
 // widening the pinned path's error handling did not change it.
 func TestCreateEndpointWrapsA400WhenNotPinned(t *testing.T) {
 	srv := endpointCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +133,7 @@ func TestCreateEndpointWrapsA400WhenNotPinned(t *testing.T) {
 }
 
 // endpointCreate (the flag-parsing entry point) must refuse an unknown --on
-// alias locally, before requireLogin or any network call — no server is
+// alias locally, before requireLogin or any network call, no server is
 // started for this test at all.
 func TestEndpointCreateOnUnknownAliasRefusesLocally(t *testing.T) {
 	detachedSandbox(t)

@@ -43,12 +43,12 @@ type endpointCreateOptions struct {
 	name          string // endpoint name (defaults to the setup's own name)
 	maxInstances  int
 	spendCapCents int64
-	// onAlias is the `--on <alias>` value as typed, kept only for output —
+	// onAlias is the `--on <alias>` value as typed, kept only for output,
 	// pinnedDeploymentID is what actually goes on the wire.
 	onAlias string
 	// pinnedDeploymentID pins the endpoint to a box the customer already
 	// attached, instead of hardware Aquanode rents. Zero means the ordinary
-	// managed path — never send it as a bare "0" or a negative number; the
+	// managed path, never send it as a bare "0" or a negative number; the
 	// wire key must be absent unless this is a real attached deployment id.
 	pinnedDeploymentID int
 	out                io.Writer
@@ -61,7 +61,7 @@ type endpointCreateOptions struct {
 // UNLESS --on pins the endpoint to a box the customer already attached: that
 // box bills nothing (Aquanode never rented it), so a spend cap on it can
 // never fire and demanding one just asks for a number that means nothing.
-// An endpoint is a callable address anyone with its name can hit — handing
+// An endpoint is a callable address anyone with its name can hit, handing
 // one out is handing out a GPU budget, so leaving a cap unset on the
 // managed (rented-hardware) path is still a hard error, not a silent
 // default to unbounded.
@@ -145,7 +145,7 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 		out = os.Stdout
 	}
 
-	// Never send a zero or negative pin on the wire under any circumstance —
+	// Never send a zero or negative pin on the wire under any circumstance,
 	// the key must be absent unless it is a real attached deployment id.
 	// CreateEndpointRequest.PinnedDeploymentID carries `omitempty` for the
 	// zero case; this guards the negative case, which omitempty does not.
@@ -177,7 +177,7 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 	})
 	if err != nil {
 		// A pin refused server-side (a bad --on bind) already names its own
-		// fix — relay it verbatim rather than burying it inside a generic
+		// fix, relay it verbatim rather than burying it inside a generic
 		// "could not create endpoint" wrapper.
 		if opts.pinnedDeploymentID != 0 {
 			var apiErr *api.APIError
@@ -189,7 +189,7 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 	}
 
 	if opts.pinnedDeploymentID != 0 {
-		fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), pinned to %s — bills nothing)\n",
+		fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), pinned to %s, bills nothing)\n",
 			ep.Name, opts.version, opts.maxInstances, opts.onAlias)
 	} else {
 		fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), spend cap %s)\n",

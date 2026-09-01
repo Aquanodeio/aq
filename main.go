@@ -440,7 +440,7 @@ endpoint:
                               (--name <name>, default: the setup's own name)
                               --on <alias>  Pin it to a box you already
                               attached (aq attach <alias>) instead of
-                              renting hardware — that box bills nothing, so
+                              renting hardware, that box bills nothing, so
                               --spend-cap-cents is not required with --on.
   aq endpoint point <name> <version>
                               Repoint an endpoint at a different version in
