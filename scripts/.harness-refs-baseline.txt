@@ -1,71 +1,51 @@
-.goreleaser.yml::# PR/issue refs that dangle-link on the public aq-releases repo (ticket #460
-.goreleaser.yml::# passed — it uses the file. See scripts/release-notes.sh and #460 A4.
-CLAUDE.md::1. **`$HOME` does not control where OpenSSH looks for `~/.ssh/config` — it resolves `~` from the passwd entry, not the environment.** Verified empirically (ticket #422): `HOME=/tmp/x ssh -G host` still read `/Users/<real-user>/.ssh/config`. This means you **cannot** sandbox an ssh-config-writing test by pointing `$HOME` at a scratch directory — `ssh`/`scp`/`aq ssh` will still touch the operator's real `~/.ssh`. To validate anything that writes ssh config or execs real `ssh`, either (a) back up the operator's real `~/.ssh` byte-for-byte first and restore it after, or (b) pass an explicit `-F <config>` / `IdentityFile` override on every invocation instead of relying on environment isolation. Also implies: any managed directive `aq` writes (e.g. `IdentityFile`) must use **absolute paths**, never a `~`-relative one — a tilde resolves against the same passwd-derived home inside a container/CI job where `$HOME` may differ from where the file actually lives.
-CLAUDE.md::4. **SSH endpoint resolution must prefer `service_urls[].find(port === 22)`, falling back to `app_url` only when no such entry exists** — see `mjolnir/CLAUDE.md`'s SimplePod section for why trusting `app_url` alone is wrong (it can silently be the Ogre HTTP port, or `null` on Akash). See also `aquanode-backend/CLAUDE.md` gotcha #30: the `/deployments` list endpoint returns raw snake_case rows (no camelCase transform), unlike `/:id`/`/:id/status` — any Go struct decoding the list endpoint must use snake_case tags only.
-CLAUDE.md::Ref: ticket #422, `logs/investigations/ticket-422-aq-ssh-ux/research.md` for the full tnr/vast.ai/Lambda comparison and design rationale.
-browser.go::// or the configured API host, for local dev — is opened (#209).
-browser_test.go::// TestValidateBrowserURL covers the #209 guard: only https:// (or http:// to a
-deploy.go::// inject a deterministic stub; runDeploy defaults it to httpAppReady (#234).
-deploy.go::// opening the console to find the address (#209).
-deploy.go::// outcome before claiming success (#235).
-deploy.go::// polls so we don't add a full interval of latency up front (#207).
-deploy.go::// transport errors and transient 5xx hiccups (#208).
-deploy_test.go::// #209: a restore-only deploy prints connection info after ACTIVE. Since #422
-deploy_test.go::// TestRunDeployAbortsOnPermanentStatusError is the #208 regression for the
-deploy_test.go::// TestRunDeployRestoreOnlyFailsOnFailedRestore is the #235 regression: a
-deploy_test.go::// TestRunDeployThreadsName is the #310 regression: `aq deploy --name` must send
-deploy_test.go::// TestRunDeployWithTemplateFailsOnFailedRestore covers the #235 template path:
-deploy_test.go::// also surfaced as a non-zero error rather than a clean success (#235).
-deploy_test.go::// restore_status still prints the ready message and exits 0 (#235).
-deploy_test.go::if !strings.Contains(got, "restored onto deployment #5151") {
-deploy_test.go::if !strings.Contains(out.String(), "restored onto deployment #5151") {
-deploy_test.go::restoreStatus string // restore_status on the deployment row once ACTIVE (#235)
-down.go::// "expected a number" error (#209), and one who named their box can address it
-down.go::// the way they named it (#422).
-down_test.go::// going to pick up the trailing flag (ticket #204).
-internal/api/control.go::// A stable `ticket-<N>-<label>` makes the throwaway box reapable (#310).
-internal/api/control.go::// and clean up a throwaway box that would otherwise bill as an orphan (#310).
-internal/api/control.go::// deployment id (#209). A project with no live deployment yields a 404 APIError.
-internal/api/control.go::// for `aq deploy` (#235): SUCCESS / PARTIAL / FAILED, plus a detail string.
-internal/api/control.go::// for a standalone-CLI snapshot (#177).
-internal/api/control.go::// onto it, optionally relaunching an app template on the restored data (#180).
-internal/api/device.go::// large/HTML body doesn't swamp the CLI output (#209).
-internal/api/device_test.go::// TestGatewayErrorIsConcise is the #209 fix: a gateway 5xx served as an HTML
-internal/api/device_test.go::// flattened to one line and truncated to a snippet (#209).
-login.go::// don't add a full interval of latency before the first status check (#207).
-login_test.go::// First poll is immediate (#207); reply pending so the start cadence
-login_test.go::// Sleep #1 uses the start cadence (2s); after slow_down it must widen by at
-login_test.go::// approveAfter:1 → poll #1 is pending (forcing one sleep), poll #2 approves.
-login_test.go::// ever sleeps, so the first poll has no needless interval of latency (#207).
-probe.go::// so clicking it right away gives a connection error (#234). We GET the URL and
-probe_test.go::// TestHTTPAppReady covers the #234 readiness probe: the app counts as live only
-scripts/release-notes.sh::#    PR-title-carried-into-subject case, e.g. "feat: foo (#22)").
-scripts/release-notes.sh::#   feat: aq ssh — managed keypair (#422)
-sshkey.go::// .pub — as aq did before #422 — accepts an orphan public key (common after
-sshkey_test.go::// TestResolveLocalKeyGeneratesWhenNoKeyExists covers the whole point of #422:
-sshkey_test.go::// TestResolveLocalKeyIgnoresOrphanPubKey is the #422 regression. aq used to
-status.go::// (#213, #209).
-status_test.go::// Password must not be echoed to stdout by default (ticket #204).
-status_test.go::// TestRunStatusActiveRestoreOnlyShowsConnectionInfo is the #213 fix: an
-status_test.go::// TestRunStatusResolvesProjectID is the #209 fix: a non-numeric token is treated
-status_test.go::// a message pointing the user at the numeric deployment id (#209).
-status_test.go::if !strings.Contains(out.String(), "Deployment #4242") {
-status_test.go::t.Errorf("expected resolved deployment #4242; got:\n%s", out.String())
-up.go::// (#235). A plain `aq up` never restores, so restore_status is blank and
-up.go::// actually answers, mirroring an app-port health check (#234).
-up.go::// files (ticket #204). Instead a pointer to where it lives is written to errOut
-up.go::// inject a deterministic stub; runUp defaults it to httpAppReady (#234).
-up.go::// keeps polling through transient 5xx (#208).
-up.go::// not exist") still leaves the box ACTIVE (#235). A blank restore_status means
-up.go::// once a snapshot restore finishes (#235).
-up.go::// polls so we don't add a full interval of latency up front (#207).
-up.go::// the box comes up with a key the user has no private half for (#203).
-up.go::// timeout. Transport errors and transient 5xx hiccups keep polling (#208).
-up_test.go::// It writes BOTH halves: since #422 a lone .pub is rejected as an orphan, and a
-up_test.go::// TestRunUpAbortsOnPermanentStatusError is the #208 regression: a permanent hard
-up_test.go::// TestRunUpRegistersWhenNoRegisteredKeyMatches is the #203 regression: the
-up_test.go::// TestRunUpThreadsName is the #310 regression: `aq up --name` must send the
-up_test.go::// TestRunUpWaitsForAppPortBeforeReady is the #234 regression: the deployment can
-up_test.go::// probe (#234) inject their own stub instead.
-up_test.go::// scrollback / CI logs / tee files (ticket #204). stderr gets a pointer.
-up_test.go::// than falsely report the URL live (#234).
+# harness-refs baseline for aq — re-keyed to <path>::<reason> format.
+# Generated by the workspace harness-refs-matcher migration; see
+# scripts/govern/sync-harness-refs.sh and scripts/lib/check-harness-refs.sh.
+browser.go::#209
+browser_test.go::#209
+deploy.go::#207
+deploy.go::#208
+deploy.go::#209
+deploy.go::#234
+deploy.go::#235
+deploy_test.go::#208
+deploy_test.go::#209,#422
+deploy_test.go::#235
+deploy_test.go::#310
+deploy_test.go::#5151
+down.go::#209
+down.go::#422
+down_test.go::#204
+internal/api/control.go::#177
+internal/api/control.go::#180
+internal/api/control.go::#209
+internal/api/control.go::#235
+internal/api/control.go::#310
+internal/api/device.go::#209
+internal/api/device_test.go::#209
+login.go::#207
+login_test.go::#1
+login_test.go::#1,#2
+login_test.go::#207
+probe.go::#234
+probe_test.go::#234
+scripts/release-notes.sh::#422
+sshkey.go::#422
+sshkey_test.go::#422
+status.go::#209,#213
+status_test.go::#204
+status_test.go::#209
+status_test.go::#213
+status_test.go::#4242
+up.go::#203
+up.go::#204
+up.go::#207
+up.go::#208
+up.go::#234
+up.go::#235
+up_test.go::#203
+up_test.go::#204
+up_test.go::#208
+up_test.go::#234
+up_test.go::#310
+up_test.go::#422
