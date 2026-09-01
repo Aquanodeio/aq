@@ -3,6 +3,16 @@
 # check-harness-refs.sh — fail on a NEW reference to a harness (workspace-root)
 # artifact in this repo's own source.
 #
+# *** GENERATED/VENDORED FILE — DO NOT HAND-EDIT A COPY OF THIS FILE. ***
+# This is the CANONICAL copy, owned by the aquanode harness workspace at
+# scripts/lib/check-harness-refs.sh. It is vendored byte-for-byte into each
+# sub-repo (aq, mjolnir, ogre, website, aquanode-backend) by
+# scripts/govern/sync-harness-refs.sh. Edit the canonical copy and re-run
+# that script — never edit a vendored copy directly;
+# scripts/govern/lint-harness-refs.sh detects and fails on drift between a
+# vendored copy and this file.
+# SOURCE-HASH: cc25904c136edddd764ef44b4c2babdff4b74e87e9acd61857d873c6ed1cebc0
+#
 # Background: this repo is one of several independent git repos cloned inside
 # an `aquanode` meta-repo workspace. The workspace root's CLAUDE.md carries a
 # hard rule: product source must never cite a harness artifact — not a bare
@@ -15,14 +25,16 @@
 # recorded in CLAUDE.md, because nothing enforced it. This guard is that
 # enforcement.
 #
-# What it catches (see scripts/lib/harness-refs-matcher.py for the full
+# What it catches (see the matcher script alongside this one for the full
 # matching logic): any UNQUALIFIED `#N` reference — `(#532)`, `ticket #534`,
-# `harness #342` — plus `queue/tickets.md`, `.plans/`, `.specs/`, and a "root
-# CLAUDE.md" pointer. A `#N` qualified with a known sub-repo name
+# `harness #342` — plus `queue/tickets.md`, `.plans/`, `.specs/`, `LEDGER.md`,
+# and a "root CLAUDE.md" pointer. A `#N` qualified with a known sub-repo name
 # (`aquanode-backend#399`, `mjolnir#191`, `console#314`, optionally after an
-# "owner/" prefix) is ALLOWED — it resolves to something real for anyone who
-# clones this repo standalone. A chained bare ref that continues a qualified
-# one on the same line (`aquanode-backend#398/#400`) is allowed too.
+# "owner/" prefix, optionally with one space before the '#') is ALLOWED — it
+# resolves to something real for anyone who clones this repo standalone. A
+# chained bare ref that continues a qualified one on the same line
+# (`aquanode-backend#398/#400`) is allowed too — see the matcher's docstring
+# "ACCEPTED GAP" note for the known, deliberate limit of that allowance.
 #
 # An earlier version of this guard matched ONLY `ticket #N` / `harness #N`
 # on the theory that bare `#N` didn't happen in this workspace. That
@@ -34,27 +46,58 @@
 #
 # Baseline: this repo had a large PRE-EXISTING population of these refs when
 # the guard was written (rewriting all of them in one pass would be an
-# unreviewable diff). Those are baselined by exact content into
-# scripts/.harness-refs-baseline.txt, keyed as "<path>::<trimmed matched
-# line>". A baselined line is allowed to persist; any NEW match not already
-# in the baseline fails the check. Burning down the baseline (rewriting an
-# old ref to be self-contained) is encouraged — just remove its line from
-# the baseline file in the same commit, and the guard will hold the
-# improvement.
+# unreviewable diff). Those are baselined into the baseline file alongside
+# this script, keyed as "<path>::<reason>", where <reason> is the matcher's
+# stable, sorted set of the actual triggering token(s) on that line (e.g.
+# "#695", or "queue/tickets.md") — NOT the full trimmed line text. Keying on
+# the whole line was tried first and broke on pure reflow: rewrapping or
+# reindenting an already-accepted comment changes its line content without
+# changing what it cites, so the SAME accepted citation re-triggered as "new"
+# purely from where the words happened to wrap (ticket #721: de-branching a
+# file reflowed one accepted "#11" citation and it read as brand-new). Keying
+# on the cited token(s) instead means a rewrap/reindent/reword of an accepted
+# line is silent, while a genuinely different citation (a new number, or a
+# literal path) on that same path still fails. A baselined line is allowed
+# to persist; any NEW match not already in the baseline fails the check.
+# Burning down the baseline (rewriting an old ref to be self-contained) is
+# encouraged — just remove its line from the baseline file in the same
+# commit, and the guard will hold the improvement.
 #
 # Usage:
 #   scripts/check-harness-refs.sh
+#   (or wherever this copy lives in the vendored repo — it locates its own
+#   matcher and baseline relative to itself, either at ./lib/<matcher> or
+#   directly alongside itself, so a standalone clone works unmodified.)
 #
 set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPTS_DIR}/.." && pwd)"
+# aquanode-backend's vendor location is REPO_ROOT/.github/scripts, two
+# levels down from REPO_ROOT — recompute REPO_ROOT generically by walking up
+# to the nearest git top-level instead of hardcoding a depth.
+if command -v git >/dev/null 2>&1 && git -C "$SCRIPTS_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+  REPO_ROOT="$(git -C "$SCRIPTS_DIR" rev-parse --show-toplevel)"
+fi
 cd "$REPO_ROOT"
 
-MATCHER="${SCRIPTS_DIR}/lib/harness-refs-matcher.py"
-SELF_REL="scripts/$(basename "${BASH_SOURCE[0]}")"
-MATCHER_REL="scripts/lib/harness-refs-matcher.py"
-BASELINE_REL="scripts/.harness-refs-baseline.txt"
+# Matcher lives either at ./lib/harness-refs-matcher.py next to this script
+# (aq/mjolnir/ogre/website layout) or directly alongside it (aquanode-backend's
+# flat .github/scripts/ layout) — try both so this one canonical runner works
+# vendored into either shape.
+if [[ -f "${SCRIPTS_DIR}/lib/harness-refs-matcher.py" ]]; then
+  MATCHER="${SCRIPTS_DIR}/lib/harness-refs-matcher.py"
+elif [[ -f "${SCRIPTS_DIR}/harness-refs-matcher.py" ]]; then
+  MATCHER="${SCRIPTS_DIR}/harness-refs-matcher.py"
+else
+  echo "FAIL: could not locate harness-refs-matcher.py next to or under lib/ of $0" >&2
+  exit 2
+fi
+
+SELF_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SELF_REL="${SELF_ABS#"${REPO_ROOT}"/}"
+MATCHER_REL="${MATCHER#"${REPO_ROOT}"/}"
+BASELINE_REL="$(dirname "$SELF_REL")/.harness-refs-baseline.txt"
 BASELINE_FILE="${REPO_ROOT}/${BASELINE_REL}"
 # The workflow file that invokes this guard necessarily DESCRIBES the
 # patterns it checks for (e.g. names "queue/tickets.md" in a comment) —
@@ -65,7 +108,7 @@ WORKFLOW_REL=".github/workflows/check-harness-refs.yml"
 # lockfiles/vendor/node_modules/this guard's own files. The matcher itself
 # skips CHANGELOG*/CHANGES* files and "Merge pull request #N from" lines.
 matches="$(git ls-files -z -- . \
-  ':!go.sum' ':!go.mod' \
+  ':!go.sum' ':!go.mod' ':!package-lock.json' \
   ':!vendor/**' ':!node_modules/**' \
   ":!${SELF_REL}" ":!${MATCHER_REL}" ":!${BASELINE_REL}" ":!${WORKFLOW_REL}" \
   | python3 "$MATCHER" || true)"
@@ -79,38 +122,41 @@ if [[ -f "$BASELINE_FILE" ]]; then
   done < "$BASELINE_FILE"
 fi
 
+# Distinguish accepted-and-unchanged (in baseline_keys) from newly-introduced
+# — never dump the raw match list and make the reader diff it by hand
+# against another checkout to find out which is which.
 new_violations=()
+new_violation_keys=()
 while IFS= read -r m; do
   [[ -z "$m" ]] && continue
+  reason="${m%%$'\x01'*}"
+  m="${m#*$'\x01'}"       # from here on, m is the original "path:lineno:content" for display
   file="${m%%:*}"
-  rest="${m#*:}"
-  content="${rest#*:}"
-  # Trim leading/trailing whitespace so incidental reindentation of an
-  # already-baselined line doesn't spuriously re-flag it.
-  trimmed="${content#"${content%%[![:space:]]*}"}"
-  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-  key="${file}::${trimmed}"
+  key="${file}::${reason}"
   if [[ -z "${baseline_keys[$key]:-}" ]]; then
     new_violations+=("$m")
+    new_violation_keys+=("$key")
   fi
 done <<< "$matches"
 
 if [[ ${#new_violations[@]} -gt 0 ]]; then
-  echo "FAIL: found NEW reference(s) to a harness (workspace-root) artifact in this repo's source." >&2
+  echo "FAIL: found NEW (unaccepted) reference(s) to a harness (workspace-root) artifact in this repo's source." >&2
   echo >&2
   echo "This repo is cloned and built independently of the aquanode workspace — a citation of" >&2
-  echo "an unqualified #N, queue/tickets.md, .plans/, .specs/, or a \"root CLAUDE.md\" pointer" >&2
-  echo "is permanently unresolvable to anyone who clones it alone. Rewrite the comment to state" >&2
-  echo "its reason self-contained (what and why), or qualify a real cross-repo reference as" >&2
+  echo "an unqualified #N, queue/tickets.md, .plans/, .specs/, LEDGER.md, or a \"root CLAUDE.md\"" >&2
+  echo "pointer is permanently unresolvable to anyone who clones it alone. Rewrite the comment to" >&2
+  echo "state its reason self-contained (what and why), or qualify a real cross-repo reference as" >&2
   echo "<repo>#N (e.g. aquanode-backend#399, mjolnir#191, console#314)." >&2
   echo >&2
-  echo "Offending line(s):" >&2
-  for v in "${new_violations[@]}"; do
-    echo "  $v" >&2
+  echo "Offending line(s) — not already in ${BASELINE_REL}:" >&2
+  for i in "${!new_violations[@]}"; do
+    echo "  ${new_violations[$i]}" >&2
+    echo "    baseline key: ${new_violation_keys[$i]}" >&2
   done
   echo >&2
-  echo "If this is a pre-existing reference you are only moving/reformatting (not a genuinely" >&2
-  echo "new citation), add its \"<path>::<trimmed line>\" key to ${BASELINE_REL}." >&2
+  echo "If this is a pre-existing reference you are only moving/reformatting/rewording (not a" >&2
+  echo "genuinely new citation), append the printed \"baseline key:\" line verbatim to" >&2
+  echo "${BASELINE_REL}." >&2
   exit 1
 fi
 
