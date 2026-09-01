@@ -375,6 +375,7 @@ func runAttach(opts attachOptions) error {
 	fmt.Fprintf(opts.out, "\n✓ %s is attached as deployment #%d (%s).\n", h.Alias, adopted.DeploymentID, orUnknown(res.Status))
 	fmt.Fprintf(opts.out, "  Aquanode completed a round-trip to %s:%d.\n", publicHost, port)
 	fmt.Fprintf(opts.out, "  The box bills nothing: we did not rent it and never will.\n")
+	fmt.Fprintf(opts.out, "  Make a setup callable on it with `aq endpoint create <setup> <version> --on %s`: no spend cap needed, it bills nothing.\n", h.Alias)
 	fmt.Fprintf(opts.out, "  Hand it back any time with `aq release %s`: that revokes our credentials and drops the row.\n", h.Alias)
 	fmt.Fprintf(opts.out, "  The box keeps running, and no provider is ever contacted.\n")
 	return nil

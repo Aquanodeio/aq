@@ -39,11 +39,21 @@ func (c *Client) ListEndpoints() ([]Endpoint, error) {
 // SpendCapCents are both always sent — the CLI never lets either be omitted
 // (see endpointCreate's validation), so there is no unbounded-by-default
 // path on the wire either.
+//
+// PinnedDeploymentID pins the endpoint to a box the customer already owns
+// (attached via `aq host add` + `aq attach`) instead of hardware Aquanode
+// rents. It carries `omitempty` deliberately: the zero value must never
+// reach the wire as a present-but-empty key, only as an absent one — the
+// server reads an absent key as "today's managed behaviour" and a present
+// zero/negative one as a malformed pin. endpointCreate resolves this from a
+// `--on <alias>` flag locally and refuses before ever building this request
+// unless the alias names a genuinely attached deployment.
 type CreateEndpointRequest struct {
-	Name          string `json:"name"`
-	VersionID     int    `json:"versionId"`
-	MaxInstances  int    `json:"maxInstances"`
-	SpendCapCents int64  `json:"spendCapCents"`
+	Name               string `json:"name"`
+	VersionID          int    `json:"versionId"`
+	MaxInstances       int    `json:"maxInstances"`
+	SpendCapCents      int64  `json:"spendCapCents"`
+	PinnedDeploymentID int    `json:"pinnedDeploymentId,omitempty"`
 }
 
 // CreateEndpoint makes a setup version callable, returning the created
