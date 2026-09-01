@@ -20,16 +20,29 @@ box that matches what you asked for.
 Docs: **[docs.aquanode.io](https://docs.aquanode.io/docs)** · Live GPU pricing in the
 browser: **[aquanode.io/gpu-index](https://www.aquanode.io/gpu-index)**
 
-**No account? Run `aq gpus`.** Bare, it prints a market-summary table — one row
+**No account? Run `aq gpus`.** Bare, it prints a market-summary table, one row
 per GPU model, cheapest per-GPU rate first, with how many providers and offers
-back it — with nothing installed or configured beyond the binary. Add a filter
+back it, with nothing installed or configured beyond the binary. Add a filter
 (`--gpu`, `--provider`, `--region`, `--max-price`) or `--json` and it switches to
-a per-offer table listing every individual offer that matches. That table prints
-two price columns, `$/GPU-HR` and `$/HR TOTAL`, because the marketplace's raw
-rate is a whole-offer total for every provider except Akash (whose feed reports
-an already-per-GPU rate); both columns are normalized so they mean the same
-thing for every provider, and `--max-price` filters on `$/GPU-HR`. `aq login` is
-the next step once you've found a box worth renting.
+a per-offer table listing every individual offer that matches, for example:
+
+```console
+$ aq gpus --gpu H100 --limit 8
+GPU   GPUS  VRAM  PROVIDER      REGION        AVAIL  $/GPU-HR  $/HR TOTAL
+H100  1     80GB  massecompute  us-central-3  1      2.4500    2.4500
+H100  2     80GB  massecompute  us-central-3  2      2.4500    4.9000
+H100  1     80GB  hyperstack    CANADA-1      1      2.5250    2.5250
+H100  1     80GB  hyperstack    CANADA-1      1      2.5250    2.5250
+H100  1     94GB  runpod        unknown       1      2.5900    2.5900
+H100  2     94GB  runpod        unknown       2      2.5900    5.1800
+showing 8 of 71 offers; use --limit 0 for all
+```
+
+That table prints two price columns, `$/GPU-HR` and `$/HR TOTAL`, because the
+marketplace's raw rate is a whole-offer total for every provider except Akash
+(whose feed reports an already-per-GPU rate); both columns are normalized so
+they mean the same thing for every provider, and `--max-price` filters on
+`$/GPU-HR`. `aq login` is the next step once you've found a box worth renting.
 
 ## Capabilities
 
