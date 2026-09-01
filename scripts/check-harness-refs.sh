@@ -11,7 +11,7 @@
 # that script — never edit a vendored copy directly;
 # scripts/govern/lint-harness-refs.sh detects and fails on drift between a
 # vendored copy and this file.
-# SOURCE-HASH: cc25904c136edddd764ef44b4c2babdff4b74e87e9acd61857d873c6ed1cebc0
+# SOURCE-HASH: a405f80293e9ad5da9ff1ce5fd04a8d4c52f0c0e6074bd5ec36277bd6b1224f1
 #
 # Background: this repo is one of several independent git repos cloned inside
 # an `aquanode` meta-repo workspace. The workspace root's CLAUDE.md carries a
@@ -34,7 +34,10 @@
 # resolves to something real for anyone who clones this repo standalone. A
 # chained bare ref that continues a qualified one on the same line
 # (`aquanode-backend#398/#400`) is allowed too — see the matcher's docstring
-# "ACCEPTED GAP" note for the known, deliberate limit of that allowance.
+# "ACCEPTED GAP" note for the known, deliberate limit of that allowance. A
+# reference inside an ALREADY-APPLIED `prisma/migrations/**` file is never a
+# blocking violation — see the "APPLIED PRISMA MIGRATIONS ARE IMMUTABLE"
+# comment below, right above where that exemption is applied.
 #
 # An earlier version of this guard matched ONLY `ticket #N` / `harness #N`
 # on the theory that bare `#N` didn't happen in this workspace. That
@@ -122,22 +125,60 @@ if [[ -f "$BASELINE_FILE" ]]; then
   done < "$BASELINE_FILE"
 fi
 
+# APPLIED PRISMA MIGRATIONS ARE IMMUTABLE — report, never block. Prisma
+# stores a checksum of every migration.sql in `_prisma_migrations`; editing
+# an applied file after the fact does not fail `migrate deploy` outright,
+# but it warns on EVERY subsequent `migrate deploy`/`migrate status` and
+# breaks the exact signal a deploy pipeline uses to confirm a migration
+# landed. Rewriting a citation inside one for the sake of a tidier comment
+# trades a permanent warning on our own verification path for that
+# tidiness — worse than leaving the citation in place. So: any path under
+# `prisma/migrations/` is FROZEN — reported below in its own section,
+# never counted toward the blocking offender set, and never required to be
+# fixed OR baselined (baselining would hide the pattern here for the NEXT
+# migration; the path-based exemption is the fix). Mirrors
+# scripts/govern/lint-harness-refs.sh's own FROZEN handling in the
+# workspace harness — same rule, same rationale, on both sides of the
+# harness/product boundary. This is a REPORT, not a silent skip: a NEW
+# migration file that has not been applied yet still shows up here so its
+# citation can be fixed before it ships (once applied, it can't be).
+MIGRATION_PATH_PATTERN='(^|/)prisma/migrations/'
+
 # Distinguish accepted-and-unchanged (in baseline_keys) from newly-introduced
 # — never dump the raw match list and make the reader diff it by hand
 # against another checkout to find out which is which.
 new_violations=()
 new_violation_keys=()
+frozen_violations=()
 while IFS= read -r m; do
   [[ -z "$m" ]] && continue
   reason="${m%%$'\x01'*}"
   m="${m#*$'\x01'}"       # from here on, m is the original "path:lineno:content" for display
   file="${m%%:*}"
+  if [[ "$file" =~ $MIGRATION_PATH_PATTERN ]]; then
+    frozen_violations+=("$m")
+    continue
+  fi
   key="${file}::${reason}"
   if [[ -z "${baseline_keys[$key]:-}" ]]; then
     new_violations+=("$m")
     new_violation_keys+=("$key")
   fi
 done <<< "$matches"
+
+# Report FROZEN refs BEFORE the blocking check below, unconditionally — even
+# when there ARE blocking violations too, so a caller always sees both
+# states rather than the frozen list being silently swallowed by an early
+# exit 1. Mirrors scripts/govern/lint-harness-refs.sh's own ordering.
+if [[ ${#frozen_violations[@]} -gt 0 ]]; then
+  echo "FROZEN: ${#frozen_violations[@]} reference(s) in ALREADY-APPLIED prisma migration(s) (not blocking):" >&2
+  for f in "${frozen_violations[@]}"; do
+    echo "  FROZEN $f" >&2
+  done
+  echo "  These files are checksummed in _prisma_migrations and must not be edited." >&2
+  echo "  Fix the pattern in NEW migrations before they are applied." >&2
+  echo >&2
+fi
 
 if [[ ${#new_violations[@]} -gt 0 ]]; then
   echo "FAIL: found NEW (unaccepted) reference(s) to a harness (workspace-root) artifact in this repo's source." >&2
@@ -160,4 +201,8 @@ if [[ ${#new_violations[@]} -gt 0 ]]; then
   exit 1
 fi
 
-echo "OK: no new harness (workspace-root) artifact references found in tracked source."
+if [[ ${#frozen_violations[@]} -gt 0 ]]; then
+  echo "OK: no NEW (blocking) harness (workspace-root) artifact references found (${#frozen_violations[@]} frozen ref(s) reported above)."
+else
+  echo "OK: no new harness (workspace-root) artifact references found in tracked source."
+fi
