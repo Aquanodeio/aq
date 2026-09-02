@@ -132,7 +132,7 @@ func (c *Client) ListAllSetupVersions() ([]SetupVersion, error) {
 }
 
 // GetSetupVersion fetches one version row by its own global row id — GET
-// /setups/versions/:id. `aq endpoint point` uses this to learn which
+// /setups/versions/:id. `aq job point` uses this to learn which
 // lineage (setup id + name) an endpoint's CURRENT version belongs to: the
 // repoint API and the `<version>` a user types are both scoped to a version
 // NUMBER within one lineage, but an Endpoint only carries its current

@@ -12,32 +12,32 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// endpointTestSetupID is a UUID so resolveSetupID resolves it locally
+// jobTestSetupID is a UUID so resolveSetupID resolves it locally
 // (looksLikeUUID) without a GET /setups round trip, the tests below only
-// care about what runEndpointCreate sends to POST /endpoints.
-const endpointTestSetupID = "11111111-1111-1111-1111-111111111111"
+// care about what runJobCreate sends to POST /jobs.
+const jobTestSetupID = "11111111-1111-1111-1111-111111111111"
 
-// endpointCreateServer answers the two lookups runEndpointCreate needs before
-// it can build the CreateEndpointRequest (findSetup, ListAllSetupVersions),
-// and hands POST /endpoints to createEndpoint so a test can assert on
+// jobCreateServer answers the two lookups runJobCreate needs before
+// it can build the CreateJobRequest (findSetup, ListAllSetupVersions),
+// and hands POST /jobs to createJob so a test can assert on
 // exactly the body that reached the wire.
-func endpointCreateServer(t *testing.T, createEndpoint http.HandlerFunc) *httptest.Server {
+func jobCreateServer(t *testing.T, createJob http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {
-		writeData(w, []map[string]any{{"id": endpointTestSetupID, "name": "myenv"}})
+		writeData(w, []map[string]any{{"id": jobTestSetupID, "name": "myenv"}})
 	})
 	mux.HandleFunc("/setups/versions", func(w http.ResponseWriter, r *http.Request) {
-		writeData(w, []map[string]any{{"id": 555, "version": 3, "setup_id": endpointTestSetupID}})
+		writeData(w, []map[string]any{{"id": 555, "version": 3, "setup_id": jobTestSetupID}})
 	})
-	mux.HandleFunc("/endpoints", createEndpoint)
+	mux.HandleFunc("/jobs", createJob)
 	return httptest.NewServer(mux)
 }
 
-func baseCreateOpts(serverURL string) endpointCreateOptions {
-	return endpointCreateOptions{
+func baseCreateOpts(serverURL string) jobCreateOptions {
+	return jobCreateOptions{
 		cred:          &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: serverURL},
-		setupTarget:   endpointTestSetupID,
+		setupTarget:   jobTestSetupID,
 		version:       3,
 		maxInstances:  1,
 		spendCapCents: 500,
@@ -46,20 +46,20 @@ func baseCreateOpts(serverURL string) endpointCreateOptions {
 }
 
 // The managed (non-pinned) path must never put a pinnedDeploymentId key on
-// the wire at all, CreateEndpointRequest.PinnedDeploymentID carries
+// the wire at all, CreateJobRequest.PinnedDeploymentID carries
 // `omitempty` for exactly this, and this test asserts the wire, not just
 // the parsed request struct.
-func TestCreateEndpointOmitsPinnedDeploymentIDWhenNotPinned(t *testing.T) {
+func TestCreateJobOmitsPinnedDeploymentIDWhenNotPinned(t *testing.T) {
 	var body []byte
-	srv := endpointCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ = readAll(r)
 		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
 	})
 	defer srv.Close()
 
 	opts := baseCreateOpts(srv.URL)
-	if err := runEndpointCreate(opts); err != nil {
-		t.Fatalf("runEndpointCreate: %v", err)
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
 	}
 	if strings.Contains(string(body), "pinnedDeploymentId") {
 		t.Fatalf("managed-path request body must omit pinnedDeploymentId entirely, got: %s", body)
@@ -68,9 +68,9 @@ func TestCreateEndpointOmitsPinnedDeploymentIDWhenNotPinned(t *testing.T) {
 
 // The --on path must send the resolved attached deployment id verbatim, and
 // only that id, never a derived or rounded value.
-func TestCreateEndpointSendsThePinnedDeploymentIDOnTheWire(t *testing.T) {
+func TestCreateJobSendsThePinnedDeploymentIDOnTheWire(t *testing.T) {
 	var body []byte
-	srv := endpointCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ = readAll(r)
 		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
 	})
@@ -80,11 +80,11 @@ func TestCreateEndpointSendsThePinnedDeploymentIDOnTheWire(t *testing.T) {
 	opts.pinnedDeploymentID = 4242
 	opts.onAlias = "lease-a"
 	opts.spendCapCents = 0
-	if err := runEndpointCreate(opts); err != nil {
-		t.Fatalf("runEndpointCreate: %v", err)
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
 	}
 
-	var decoded api.CreateEndpointRequest
+	var decoded api.CreateJobRequest
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("decode request body: %v", err)
 	}
@@ -94,10 +94,10 @@ func TestCreateEndpointSendsThePinnedDeploymentIDOnTheWire(t *testing.T) {
 }
 
 // A pin the backend refuses (400, message names the fix) must reach the user
-// verbatim, never buried inside "could not create endpoint ...: <msg>".
-func TestCreateEndpointSurfacesA400VerbatimWhenPinned(t *testing.T) {
+// verbatim, never buried inside "could not create job ...: <msg>".
+func TestCreateJobSurfacesA400VerbatimWhenPinned(t *testing.T) {
 	const backendMsg = "deployment 4242 is not attached, attach it first with `aq attach`"
-	srv := endpointCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, backendMsg)
 	})
 	defer srv.Close()
@@ -105,7 +105,7 @@ func TestCreateEndpointSurfacesA400VerbatimWhenPinned(t *testing.T) {
 	opts := baseCreateOpts(srv.URL)
 	opts.pinnedDeploymentID = 4242
 	opts.onAlias = "lease-a"
-	err := runEndpointCreate(opts)
+	err := runJobCreate(opts)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -116,28 +116,28 @@ func TestCreateEndpointSurfacesA400VerbatimWhenPinned(t *testing.T) {
 
 // The managed path keeps today's wrapped-error behaviour, this pins that
 // widening the pinned path's error handling did not change it.
-func TestCreateEndpointWrapsA400WhenNotPinned(t *testing.T) {
-	srv := endpointCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+func TestCreateJobWrapsA400WhenNotPinned(t *testing.T) {
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name already in use")
 	})
 	defer srv.Close()
 
 	opts := baseCreateOpts(srv.URL)
-	err := runEndpointCreate(opts)
+	err := runJobCreate(opts)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if !strings.Contains(err.Error(), "could not create endpoint") || !strings.Contains(err.Error(), "name already in use") {
+	if !strings.Contains(err.Error(), "could not create job") || !strings.Contains(err.Error(), "name already in use") {
 		t.Fatalf("expected the managed-path wrap to survive, got: %v", err)
 	}
 }
 
-// endpointCreate (the flag-parsing entry point) must refuse an unknown --on
-// alias locally, before requireLogin or any network call, no server is
+// jobCreate (the flag-parsing entry point) must refuse an unknown --on
+// alias locally, before requireLogin or any network run, no server is
 // started for this test at all.
-func TestEndpointCreateOnUnknownAliasRefusesLocally(t *testing.T) {
+func TestJobCreateOnUnknownAliasRefusesLocally(t *testing.T) {
 	detachedSandbox(t)
-	err := endpointCreate([]string{endpointTestSetupID, "3", "--max-instances", "1", "--on", "ghost"})
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--on", "ghost"})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -148,9 +148,9 @@ func TestEndpointCreateOnUnknownAliasRefusesLocally(t *testing.T) {
 
 // A registered-but-never-attached alias must also be refused locally, naming
 // `aq attach <alias>` as the fix.
-func TestEndpointCreateOnUnattachedAliasRefusesLocally(t *testing.T) {
+func TestJobCreateOnUnattachedAliasRefusesLocally(t *testing.T) {
 	detachedSandbox(t, testHost()) // registered via `aq host add`, never attached
-	err := endpointCreate([]string{endpointTestSetupID, "3", "--max-instances", "1", "--on", "lease-a"})
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--on", "lease-a"})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -164,9 +164,9 @@ func TestEndpointCreateOnUnattachedAliasRefusesLocally(t *testing.T) {
 // past the spend-cap validation (the next thing it hits is the login check,
 // since detachedSandbox leaves no stored credential) rather than failing on
 // the cap.
-func TestEndpointCreateOnDoesNotRequireSpendCap(t *testing.T) {
+func TestJobCreateOnDoesNotRequireSpendCap(t *testing.T) {
 	detachedSandbox(t, attachedHost())
-	err := endpointCreate([]string{endpointTestSetupID, "3", "--max-instances", "1", "--on", "lease-a"})
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--on", "lease-a"})
 	if err == nil {
 		t.Fatal("expected an error (no stored credential in the sandbox)")
 	}
@@ -180,9 +180,9 @@ func TestEndpointCreateOnDoesNotRequireSpendCap(t *testing.T) {
 
 // The ordinary managed path is untouched: omitting --spend-cap-cents without
 // --on must still be a hard local error, and must never reach the network.
-func TestEndpointCreateWithoutOnStillRequiresSpendCap(t *testing.T) {
+func TestJobCreateWithoutOnStillRequiresSpendCap(t *testing.T) {
 	detachedSandbox(t)
-	err := endpointCreate([]string{endpointTestSetupID, "3", "--max-instances", "1"})
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1"})
 	if err == nil {
 		t.Fatal("expected an error")
 	}

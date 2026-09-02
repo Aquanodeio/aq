@@ -137,12 +137,16 @@ func main() {
 		run(setups(args))
 	case "idle":
 		run(idle(args))
-	case "endpoint":
-		run(endpoint(args))
-	case "call":
-		run(call(args))
-	case "calls":
-		run(calls(args))
+	// `job` is a command GROUP, not three top-level verbs, and that is a
+	// deliberate departure from the design doc. It asked for `aq run <job>`,
+	// `aq runs <job>` and `aq logs <run-id>` — but `aq run` already means "push
+	// this directory to a box and run a command on it with my terminal
+	// attached", and `aq logs` already tails a box. Taking either verb would
+	// break a command people use daily, to save one word on a command they use
+	// occasionally. `aq run` also could not be disambiguated by argument shape:
+	// `aq run mybox` and `aq run myjob` are the same string.
+	case "job":
+		run(job(args))
 	case "down":
 		run(down(args))
 	case "logout":
@@ -195,9 +199,7 @@ Commands:
   sync-now      Force a setup's sync tick right now
   setups        List the setups you own
   idle          View or change a DEPLOYMENT's idle-auto-pause thresholds
-  endpoint      Make a setup version callable, repoint it, or remove it
-  call          Make a call against an endpoint
-  calls         List an endpoint's recent calls
+  job           Create, run, inspect and cancel GPU jobs
   down          Tear down a setup (stop the rented GPU box)
   logout        Remove the stored CLI credential
   whoami        Show the current login state
@@ -311,7 +313,7 @@ host / attach / release (boxes we never provisioned):
 
   ATTACHED: your box, our control plane. The box becomes a deployment we never
   provisioned and gains the console, version history, fork/share, teams, metrics
-  and endpoints.
+  and jobs.
 
   aq attach <alias>          Adopt a registered box (needs a login)
   aq attach <alias> --dry-run
@@ -352,8 +354,8 @@ host / attach / release (boxes we never provisioned):
 
   Detached does: capture, restore, setups, run/logs/ssh/sync, ogre up
   templates, BYO bucket.
-  Attached adds: teams and RBAC, share/fork, the console, endpoints and
-  aq call, cross-provider burst, the marketplace.
+  Attached adds: teams and RBAC, share/fork, the console, jobs and
+  aq job run, cross-provider burst, the marketplace.
   Neither does: splitting one box across several independent setups.
 
 ssh:
@@ -432,31 +434,41 @@ idle:
   --gpu-threshold <percent> GPU utilization below which the box counts idle
   --on / --off              Enable / disable idle auto-pause
 
-endpoint:
-  aq endpoint create <setup> <version>   Make a setup version callable.
-                              Requires --max-instances and --spend-cap-cents:
-                              an endpoint hands out a GPU budget, so
-                              neither ever defaults to unbounded.
+job:
+  Everything about jobs lives under "aq job", not at the top level. "aq run"
+  already means "push this directory to a box and run something on it" and
+  "aq logs" already tails a box; those are daily commands, and "aq run mybox"
+  and "aq run myjob" are the same string, so nothing could tell them apart.
+
+  aq job create <setup> <version>
+                              Make a setup version runnable as a job.
+                              Requires --max-instances: a job hands out a GPU
+                              budget, so it never defaults to unbounded.
                               (--name <name>, default: the setup's own name)
                               --on <alias>  Pin it to a box you already
                               attached (aq attach <alias>) instead of
-                              renting hardware, that box bills nothing, so
-                              --spend-cap-cents is not required with --on.
-  aq endpoint point <name> <version>
-                              Repoint an endpoint at a different version in
-                              its lineage (also how you roll back).
-  aq endpoint rm <name>      Remove an endpoint.
-
-call / calls:
-  aq call <endpoint> [--input file]
-                              Make a call against an endpoint and print its
-                              call id. --input is a JSON file of the
-                              declared params; with no --input, the call is
-                              made with no inputs.
-  aq calls <endpoint>        List an endpoint's recent calls: id, status,
-                              phase, and reason. "unservable" means Aquanode
-                              could not get the call a box at all, not that
-                              the call's own code failed.
+                              renting hardware; that box bills nothing.
+  aq job point <name> <version>
+                              Repoint a job at a different version in its
+                              lineage (also how you roll back).
+  aq job rm <name>            Remove a job.
+  aq job run <job> [--input file]
+                              Start a run and print its run id. --input is a
+                              JSON file of the declared params.
+  aq job runs <job>           List a job's recent runs: id, status, phase and
+                              reason. "unservable" means Aquanode could not
+                              get the run a machine at all — it does NOT mean
+                              your own code failed.
+  aq job logs <job> <run-id> [-f] [--attempt N]
+                              Print a run's log. -f keeps printing as it is
+                              written. A run that moved to another machine has
+                              several attempts; --attempt picks one, and the
+                              default is the latest rather than all of them
+                              concatenated, which would put the timestamps out
+                              of order in the middle.
+  aq job cancel <job> <run-id>
+                              Stop a run. Billing stops when the machine is
+                              released.
 
 status / save / share / fork / edit-version / pause / autopause /
 force-detach / sync-now / setups / down:

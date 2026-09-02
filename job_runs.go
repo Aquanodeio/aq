@@ -11,24 +11,24 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// callsOptions configures runCalls. calls() fills in the real environment;
-// tests call runCalls directly.
-type callsOptions struct {
+// jobRunsOptions configures runRuns. runs() fills in the real environment;
+// tests run runRuns directly.
+type jobRunsOptions struct {
 	cred   *config.Credential
-	target string // endpoint id or name
+	target string // job id or name
 	out    io.Writer
 }
 
-// calls parses `aq calls <endpoint>` and wires the real environment into
-// runCalls.
-func calls(args []string) error {
-	fs := flag.NewFlagSet("calls", flag.ContinueOnError)
+// runs parses `aq runs <job>` and wires the real environment into
+// runRuns.
+func jobRuns(args []string) error {
+	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("usage: aq calls <endpoint>")
+		return errors.New("usage: aq runs <job>")
 	}
 	target := positional[0]
 
@@ -37,33 +37,33 @@ func calls(args []string) error {
 		return err
 	}
 
-	return runCalls(callsOptions{cred: cred, target: target, out: os.Stdout})
+	return doJobRuns(jobRunsOptions{cred: cred, target: target, out: os.Stdout})
 }
 
-// runCalls fetches and renders an endpoint's recent calls.
-func runCalls(opts callsOptions) error {
+// runRuns fetches and renders a job's recent runs.
+func doJobRuns(opts jobRunsOptions) error {
 	out := opts.out
 	if out == nil {
 		out = os.Stdout
 	}
 
 	client := newControlClient(opts.cred)
-	endpointID, err := resolveEndpointID(client, opts.target)
+	jobID, err := resolveJobID(client, opts.target)
 	if err != nil {
 		return err
 	}
 
-	list, err := client.ListCalls(endpointID)
+	list, err := client.ListRuns(jobID)
 	if err != nil {
-		return fmt.Errorf("could not list calls for endpoint %q: %w", opts.target, err)
+		return fmt.Errorf("could not list runs for job %q: %w", opts.target, err)
 	}
 
-	printCalls(out, list)
+	printRuns(out, list)
 	return nil
 }
 
-// printCalls renders the call list as a simple aligned table, or a one-line
-// nudge when the endpoint has never been called.
+// printRuns renders the run list as a simple aligned table, or a one-line
+// nudge when the job has never been called.
 //
 // REASON is always its own column, printed for every row — not just the
 // failed/unservable ones. "unservable" must read as visibly distinct from
@@ -72,9 +72,9 @@ func runCalls(opts callsOptions) error {
 // while "failed" means the workload ran and errored. Collapsing that
 // distinction into one status word would hide exactly the case where it
 // matters most — whose fault the failure was.
-func printCalls(out io.Writer, list []api.Call) {
+func printRuns(out io.Writer, list []api.Run) {
 	if len(list) == 0 {
-		fmt.Fprintln(out, "No calls yet. Run `aq call <endpoint>` to make one.")
+		fmt.Fprintln(out, "No runs yet. Run `aq run <job>` to make one.")
 		return
 	}
 

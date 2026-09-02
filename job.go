@@ -14,39 +14,50 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// endpoint dispatches `aq endpoint create|point|rm` — the callable-version
-// commands. An endpoint is a stable, callable address in front of one setup
-// version.
-func endpoint(args []string) error {
+// job dispatches `aq job <sub>` — the whole Jobs vocabulary.
+//
+// A GROUP rather than top-level verbs: `aq run` and `aq logs` already mean
+// "push this directory to a box and run something on it" and "tail a box's
+// logs". Those are daily commands, and `aq run mybox` / `aq run myjob` are the
+// same string, so there is no argument shape that could disambiguate them.
+func job(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: aq endpoint <create|point|rm> ...")
+		return errors.New("usage: aq job <create|point|rm> ...")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "create":
-		return endpointCreate(rest)
+		return jobCreate(rest)
 	case "point":
-		return endpointPoint(rest)
+		return jobPoint(rest)
 	case "rm":
-		return endpointRemove(rest)
+		return jobRemove(rest)
+	case "run":
+		return jobRun(rest)
+	case "runs":
+		return jobRuns(rest)
+	case "logs":
+		return jobLogs(rest)
+	case "cancel":
+		return jobCancel(rest)
 	default:
-		return fmt.Errorf("aq endpoint: unknown subcommand %q, expected \"create\", \"point\", or \"rm\"", sub)
+		return fmt.Errorf("aq job: unknown subcommand %q, expected one of create, point, rm, run, runs, logs, cancel", sub)
 	}
 }
 
-// endpointCreateOptions configures runEndpointCreate. endpointCreate() fills
-// in the real environment; tests call runEndpointCreate directly.
-type endpointCreateOptions struct {
+// jobCreateOptions configures runJobCreate. jobCreate() fills
+// in the real environment; tests run runJobCreate directly.
+type jobCreateOptions struct {
 	cred          *config.Credential
 	setupTarget   string // setup id (uuid) or name
 	version       int    // the per-lineage version NUMBER to make callable
-	name          string // endpoint name (defaults to the setup's own name)
+	name          string // job name (defaults to the setup's own name)
 	maxInstances  int
 	spendCapCents int64
 	// onAlias is the `--on <alias>` value as typed, kept only for output,
 	// pinnedDeploymentID is what actually goes on the wire.
 	onAlias string
-	// pinnedDeploymentID pins the endpoint to a box the customer already
+	// pinnedDeploymentID pins the job to a box the customer already
 	// attached, instead of hardware Aquanode rents. Zero means the ordinary
 	// managed path, never send it as a bare "0" or a negative number; the
 	// wire key must be absent unless this is a real attached deployment id.
@@ -54,30 +65,30 @@ type endpointCreateOptions struct {
 	out                io.Writer
 }
 
-// endpointCreate parses `aq endpoint create <setup> <version>` and wires the
-// real environment into runEndpointCreate.
+// jobCreate parses `aq job create <setup> <version>` and wires the
+// real environment into runJobCreate.
 //
 // --max-instances is always required. --spend-cap-cents is required too,
-// UNLESS --on pins the endpoint to a box the customer already attached: that
+// UNLESS --on pins the job to a box the customer already attached: that
 // box bills nothing (Aquanode never rented it), so a spend cap on it can
 // never fire and demanding one just asks for a number that means nothing.
-// An endpoint is a callable address anyone with its name can hit, handing
+// An job is a callable address anyone with its name can hit, handing
 // one out is handing out a GPU budget, so leaving a cap unset on the
 // managed (rented-hardware) path is still a hard error, not a silent
 // default to unbounded.
-func endpointCreate(args []string) error {
-	fs := flag.NewFlagSet("endpoint create", flag.ContinueOnError)
-	name := fs.String("name", "", "endpoint name (default: the setup's own name)")
-	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this endpoint may run (required)")
-	spendCapCents := fs.Int64("spend-cap-cents", -1, "spend cap in cents before this endpoint stops accepting calls (required unless --on is set)")
-	on := fs.String("on", "", "run this endpoint on a host you already attached with `aq attach`, instead of renting hardware")
+func jobCreate(args []string) error {
+	fs := flag.NewFlagSet("job create", flag.ContinueOnError)
+	name := fs.String("name", "", "job name (default: the setup's own name)")
+	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this job may run (required)")
+	spendCapCents := fs.Int64("spend-cap-cents", -1, "spend cap in cents before this job stops accepting runs (required unless --on is set)")
+	on := fs.String("on", "", "run this job on a host you already attached with `aq attach`, instead of renting hardware")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return errors.New("usage: aq endpoint create <setup> <version> --max-instances <n> [--spend-cap-cents <n>] [--on <alias>]")
+		return errors.New("usage: aq job create <setup> <version> --max-instances <n> [--spend-cap-cents <n>] [--on <alias>]")
 	}
 	setupTarget := positional[0]
 	version, err := strconv.Atoi(positional[1])
@@ -85,7 +96,7 @@ func endpointCreate(args []string) error {
 		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
 	}
 	if *maxInstances <= 0 {
-		return errors.New("--max-instances is required and must be a positive number: an endpoint hands out a GPU budget, so it never defaults to unbounded")
+		return errors.New("--max-instances is required and must be a positive number: a job hands out a GPU budget, so it never defaults to unbounded")
 	}
 
 	onAlias := strings.TrimSpace(*on)
@@ -96,7 +107,7 @@ func endpointCreate(args []string) error {
 			return err
 		}
 		if !h.Attached() {
-			return fmt.Errorf("host %q is not attached: run `aq attach %s` first, then retry `aq endpoint create ... --on %s`", onAlias, onAlias, onAlias)
+			return fmt.Errorf("host %q is not attached: run `aq attach %s` first, then retry `aq job create ... --on %s`", onAlias, onAlias, onAlias)
 		}
 		if h.DeploymentID <= 0 {
 			// Cannot happen given h.Attached() above (it requires a nonzero
@@ -110,7 +121,7 @@ func endpointCreate(args []string) error {
 
 	if pinnedDeploymentID == 0 {
 		if *spendCapCents < 0 {
-			return errors.New("--spend-cap-cents is required and must be >= 0: an endpoint hands out a GPU budget, so it never defaults to unbounded")
+			return errors.New("--spend-cap-cents is required and must be >= 0: a job hands out a GPU budget, so it never defaults to unbounded")
 		}
 	} else if *spendCapCents < 0 {
 		// --on pins to a box that bills nothing, so no cap was requested.
@@ -124,7 +135,7 @@ func endpointCreate(args []string) error {
 		return err
 	}
 
-	return runEndpointCreate(endpointCreateOptions{
+	return runJobCreate(jobCreateOptions{
 		cred:               cred,
 		setupTarget:        setupTarget,
 		version:            version,
@@ -137,9 +148,9 @@ func endpointCreate(args []string) error {
 	})
 }
 
-// runEndpointCreate resolves the (setup, version-number) pair to a version
+// runJobCreate resolves the (setup, version-number) pair to a version
 // row id (same resolution `aq share` uses) and makes it callable.
-func runEndpointCreate(opts endpointCreateOptions) error {
+func runJobCreate(opts jobCreateOptions) error {
 	out := opts.out
 	if out == nil {
 		out = os.Stdout
@@ -147,7 +158,7 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 
 	// Never send a zero or negative pin on the wire under any circumstance,
 	// the key must be absent unless it is a real attached deployment id.
-	// CreateEndpointRequest.PinnedDeploymentID carries `omitempty` for the
+	// CreateJobRequest.PinnedDeploymentID carries `omitempty` for the
 	// zero case; this guards the negative case, which omitempty does not.
 	if opts.pinnedDeploymentID < 0 {
 		return fmt.Errorf("internal error: refusing to send a negative pinnedDeploymentId (%d)", opts.pinnedDeploymentID)
@@ -168,7 +179,7 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 		name = setupDisplayName(client, setupID)
 	}
 
-	ep, err := client.CreateEndpoint(api.CreateEndpointRequest{
+	ep, err := client.CreateJob(api.CreateJobRequest{
 		Name:               name,
 		VersionID:          versionRowID,
 		MaxInstances:       opts.maxInstances,
@@ -178,45 +189,45 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 	if err != nil {
 		// A pin refused server-side (a bad --on bind) already names its own
 		// fix, relay it verbatim rather than burying it inside a generic
-		// "could not create endpoint" wrapper.
+		// "could not create job" wrapper.
 		if opts.pinnedDeploymentID != 0 {
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
 				return errors.New(apiErr.Message)
 			}
 		}
-		return fmt.Errorf("could not create endpoint %q: %w", name, err)
+		return fmt.Errorf("could not create job %q: %w", name, err)
 	}
 
 	if opts.pinnedDeploymentID != 0 {
-		fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), pinned to %s, bills nothing)\n",
+		fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), pinned to %s, bills nothing)\n",
 			ep.Name, opts.version, opts.maxInstances, opts.onAlias)
 	} else {
-		fmt.Fprintf(out, "✓ Created endpoint %q → v%d (max %d instance(s), spend cap %s)\n",
+		fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), spend cap %s)\n",
 			ep.Name, opts.version, opts.maxInstances, formatCents(opts.spendCapCents))
 	}
 	return nil
 }
 
-// endpointPointOptions configures runEndpointPoint. endpointPoint() fills in
-// the real environment; tests call runEndpointPoint directly.
-type endpointPointOptions struct {
+// jobPointOptions configures runJobPoint. jobPoint() fills in
+// the real environment; tests run runJobPoint directly.
+type jobPointOptions struct {
 	cred    *config.Credential
-	target  string // endpoint id or name
+	target  string // job id or name
 	version int    // the per-lineage version NUMBER to repoint to
 	out     io.Writer
 }
 
-// endpointPoint parses `aq endpoint point <name> <version>` and wires the
-// real environment into runEndpointPoint.
-func endpointPoint(args []string) error {
-	fs := flag.NewFlagSet("endpoint point", flag.ContinueOnError)
+// jobPoint parses `aq job point <name> <version>` and wires the
+// real environment into runJobPoint.
+func jobPoint(args []string) error {
+	fs := flag.NewFlagSet("job point", flag.ContinueOnError)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return errors.New("usage: aq endpoint point <name> <version>")
+		return errors.New("usage: aq job point <name> <version>")
 	}
 	target := positional[0]
 	version, err := strconv.Atoi(positional[1])
@@ -229,40 +240,40 @@ func endpointPoint(args []string) error {
 		return err
 	}
 
-	return runEndpointPoint(endpointPointOptions{cred: cred, target: target, version: version, out: os.Stdout})
+	return runJobPoint(jobPointOptions{cred: cred, target: target, version: version, out: os.Stdout})
 }
 
-// runEndpointPoint repoints an endpoint at a different version NUMBER within
+// runJobPoint repoints a job at a different version NUMBER within
 // the same save lineage its current version already belongs to — the same
 // command rolls forward or back, it just depends which number is passed.
 //
 // The repoint API and the number a user types are both scoped to a version
 // NUMBER within one lineage (the same per-lineage counter `aq share` and
-// `aq endpoint create` use), but an Endpoint only carries its current
+// `aq job create` use), but an Job only carries its current
 // VersionID, not the owning setup/lineage name. So this first resolves
 // VersionID → (setup id, lineage name) via GetSetupVersion, then resolves
 // the typed number against THAT lineage via ListSetupVersions — the same
 // two-step resolveSetupVersionRowID already does starting from a setup id
-// directly, just starting from the endpoint's live version instead.
-func runEndpointPoint(opts endpointPointOptions) error {
+// directly, just starting from the job's live version instead.
+func runJobPoint(opts jobPointOptions) error {
 	out := opts.out
 	if out == nil {
 		out = os.Stdout
 	}
 
 	client := newControlClient(opts.cred)
-	endpointID, err := resolveEndpointID(client, opts.target)
+	jobID, err := resolveJobID(client, opts.target)
 	if err != nil {
 		return err
 	}
-	ep, err := findEndpoint(client, endpointID)
+	ep, err := findJob(client, jobID)
 	if err != nil {
 		return err
 	}
 
 	current, err := client.GetSetupVersion(ep.VersionID)
 	if err != nil {
-		return fmt.Errorf("could not resolve endpoint %q's current version: %w", ep.Name, err)
+		return fmt.Errorf("could not resolve job %q's current version: %w", ep.Name, err)
 	}
 
 	versions, err := client.ListSetupVersions(current.Name)
@@ -282,33 +293,33 @@ func runEndpointPoint(opts endpointPointOptions) error {
 		return fmt.Errorf("no version %d found in %q's save lineage %q", opts.version, ep.Name, current.Name)
 	}
 
-	updated, err := client.RepointEndpoint(endpointID, api.RepointEndpointRequest{VersionID: targetRowID})
+	updated, err := client.RepointJob(jobID, api.RepointJobRequest{VersionID: targetRowID})
 	if err != nil {
-		return fmt.Errorf("could not repoint endpoint %q: %w", ep.Name, err)
+		return fmt.Errorf("could not repoint job %q: %w", ep.Name, err)
 	}
 
-	fmt.Fprintf(out, "✓ Repointed endpoint %q → v%d\n", updated.Name, opts.version)
+	fmt.Fprintf(out, "✓ Repointed job %q → v%d\n", updated.Name, opts.version)
 	return nil
 }
 
-// endpointRemoveOptions configures runEndpointRemove. endpointRemove() fills
-// in the real environment; tests call runEndpointRemove directly.
-type endpointRemoveOptions struct {
+// jobRemoveOptions configures runJobRemove. jobRemove() fills
+// in the real environment; tests run runJobRemove directly.
+type jobRemoveOptions struct {
 	cred   *config.Credential
-	target string // endpoint id or name
+	target string // job id or name
 	out    io.Writer
 }
 
-// endpointRemove parses `aq endpoint rm <name>` and wires the real
-// environment into runEndpointRemove.
-func endpointRemove(args []string) error {
-	fs := flag.NewFlagSet("endpoint rm", flag.ContinueOnError)
+// jobRemove parses `aq job rm <name>` and wires the real
+// environment into runJobRemove.
+func jobRemove(args []string) error {
+	fs := flag.NewFlagSet("job rm", flag.ContinueOnError)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("usage: aq endpoint rm <name>")
+		return errors.New("usage: aq job rm <name>")
 	}
 	target := positional[0]
 
@@ -317,31 +328,31 @@ func endpointRemove(args []string) error {
 		return err
 	}
 
-	return runEndpointRemove(endpointRemoveOptions{cred: cred, target: target, out: os.Stdout})
+	return runJobRemove(jobRemoveOptions{cred: cred, target: target, out: os.Stdout})
 }
 
-// runEndpointRemove deletes an endpoint.
-func runEndpointRemove(opts endpointRemoveOptions) error {
+// runJobRemove deletes a job.
+func runJobRemove(opts jobRemoveOptions) error {
 	out := opts.out
 	if out == nil {
 		out = os.Stdout
 	}
 
 	client := newControlClient(opts.cred)
-	endpointID, err := resolveEndpointID(client, opts.target)
+	jobID, err := resolveJobID(client, opts.target)
 	if err != nil {
 		return err
 	}
-	ep, err := findEndpoint(client, endpointID)
+	ep, err := findJob(client, jobID)
 	if err != nil {
 		return err
 	}
 
-	if err := client.DeleteEndpoint(endpointID); err != nil {
-		return fmt.Errorf("could not remove endpoint %q: %w", ep.Name, err)
+	if err := client.DeleteJob(jobID); err != nil {
+		return fmt.Errorf("could not remove job %q: %w", ep.Name, err)
 	}
 
-	fmt.Fprintf(out, "✓ Removed endpoint %q\n", ep.Name)
+	fmt.Fprintf(out, "✓ Removed job %q\n", ep.Name)
 	return nil
 }
 
