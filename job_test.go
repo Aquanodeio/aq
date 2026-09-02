@@ -192,9 +192,10 @@ func TestJobCreateOnNeedsNoCapFlag(t *testing.T) {
 //
 // This is the point of the whole change. The backend deleted the per-job dollar
 // cap, and a CLI that kept accepting the flag as a no-op would keep telling
-// people they had a hard stop they no longer have — which is exactly the
-// complaint in ticket #788. An unknown-flag error sends someone with an old
-// script to read what replaced it; a silent no-op sends them to a surprise bill.
+// people they had a hard stop they no longer have, which is the exact
+// complaint the cap was removed over. An unknown-flag error sends someone
+// with an old script to read what replaced it; a silent no-op sends them to
+// a surprise bill.
 func TestJobCreateRejectsTheDeletedSpendCapFlag(t *testing.T) {
 	detachedSandbox(t)
 	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--spend-cap-cents", "500"})
