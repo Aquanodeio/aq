@@ -8,8 +8,9 @@ import (
 // Job-and-runs jobs backing `aq job`, `aq run`, and `aq
 // runs`. An job is a stable, callable address in front of ONE setup
 // version — creating one is handing out a GPU budget (MaxInstances +
-// SpendCapCents), which is why the CLI requires both rather than defaulting
-// either to unbounded.
+// MaxInstances), which is why the CLI requires it rather than defaulting to
+// unbounded. The old per-job dollar cap is gone: it could not be translated
+// into runs, so it was never a control the owner could reason about.
 //
 // Unlike setups.go's snake_case DTOs, these routes speak camelCase on the
 // wire — match the field names exactly (versionId, spendCapCents, ...), do
@@ -17,14 +18,14 @@ import (
 
 // Job mirrors one row of GET /jobs.
 type Job struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	VersionID        int    `json:"versionId"`
-	Status           string `json:"status"`
-	SpentCents       int64  `json:"spentCents"`
-	SpendCapCents    int64  `json:"spendCapCents"`
-	RunningInstances int    `json:"runningInstances"`
-	RunsThisPeriod   int    `json:"runsThisPeriod"`
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	VersionID            int    `json:"versionId"`
+	Status               string `json:"status"`
+	SpentCents           int64  `json:"spentCents"`
+	MonthlySpendCapCents *int64 `json:"monthlySpendCapCents"`
+	RunningInstances     int    `json:"runningInstances"`
+	RunsThisPeriod       int    `json:"runsThisPeriod"`
 }
 
 // ListJobs returns every job the caller owns.
@@ -37,7 +38,7 @@ func (c *Client) ListJobs() ([]Job, error) {
 }
 
 // CreateJobRequest is the body of POST /jobs. MaxInstances and
-// SpendCapCents are both always sent — the CLI never lets either be omitted
+// MaxInstances is always sent — the CLI never lets it be omitted
 // (see jobCreate's validation), so there is no unbounded-by-default
 // path on the wire either.
 //
@@ -50,11 +51,13 @@ func (c *Client) ListJobs() ([]Job, error) {
 // `--on <alias>` flag locally and refuses before ever building this request
 // unless the alias names a genuinely attached deployment.
 type CreateJobRequest struct {
-	Name               string `json:"name"`
-	VersionID          int    `json:"versionId"`
-	MaxInstances       int    `json:"maxInstances"`
-	SpendCapCents      int64  `json:"spendCapCents"`
-	PinnedDeploymentID int    `json:"pinnedDeploymentId,omitempty"`
+	Name         string `json:"name"`
+	VersionID    int    `json:"versionId"`
+	MaxInstances int    `json:"maxInstances"`
+	// Pointer + omitempty: optional means the key is ABSENT on the wire, never
+	// present-as-0. A zero budget would refuse every run.
+	MonthlySpendCapCents *int64 `json:"monthlySpendCapCents,omitempty"`
+	PinnedDeploymentID   int    `json:"pinnedDeploymentId,omitempty"`
 }
 
 // CreateJob makes a setup version callable, returning the created

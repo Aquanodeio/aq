@@ -36,12 +36,14 @@ func jobCreateServer(t *testing.T, createJob http.HandlerFunc) *httptest.Server 
 
 func baseCreateOpts(serverURL string) jobCreateOptions {
 	return jobCreateOptions{
-		cred:          &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: serverURL},
-		setupTarget:   jobTestSetupID,
-		version:       3,
-		maxInstances:  1,
-		spendCapCents: 500,
-		out:           &bytes.Buffer{},
+		cred:         &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: serverURL},
+		setupTarget:  jobTestSetupID,
+		version:      3,
+		maxInstances: 1,
+		// -1 is "no monthly budget requested", which is the ordinary case now
+		// that the per-job dollar cap is gone.
+		monthlyCapCents: -1,
+		out:             &bytes.Buffer{},
 	}
 }
 
@@ -79,7 +81,6 @@ func TestCreateJobSendsThePinnedDeploymentIDOnTheWire(t *testing.T) {
 	opts := baseCreateOpts(srv.URL)
 	opts.pinnedDeploymentID = 4242
 	opts.onAlias = "lease-a"
-	opts.spendCapCents = 0
 	if err := runJobCreate(opts); err != nil {
 		t.Fatalf("runJobCreate: %v", err)
 	}
@@ -159,35 +160,49 @@ func TestJobCreateOnUnattachedAliasRefusesLocally(t *testing.T) {
 	}
 }
 
-// --on must not require --spend-cap-cents: a pinned box bills nothing, so a
-// cap on it can never fire. This is checked by confirming the command gets
-// past the spend-cap validation (the next thing it hits is the login check,
-// since detachedSandbox leaves no stored credential) rather than failing on
-// the cap.
-func TestJobCreateOnDoesNotRequireSpendCap(t *testing.T) {
+// Creating a job needs NO cap flag at all now, on either path. The check is
+// that the command gets past argument validation and fails at the login check
+// instead (detachedSandbox leaves no stored credential), which proves nothing
+// local refused it first.
+func TestJobCreateNeedsNoCapFlag(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1"})
+	if err == nil {
+		t.Fatal("expected an error (no stored credential in the sandbox)")
+	}
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("expected to reach the login check with no cap flag, got: %v", err)
+	}
+}
+
+// The same on the pinned path.
+func TestJobCreateOnNeedsNoCapFlag(t *testing.T) {
 	detachedSandbox(t, attachedHost())
 	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--on", "lease-a"})
 	if err == nil {
 		t.Fatal("expected an error (no stored credential in the sandbox)")
 	}
-	if strings.Contains(err.Error(), "spend-cap-cents") {
-		t.Fatalf("--on must not require --spend-cap-cents, got: %v", err)
-	}
 	if !strings.Contains(err.Error(), "not logged in") {
-		t.Fatalf("expected to fail at the login check (proving the cap check was skipped), got: %v", err)
+		t.Fatalf("expected to reach the login check, got: %v", err)
 	}
 }
 
-// The ordinary managed path is untouched: omitting --spend-cap-cents without
-// --on must still be a hard local error, and must never reach the network.
-func TestJobCreateWithoutOnStillRequiresSpendCap(t *testing.T) {
+// --spend-cap-cents is DELETED, and passing it must FAIL LOUDLY rather than be
+// accepted and ignored.
+//
+// This is the point of the whole change. The backend deleted the per-job dollar
+// cap, and a CLI that kept accepting the flag as a no-op would keep telling
+// people they had a hard stop they no longer have — which is exactly the
+// complaint in ticket #788. An unknown-flag error sends someone with an old
+// script to read what replaced it; a silent no-op sends them to a surprise bill.
+func TestJobCreateRejectsTheDeletedSpendCapFlag(t *testing.T) {
 	detachedSandbox(t)
-	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1"})
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--spend-cap-cents", "500"})
 	if err == nil {
-		t.Fatal("expected an error")
+		t.Fatal("expected --spend-cap-cents to be rejected, not silently accepted")
 	}
-	if !strings.Contains(err.Error(), "--spend-cap-cents is required") {
-		t.Fatalf("expected the unchanged managed-path refusal, got: %v", err)
+	if !strings.Contains(err.Error(), "spend-cap-cents") {
+		t.Fatalf("the error should name the flag that no longer exists, got: %v", err)
 	}
 }
 
@@ -195,4 +210,49 @@ func readAll(r *http.Request) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	_, err := buf.ReadFrom(r.Body)
 	return buf.Bytes(), err
+}
+
+// The monthly budget is OPTIONAL, so an unset one must be ABSENT from the
+// request body — not present as 0.
+//
+// This asserts the WIRE, not the parsed struct. A zero on the wire would be
+// read by the backend as a budget of nothing and refuse every run of the job,
+// and a parsed-value check ("is it zero?") cannot tell an omitted key from a
+// sent zero, so it would pass while every real create was broken.
+func TestCreateJobOmitsMonthlyCapWhenUnset(t *testing.T) {
+	var body []byte
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
+	})
+	defer srv.Close()
+
+	opts := baseCreateOpts(srv.URL) // monthlyCapCents: -1
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+	if strings.Contains(string(body), "monthlySpendCapCents") {
+		t.Fatalf("an unset monthly budget must not appear on the wire at all, got: %s", body)
+	}
+}
+
+// And a budget that WAS set is sent verbatim, including a deliberate 0 — which
+// is a real choice ("stop after this month's first cent") and distinct from
+// "no budget".
+func TestCreateJobSendsMonthlyCapWhenSet(t *testing.T) {
+	var body []byte
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
+	})
+	defer srv.Close()
+
+	opts := baseCreateOpts(srv.URL)
+	opts.monthlyCapCents = 2500
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+	if !strings.Contains(string(body), `"monthlySpendCapCents":2500`) {
+		t.Fatalf("monthly budget missing from the wire, got: %s", body)
+	}
 }

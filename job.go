@@ -48,12 +48,17 @@ func job(args []string) error {
 // jobCreateOptions configures runJobCreate. jobCreate() fills
 // in the real environment; tests run runJobCreate directly.
 type jobCreateOptions struct {
-	cred          *config.Credential
-	setupTarget   string // setup id (uuid) or name
-	version       int    // the per-lineage version NUMBER to make callable
-	name          string // job name (defaults to the setup's own name)
-	maxInstances  int
-	spendCapCents int64
+	cred         *config.Credential
+	setupTarget  string // setup id (uuid) or name
+	version      int    // the per-lineage version NUMBER to make callable
+	name         string // job name (defaults to the setup's own name)
+	maxInstances int
+	// The MONTHLY budget, in cents, and optional. Not the old per-job
+	// `spendCapCents`, which the backend deleted: a dollar ceiling could not be
+	// translated into calls, because the same amount bought 13 cold ones or 200
+	// warm ones. The bound that is ALWAYS present is wall-clock and comes from
+	// the job's own time limit, attempts and machine count. -1 means "not set".
+	monthlyCapCents int64
 	// onAlias is the `--on <alias>` value as typed, kept only for output,
 	// pinnedDeploymentID is what actually goes on the wire.
 	onAlias string
@@ -68,19 +73,25 @@ type jobCreateOptions struct {
 // jobCreate parses `aq job create <setup> <version>` and wires the
 // real environment into runJobCreate.
 //
-// --max-instances is always required. --spend-cap-cents is required too,
-// UNLESS --on pins the job to a box the customer already attached: that
-// box bills nothing (Aquanode never rented it), so a spend cap on it can
-// never fire and demanding one just asks for a number that means nothing.
-// An job is a callable address anyone with its name can hit, handing
-// one out is handing out a GPU budget, so leaving a cap unset on the
-// managed (rented-hardware) path is still a hard error, not a silent
-// default to unbounded.
+// --max-instances is required: a job hands out a GPU budget and never defaults
+// to unbounded.
+//
+// --spend-cap-cents is GONE, not renamed. The backend deleted the per-job
+// dollar cap on purpose — it could not be translated into runs, since the same
+// amount bought 13 cold ones or 200 warm ones, and a limit you cannot express
+// in your own units is not a control. Keeping the flag as an accepted no-op
+// would be worse than removing it: it would keep telling people they had a hard
+// stop they no longer have.
+//
+// What replaces it is two things. The always-present bound is wall-clock and
+// needs no flag — the job's time limit times its attempts times its machines is
+// the worst case for one run. On top of that, --monthly-cap-cents is an
+// OPTIONAL budget over billed time for the calendar month.
 func jobCreate(args []string) error {
 	fs := flag.NewFlagSet("job create", flag.ContinueOnError)
 	name := fs.String("name", "", "job name (default: the setup's own name)")
 	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this job may run (required)")
-	spendCapCents := fs.Int64("spend-cap-cents", -1, "spend cap in cents before this job stops accepting runs (required unless --on is set)")
+	monthlyCapCents := fs.Int64("monthly-cap-cents", -1, "optional monthly budget in cents; new runs stop once the month's spend reaches it")
 	on := fs.String("on", "", "run this job on a host you already attached with `aq attach`, instead of renting hardware")
 
 	positional, err := parseInterspersed(fs, args)
@@ -88,7 +99,7 @@ func jobCreate(args []string) error {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return errors.New("usage: aq job create <setup> <version> --max-instances <n> [--spend-cap-cents <n>] [--on <alias>]")
+		return errors.New("usage: aq job create <setup> <version> --max-instances <n> [--monthly-cap-cents <n>] [--on <alias>]")
 	}
 	setupTarget := positional[0]
 	version, err := strconv.Atoi(positional[1])
@@ -119,16 +130,10 @@ func jobCreate(args []string) error {
 		pinnedDeploymentID = h.DeploymentID
 	}
 
-	if pinnedDeploymentID == 0 {
-		if *spendCapCents < 0 {
-			return errors.New("--spend-cap-cents is required and must be >= 0: a job hands out a GPU budget, so it never defaults to unbounded")
-		}
-	} else if *spendCapCents < 0 {
-		// --on pins to a box that bills nothing, so no cap was requested.
-		// 0 is the only value that keeps the meaning honest: a cap that can
-		// never fire is a cap of nothing spendable, never "unbounded".
-		*spendCapCents = 0
-	}
+	// No required-cap check any more. The wall-clock bound is structural and
+	// always applies; the monthly budget is genuinely optional, and -1 means the
+	// key is left OFF THE WIRE entirely rather than sent as a 0 that would read
+	// as "budget of nothing".
 
 	cred, err := requireLogin()
 	if err != nil {
@@ -141,7 +146,7 @@ func jobCreate(args []string) error {
 		version:            version,
 		name:               *name,
 		maxInstances:       *maxInstances,
-		spendCapCents:      *spendCapCents,
+		monthlyCapCents:    *monthlyCapCents,
 		onAlias:            onAlias,
 		pinnedDeploymentID: pinnedDeploymentID,
 		out:                os.Stdout,
@@ -179,13 +184,19 @@ func runJobCreate(opts jobCreateOptions) error {
 		name = setupDisplayName(client, setupID)
 	}
 
-	ep, err := client.CreateJob(api.CreateJobRequest{
+	req := api.CreateJobRequest{
 		Name:               name,
 		VersionID:          versionRowID,
 		MaxInstances:       opts.maxInstances,
-		SpendCapCents:      opts.spendCapCents,
 		PinnedDeploymentID: opts.pinnedDeploymentID,
-	})
+	}
+	// OMITTED unless set. The backend's schema is optional, and optional means
+	// the key is ABSENT -- sending 0 would read as "a budget of nothing", which
+	// would refuse every run.
+	if opts.monthlyCapCents >= 0 {
+		req.MonthlySpendCapCents = &opts.monthlyCapCents
+	}
+	ep, err := client.CreateJob(req)
 	if err != nil {
 		// A pin refused server-side (a bad --on bind) already names its own
 		// fix, relay it verbatim rather than burying it inside a generic
@@ -203,8 +214,13 @@ func runJobCreate(opts jobCreateOptions) error {
 		fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), pinned to %s, bills nothing)\n",
 			ep.Name, opts.version, opts.maxInstances, opts.onAlias)
 	} else {
-		fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), spend cap %s)\n",
-			ep.Name, opts.version, opts.maxInstances, formatCents(opts.spendCapCents))
+		if opts.monthlyCapCents >= 0 {
+			fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), monthly budget %s)\n",
+				ep.Name, opts.version, opts.maxInstances, formatCents(opts.monthlyCapCents))
+		} else {
+			fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), bounded by its run time limit)\n",
+				ep.Name, opts.version, opts.maxInstances)
+		}
 	}
 	return nil
 }
