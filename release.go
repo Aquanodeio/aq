@@ -91,7 +91,7 @@ func runRelease(opts releaseOptions) error {
 	fmt.Fprintln(opts.out, "  • no provider is contacted and nothing is torn down. This is not a terminate")
 	if h.Attached() {
 		fmt.Fprintln(opts.out, "  • Aquanode revokes this box's credentials")
-		fmt.Fprintln(opts.out, "  • the console, version history, sharing and endpoints stop working for it")
+		fmt.Fprintln(opts.out, "  • the console, version history, sharing and jobs stop working for it")
 	}
 	if opts.keep {
 		fmt.Fprintf(opts.out, "  • %s stays in your local registry and keeps working in detached mode\n", h.Alias)
