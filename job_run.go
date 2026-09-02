@@ -20,22 +20,29 @@ type jobRunOptions struct {
 	inputs      map[string]any
 	wait        bool
 	waitSeconds int
-	out         io.Writer
+	// follow is create-then-tail: after the run is created, stream its log
+	// exactly as `aq job logs -f` does. Shares runJobLogs rather than
+	// reimplementing the poll loop, so the two commands can never drift.
+	follow bool
+	out    io.Writer
+	errOut io.Writer
 }
 
-// run parses `aq run <job> [--input file] [--wait [--wait-seconds <n>]]`
+// run parses `aq run <job> [--input file] [--wait [--wait-seconds <n>]] [--follow]`
 // and wires the real environment into runRun.
 func jobRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	inputPath := fs.String("input", "", "path to a JSON file of the declared params (default: no inputs)")
 	wait := fs.Bool("wait", false, "wait for the run to complete (up to --wait-seconds, default 30)")
 	waitSeconds := fs.Int("wait-seconds", 30, "maximum seconds to wait for completion (only meaningful with --wait, capped at 120)")
+	follow := fs.Bool("f", false, "after starting the run, stream its log until it ends")
+	followLong := fs.Bool("follow", false, "after starting the run, stream its log until it ends")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("usage: aq run <job> [--input file] [--wait [--wait-seconds <n>]]")
+		return errors.New("usage: aq run <job> [--input file] [--wait [--wait-seconds <n>]] [--follow]")
 	}
 	target := positional[0]
 
@@ -55,7 +62,9 @@ func jobRun(args []string) error {
 		inputs:      inputs,
 		wait:        *wait,
 		waitSeconds: *waitSeconds,
+		follow:      *follow || *followLong,
 		out:         os.Stdout,
+		errOut:      os.Stderr,
 	})
 }
 
@@ -105,6 +114,23 @@ func doJobRun(opts jobRunOptions) error {
 	res, err := client.CreateRun(jobID, req)
 	if err != nil {
 		return fmt.Errorf("could not run job %q: %w", opts.target, err)
+	}
+
+	if opts.follow {
+		errOut := opts.errOut
+		if errOut == nil {
+			errOut = os.Stderr
+		}
+		runID := res.GetRunID()
+		fmt.Fprintf(out, "✓ Run %s started, following its log (ctrl-c to stop)…\n", runID)
+		return runJobLogs(jobLogsOptions{
+			cred:   opts.cred,
+			jobRef: opts.target,
+			runID:  runID,
+			follow: true,
+			out:    out,
+			errOut: errOut,
+		})
 	}
 
 	// If --wait was used and the run completed (200 response), res.ID will be

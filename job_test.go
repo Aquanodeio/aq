@@ -256,3 +256,94 @@ func TestCreateJobSendsMonthlyCapWhenSet(t *testing.T) {
 		t.Fatalf("monthly budget missing from the wire, got: %s", body)
 	}
 }
+
+// jobRunFollowServer answers the three calls a `--follow` run needs: the job
+// list (resolveJobID, hit once by doJobRun and again by runJobLogs since the
+// two share no client instance), POST /jobs/:id/runs to start it, and the
+// log tail. The log source is "archived" on the very first poll so the
+// follow loop returns immediately without sleeping, this test is about
+// wiring the two together, not the poll timing runJobLogs already covers.
+func jobRunFollowServer(t *testing.T) (*httptest.Server, *bool) {
+	t.Helper()
+	logsHit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeData(w, []map[string]any{{"id": "job-1", "name": "myjob"}})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	mux.HandleFunc("/jobs/job-1/runs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{
+			"runId":      "run-1",
+			"acceptedAt": "2026-09-02T00:00:00Z",
+			"status":     "queued",
+		})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs", func(w http.ResponseWriter, r *http.Request) {
+		logsHit = true
+		writeData(w, map[string]any{
+			"chunk":      "hello from the box\n",
+			"nextOffset": 20,
+			"size":       20,
+			"truncated":  false,
+			"source":     "archived",
+		})
+	})
+	return httptest.NewServer(mux), &logsHit
+}
+
+// TestDoJobRunFollowStreamsTheLogAfterCreating: `--follow` is create-then-
+// tail, sharing runJobLogs rather than a second poll loop. This asserts both
+// halves actually ran: the run got created AND its log got read, in that
+// order, through the one shared implementation.
+func TestDoJobRunFollowStreamsTheLogAfterCreating(t *testing.T) {
+	srv, logsHit := jobRunFollowServer(t)
+	defer srv.Close()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := jobRunOptions{
+		cred:   &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: srv.URL},
+		target: "myjob",
+		inputs: map[string]any{},
+		follow: true,
+		out:    &out,
+		errOut: &errOut,
+	}
+	if err := doJobRun(opts); err != nil {
+		t.Fatalf("doJobRun: %v", err)
+	}
+	if !*logsHit {
+		t.Fatal("--follow must read the run's log, not just create it")
+	}
+	if !strings.Contains(out.String(), "run-1") {
+		t.Fatalf("want the created run id announced before following, got: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "hello from the box") {
+		t.Fatalf("want the tailed log chunk printed, got: %s", out.String())
+	}
+}
+
+// TestDoJobRunWithoutFollowNeverTailsTheLog: the default `aq job run`
+// behaviour (create, maybe wait, print, return) must not change just because
+// runJobLogs is now reachable from this file.
+func TestDoJobRunWithoutFollowNeverTailsTheLog(t *testing.T) {
+	srv, logsHit := jobRunFollowServer(t)
+	defer srv.Close()
+
+	var out bytes.Buffer
+	opts := jobRunOptions{
+		cred:   &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: srv.URL},
+		target: "myjob",
+		inputs: map[string]any{},
+		out:    &out,
+	}
+	if err := doJobRun(opts); err != nil {
+		t.Fatalf("doJobRun: %v", err)
+	}
+	if *logsHit {
+		t.Fatal("without --follow the log endpoint must never be hit")
+	}
+}
