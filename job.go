@@ -22,7 +22,11 @@ import (
 // same string, so there is no argument shape that could disambiguate them.
 func job(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: aq job <create|point|rm> ...")
+		// Every subcommand, not three of seven. This line listed only
+		// create/point/rm while the unknown-subcommand error below listed all
+		// seven, so `aq job` with no args hid run, runs, logs and cancel from
+		// the exact user who was asking what the verbs are.
+		return errors.New("usage: aq job <create|point|rm|run|runs|logs|cancel> ...")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
