@@ -12,7 +12,7 @@ sub-repo (aq, mjolnir, ogre, website, aquanode-backend) by
 scripts/govern/sync-harness-refs.sh. Edit the canonical copy and re-run that
 script — never edit a vendored copy directly; scripts/govern/lint-harness-refs.sh
 detects and fails on drift between a vendored copy and this file.
-SOURCE-HASH: d960e9cbb1cd21f7d3b72426c3f0934f2bbd86d34493232225e8d7f5cf865e61
+SOURCE-HASH: 63e207f8dad2ab6028200e1962a22a37df545db83eb76b6d68e0abffab76f814
 
 Read from stdin: NUL-separated tracked file paths (matches `git ls-files
 -z`). Prints "reason\x01path:lineno:content" for every offending line to
@@ -98,19 +98,62 @@ that 12-citation blast radius and getting a new ruling.
   #1" — where `#N` is standing in for "number N" of a list the surrounding
   prose is itself defining, not pointing out at a workspace-root ticket.
   Recognized structurally: an enumeration noun (check/step/case/item/
-  option/part/phase) immediately before the `#N`, allowed regardless of the
-  digits' value. This is NOT a magnitude/threshold rule (e.g. "harness
-  tickets are currently 3 digits so anything under 100 is prose") — a
-  numeric-range rule has a shelf life by construction, since ticket numbers
-  only climb, and would need to be re-tuned forever. The word immediately
-  before the `#` is what actually distinguishes the two cases and doesn't
-  decay as the ticket counter grows, so it has no expiry to track.
+  option/part/phase/question/answer, singular or plural) immediately before
+  the `#N`, allowed regardless of the digits' value. This is NOT a
+  magnitude/threshold rule (e.g. "harness tickets are currently 3 digits so
+  anything under 100 is prose") — a numeric-range rule has a shelf life by
+  construction, since ticket numbers only climb, and would need to be
+  re-tuned forever. The word immediately before the `#` is what actually
+  distinguishes the two cases and doesn't decay as the ticket counter grows,
+  so it has no expiry to track.
+- Prose ENUMERATION RANGE — "questions (#1-#3)", "runs checks #1-#3" — a
+  `#N-#M` shape (bare `#`-numbers joined directly by a hyphen). The
+  workspace's own convention for a genuine multi-ticket citation chain is
+  `/`, not `-` (see "aquanode-backend#398/#400" above) — nobody writes two
+  dangling workspace-ticket numbers joined by a hyphen — so this shape is
+  read as a numeric range describing a locally-defined list, not two
+  citations, regardless of the enclosing word.
+- Prose ENUMERATION, established ELSEWHERE IN THE SAME FILE — a bare `#N`
+  with no qualifying word or range on its OWN line ("Why not answer it
+  here. #4 reads ogre's own commit graph.") is still enumeration, not
+  citation, if that same digit value N was already proven to be a
+  locally-defined enumeration item somewhere else in the SAME file (a
+  `check #4`-shaped match, or a `#1-#4`-shaped range). A document that
+  spells out "Check #4:" as a section header and then refers back to it in
+  plain prose a few lines later is citing its OWN structure, not the
+  workspace's — self-contained to a reader with no workspace context,
+  exactly the resolvability bar this whole guard is enforcing. Implemented
+  as a two-pass, per-file scan: pass 1 collects every digit value allowed by
+  an enum-word or range match anywhere in the file; pass 2 additionally
+  allows a bare `#N` elsewhere in that file when N is in that set.
+  ACCEPTED GAP (do not re-derive without a new ruling): this does not check
+  that the later bare reference is actually TALKING ABOUT the earlier
+  enumerated item — a file that happens to contain both a real "step #4" and
+  an unrelated genuine dangling "see #4" ticket citation would wrongly
+  allow the citation too. Judged low-probability (current ticket numbers
+  are in the 900s; a coincident low single-digit dangling citation sharing
+  a file with an unrelated "#4"-numbered enumeration step is rare) against
+  the alternative of missing real prose like the mjolnir example above.
 - `LEDGER.md` — a workspace-root harness artifact too (a stub since its
   content moved into the `.claude/skills/billing-ledger` workspace skill),
   unresolvable to anyone who clones a vendored repo standalone, same as
   `queue/tickets.md`/`.plans/`/`.specs/`/"root CLAUDE.md" above. Flagged as
   a LITERAL_PATTERNS entry after product-source citations to it shipped
   undetected because no pattern here covered it until this one was added.
+- PROSE citations of a workspace-root design doc — `.plans/`/`.specs/` only
+  catch the PATH form. A comment can point at the exact same unresolvable
+  file in prose instead ("(2026-09-01 design)", "the design doc §6 rule 3",
+  "see the design doc") and this guard let ~10 files ship that way in
+  aquanode-backend before this note was added — the path-form patterns above
+  never fire on prose. Three SHAPES only, deliberately narrow: a bare
+  ISO-date directly before "design" (regex `\\d{4}-\\d{2}-\\d{2} design`, e.g.
+  "2026-09-01 design"), "design" optionally followed by "doc" then a
+  section-mark ("design §6", "design doc §3"), and the exact phrase "the
+  design doc". Plain "design" alone, or "design" in ordinary engineering
+  prose ("by design", "the design of this function", "a design choice"),
+  must NOT match — "design" is far too common a word to flag bare. Anchoring
+  on the ISO-date-prefix / section-mark / "the design doc" shapes catches
+  the actual citation forms seen without touching that prose.
 """
 import re
 import sys
@@ -148,8 +191,16 @@ QUALIFIED_TAIL = re.compile(
 # not a citation of a workspace-root ticket. See the module docstring's
 # "Prose ENUMERATION" note for why this is word-shaped, not number-shaped.
 ENUM_WORD_TAIL = re.compile(
-    r"\b(?:check|step|case|item|option|part|phase)\s*$", re.IGNORECASE
+    r"(?<![A-Za-z-])(?:checks?|steps?|cases?|items?|options?|parts?|phases?|"
+    r"questions?|answers?)\s*$",
+    re.IGNORECASE,
 )
+# A bare `#N-#M` shape — two `#`-numbers joined directly by a hyphen — reads
+# as a numeric RANGE describing a locally-defined list ("questions (#1-#3)"),
+# never a citation chain (the workspace's own chain convention uses `/`, see
+# the module docstring). See the module docstring's "Prose ENUMERATION RANGE"
+# note.
+RANGE_REF = re.compile(r"#[0-9]+\s*-\s*#[0-9]+")
 
 # (regex, stable label used in the baseline reason key — NOT the raw
 # .pattern, which carries regex escaping like "queue/tickets\.md")
@@ -161,6 +212,16 @@ LITERAL_PATTERNS = [
     # LEDGER.md is a workspace-root harness artifact too — see the module
     # docstring's "LEDGER.md" note above for the full rationale.
     (re.compile(r"LEDGER\.md"), "LEDGER.md"),
+    # PROSE citations of a workspace-root design doc — see the module
+    # docstring's "PROSE citations of a workspace-root design doc" note.
+    # Narrow shapes only: a bare ISO date directly before "design"...
+    (re.compile(r"\b\d{4}-\d{2}-\d{2} design\b"), "<date> design"),
+    # ...design/design-doc followed by a section mark ("design §6",
+    # "design doc §3")...
+    (re.compile(r"\bdesign(?: doc)? §\s*[0-9]"), "design §N"),
+    # ...and the exact phrase "the design doc" (case-insensitive so "The
+    # design doc" at a sentence start still matches).
+    (re.compile(r"\bthe design doc\b", re.IGNORECASE), "the design doc"),
 ]
 
 HEX_LETTERS = set("abcdefABCDEF")
@@ -209,7 +270,23 @@ def is_hex_color_ref(line: str, start: int, end: int) -> bool:
     return False
 
 
-def find_numeric_violations(line: str) -> list:
+def collect_established_enum_numbers(lines: list) -> set:
+    """Pass 1 of the per-file scan: every digit value proven, ON ITS OWN
+    LINE, to be a locally-defined enumeration item (an ENUM_WORD_TAIL match
+    or a RANGE_REF match) anywhere in this file. See the module docstring's
+    "Prose ENUMERATION, established ELSEWHERE IN THE SAME FILE" note."""
+    established = set()
+    for line in lines:
+        for m in NUM_REF.finditer(line):
+            if ENUM_WORD_TAIL.search(line[: m.start()]):
+                established.add(int(m.group(0)[1:]))
+        for m in RANGE_REF.finditer(line):
+            for tok in re.findall(r"#([0-9]+)", m.group(0)):
+                established.add(int(tok))
+    return established
+
+
+def find_numeric_violations(line: str, established: set = frozenset()) -> list:
     matches = list(NUM_REF.finditer(line))
     if not matches:
         return []
@@ -219,6 +296,7 @@ def find_numeric_violations(line: str) -> list:
         # dangling internal pointer.
         return []
     entity_spans = [(m.start(), m.end()) for m in HTML_ENTITY_REF.finditer(line)]
+    range_spans = [(m.start(), m.end()) for m in RANGE_REF.finditer(line)]
     allowed_end = {}  # end-of-match-index -> True if that match was allowed
     violations = []
     for m in matches:
@@ -241,6 +319,16 @@ def find_numeric_violations(line: str) -> list:
         elif is_hex_color_ref(line, start, end):
             allowed = True
         elif ENUM_WORD_TAIL.search(prefix):
+            allowed = True
+        elif any(r_start <= start and end <= r_end for r_start, r_end in range_spans):
+            # "#1-#3" — a numeric enumeration range, not a citation chain.
+            # See the module docstring's "Prose ENUMERATION RANGE" note.
+            allowed = True
+        elif int(m.group(0)[1:]) in established:
+            # This exact digit value was independently proven to be a
+            # locally-defined enumeration item elsewhere in this same file.
+            # See the module docstring's "established ELSEWHERE IN THE SAME
+            # FILE" note and its ACCEPTED GAP.
             allowed = True
         allowed_end[end] = allowed
         if not allowed:
@@ -266,10 +354,12 @@ def main() -> None:
         if looks_binary(raw):
             continue
         text = raw.decode("utf-8", "surrogateescape")
-        for i, line in enumerate(text.split("\n"), start=1):
+        lines = text.split("\n")
+        established = collect_established_enum_numbers(lines)
+        for i, line in enumerate(lines, start=1):
             if MERGE_PR_LINE.search(line):
                 continue
-            reasons = literal_violations(line) + find_numeric_violations(line)
+            reasons = literal_violations(line) + find_numeric_violations(line, established)
             if reasons:
                 reason = ",".join(sorted(set(reasons)))
                 print(f"{reason}\x01{path}:{i}:{line}")
