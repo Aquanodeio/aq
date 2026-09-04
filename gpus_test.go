@@ -61,6 +61,49 @@ func TestRunGPUsSortsByPerGPUPriceAscending(t *testing.T) {
 	}
 }
 
+// dirtyRegionMarketplaceBody reproduces ticket #868 exactly: vast.ai's feed
+// emits region with a leading space (" US" instead of "US"). Rendered
+// without trimming, the RTX2080TI row's REGION column starts one character
+// right of every other row's, since tabwriter pads columns to the widest
+// cell without knowing a leading space isn't meaningful content.
+const dirtyRegionMarketplaceBody = `{"success":true,"data":[
+  {"gpuShortName":"RTX5060TI","gpuCount":1,"gpuMemory":"16GB","provider":"vastai","region":"Vietnam","available":17,"price":0.1306},
+  {"gpuShortName":"RTX2080TI","gpuCount":1,"gpuMemory":"11GB","provider":"vastai","region":" US","available":1,"price":0.0986}
+]}`
+
+func TestRunGPUsTrimsDirtyFeedWhitespaceSoTheTableStaysAligned(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, dirtyRegionMarketplaceBody)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	if err := runGPUs(gpusOptions{apiURL: srv.URL, limit: defaultGPUsLimit, out: &out, errOut: &errOut}); err != nil {
+		t.Fatalf("runGPUs: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 3 { // header + 2 offers
+		t.Fatalf("got %d lines, want 3 (header + 2 offers):\n%s", len(lines), out.String())
+	}
+
+	// The REGION column must start at the same byte offset on every data row.
+	// A leftover leading space on one row's Region shifts that row's REGION
+	// column (and everything after it) one character to the right.
+	regionCol := strings.Index(lines[0], "REGION")
+	if regionCol < 0 {
+		t.Fatalf("header has no REGION column:\n%s", lines[0])
+	}
+	for i := 1; i < len(lines); i++ {
+		if got := lines[i][regionCol]; got == ' ' {
+			t.Errorf("row %q: REGION column misaligned (leading space at offset %d) — feed whitespace was not trimmed", lines[i], regionCol)
+		}
+	}
+	if !strings.Contains(out.String(), "US") {
+		t.Fatalf("out = %q, missing expected region value", out.String())
+	}
+}
+
 func TestRunGPUsFilterByGPUSubstringCaseInsensitive(t *testing.T) {
 	var out, errOut bytes.Buffer
 	err := runGPUs(gpusOptions{apiURL: stubMarketplace(t), gpu: "b200", limit: defaultGPUsLimit, out: &out, errOut: &errOut})

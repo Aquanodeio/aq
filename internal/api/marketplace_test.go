@@ -43,6 +43,42 @@ func TestMarketplaceDecodesOffer(t *testing.T) {
 	}
 }
 
+// TestMarketplaceTrimsWhitespaceFromFreeTextFields pins ticket #868: vast.ai's
+// geolocation-derived region shipped with a leading space (" US" instead of
+// "US"), which misaligned the `aq gpus` table one column right for that row
+// and would render as a distinct value from "US" anywhere region is grouped
+// or filtered. Marketplace() must trim every free-text field so a future
+// dirty value from any provider can't reintroduce the same class of bug.
+func TestMarketplaceTrimsWhitespaceFromFreeTextFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":[{"gpuShortName":" RTX2080TI ","gpuCount":1,`+
+			`"provider":" vastai","region":" US","available":1,"price":0.0986,"providerName":"vastai "}]}`)
+	}))
+	defer srv.Close()
+
+	offers, err := NewPublic(srv.URL).Marketplace()
+	if err != nil {
+		t.Fatalf("Marketplace: %v", err)
+	}
+	if len(offers) != 1 {
+		t.Fatalf("got %d offers, want 1", len(offers))
+	}
+	o := offers[0]
+	if o.Region != "US" {
+		t.Errorf("Region = %q, want trimmed %q", o.Region, "US")
+	}
+	if o.Provider != "vastai" {
+		t.Errorf("Provider = %q, want trimmed %q", o.Provider, "vastai")
+	}
+	if o.ProviderName != "vastai" {
+		t.Errorf("ProviderName = %q, want trimmed %q", o.ProviderName, "vastai")
+	}
+	if o.GPUShortName != "RTX2080TI" {
+		t.Errorf("GPUShortName = %q, want trimmed %q", o.GPUShortName, "RTX2080TI")
+	}
+}
+
 // TestMarketplaceSendsNoAuthHeaders is the load-bearing test for `aq gpus`
 // being a genuinely no-account command: NewPublic must never attach
 // x-api-key/x-team-id, even though the underlying request path (Client.do)

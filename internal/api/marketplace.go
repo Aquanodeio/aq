@@ -1,5 +1,7 @@
 package api
 
+import "strings"
+
 // The marketplace endpoint backs `aq gpus` — the one command in this CLI that
 // works with no Aquanode account. GET /marketplace is public: it takes no
 // auth headers and the orchestrator does not gate it behind x-api-key. That
@@ -78,5 +80,23 @@ func (c *Client) Marketplace() ([]MarketplaceOffer, error) {
 	if err := c.getJSON("/marketplace", &out); err != nil {
 		return nil, err
 	}
+	for i := range out {
+		out[i].trimStrings()
+	}
 	return out, nil
+}
+
+// trimStrings strips leading/trailing whitespace from every free-text field
+// on the offer. The feed is not guaranteed clean — vast.ai's geolocation-derived
+// region has shipped with a leading space (ticket #868: " US" instead of "US"),
+// and nothing on the wire promises the same isn't true of provider or the GPU
+// name. Trimming once at decode time, rather than patching one field where it
+// was first noticed, means the table renderer, --json output and every future
+// caller of Marketplace() see the same clean value instead of each having to
+// remember to trim again.
+func (o *MarketplaceOffer) trimStrings() {
+	o.Region = strings.TrimSpace(o.Region)
+	o.Provider = strings.TrimSpace(o.Provider)
+	o.ProviderName = strings.TrimSpace(o.ProviderName)
+	o.GPUShortName = strings.TrimSpace(o.GPUShortName)
 }
