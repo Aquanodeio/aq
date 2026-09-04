@@ -491,9 +491,15 @@ func TestRestartOgreScriptNeverSpellsTheMatchPatternLiterally(t *testing.T) {
 	if !strings.Contains(script, "AQ_OGRE_PORT=8443") {
 		t.Fatalf("port must reach the box as a variable:\n%s", script)
 	}
-	// Self-exclusion must be explicit, not an accident of spelling.
-	if strings.Count(script, `[ "$pid" = "$$" ] && continue`) != 2 {
-		t.Fatalf("both the kill loop and the liveness check must skip $$:\n%s", script)
+	// Self-exclusion must be explicit, not an accident of spelling. It now lives
+	// in ONE place (the aq_pids helper every enumeration goes through) so the
+	// assertion is that the helper carries it and that nothing enumerates
+	// matching pids without it.
+	if !strings.Contains(script, `[ "$pid" = "$$" ] && continue`) {
+		t.Fatalf("the pid enumeration must skip $$:\n%s", script)
+	}
+	if strings.Count(script, "pgrep -f --") != 1 {
+		t.Fatalf("every pid lookup must go through the one self-excluding helper:\n%s", script)
 	}
 	if strings.Contains(script, "pkill") {
 		t.Fatalf("pkill cannot exclude the caller; use the explicit pgrep loop:\n%s", script)
@@ -501,5 +507,147 @@ func TestRestartOgreScriptNeverSpellsTheMatchPatternLiterally(t *testing.T) {
 	// The daemon still has to be started with the port it was told.
 	if !strings.Contains(script, `nohup ogre -port "$AQ_OGRE_PORT"`) {
 		t.Fatalf("daemon must still be launched on the requested port:\n%s", script)
+	}
+}
+
+// The restart must not put a new daemon into the port before the old one has
+// let go of it. ogre refuses to start a second instance on a bound port (its
+// guard is correct and stays), so a SIGTERM-then-immediately-start left the old
+// daemon dead, the new one refused, and NOTHING listening. Observed on a real
+// re-attach, with the deployment row stranded in PROVISIONING.
+func TestRestartOgreScriptWaitsForTheOldDaemonBeforeBinding(t *testing.T) {
+	script := restartOgreScript(8444)
+
+	kill := strings.Index(script, "kill \"$pid\"")
+	wait := strings.Index(script, `while [ "$AQ_WAIT" -lt 30 ]`)
+	start := strings.Index(script, "nohup ogre -port")
+	if kill < 0 || wait < 0 || start < 0 {
+		t.Fatalf("script is missing the kill / wait / start steps:\n%s", script)
+	}
+	if !(kill < wait && wait < start) {
+		t.Fatalf("the wait must sit between the kill and the start:\n%s", script)
+	}
+
+	// Refuse rather than race: if the old daemon will not go, starting anyway
+	// only feeds the second-instance guard.
+	refusal := strings.Index(script, "refusing to start a second one")
+	if refusal < 0 || refusal > start {
+		t.Fatalf("script must refuse to start while the port is still held:\n%s", script)
+	}
+
+	// A fractional sleep is a GNU extension busybox rejects, which would turn
+	// the whole wait into a no-op on a minimal image.
+	if strings.Contains(script, "sleep 0.") {
+		t.Fatalf("wait must use whole-second sleeps:\n%s", script)
+	}
+}
+
+// The liveness check must not accept a pid that was already running. A daemon
+// still winding down matches the same pattern, so counting matches would report
+// a green restart for a new process that never came up.
+func TestRestartOgreScriptRejectsAnOldPidAsProofOfLife(t *testing.T) {
+	script := restartOgreScript(8444)
+
+	if !strings.Contains(script, "AQ_OGRE_OLD=") {
+		t.Fatalf("script must record the pre-start pid set:\n%s", script)
+	}
+	if !strings.Contains(script, `case " $AQ_OGRE_OLD " in *" $pid "*) continue ;; esac`) {
+		t.Fatalf("liveness must skip pids that were already running:\n%s", script)
+	}
+}
+
+// Release stops what attach started, and asserts the OUTCOME rather than the
+// commands: a kill returning 0 is not a process that exited.
+func TestReleaseOgreScriptWaitsAndProvesTheDaemonIsGone(t *testing.T) {
+	script := releaseOgreScript(8444)
+
+	if strings.Contains(script, "ogre -port 8444") {
+		t.Fatalf("script contains the literal match pattern, so it would match the shell running it:\n%s", script)
+	}
+	if !strings.Contains(script, `while [ "$AQ_WAIT" -lt 30 ]`) {
+		t.Fatalf("release must wait for the daemon to exit:\n%s", script)
+	}
+	if !strings.Contains(script, "rm -f '"+ogreEnvPath+"'") {
+		t.Fatalf("release must remove the credential file aq wrote:\n%s", script)
+	}
+	okMarker := strings.Index(script, "echo release_ok=1")
+	stillRunning := strings.Index(script, "is still running")
+	if okMarker < 0 || stillRunning < 0 || stillRunning > okMarker {
+		t.Fatalf("the success marker must be unreachable while a daemon survives:\n%s", script)
+	}
+}
+
+// The control port must not be the port ogre's own terminal proxy binds. That
+// number is a constant inside ogre, not something we hand it, so a control API
+// sitting there means the box can never have a browser terminal, and ogre
+// decides "a proxy is already running" from a bare TCP connect, so it would
+// report started=false pointing at the control API and the console would
+// advertise a terminal that is not there (#878).
+func TestDefaultOgrePortDoesNotCollideWithTheTerminalProxy(t *testing.T) {
+	if defaultOgrePort == terminalProxyPort {
+		t.Fatalf("the attach default (%d) is the terminal proxy's port; both features cannot share it", defaultOgrePort)
+	}
+	if terminalProxyPort != 8443 {
+		t.Fatalf("terminalProxyPort must track ogre's internal/proxy.DefaultListenPort (8443), got %d", terminalProxyPort)
+	}
+}
+
+// Choosing the proxy's port explicitly is allowed (a box already attached that
+// way must keep working) but it costs the terminal, and the user has to be
+// told before anything is written.
+func TestAttachPlanWarnsWhenTheChosenPortEatsTheTerminal(t *testing.T) {
+	var out bytes.Buffer
+	printAttachPlan(&out, testHost(), attachPreflight{port: portFree}, "1.2.3.4", terminalProxyPort, "/workspace")
+
+	text := out.String()
+	if !strings.Contains(text, "no browser terminal") {
+		t.Errorf("the plan must say the terminal is lost on this port:\n%s", text)
+	}
+	if !strings.Contains(text, "--ogre-port 8444") {
+		t.Errorf("the plan must name the port that keeps both:\n%s", text)
+	}
+}
+
+// The terminal is reached on its own port. Attach is the only moment the user
+// is being told which ports to open, so it has to be named there rather than
+// discovered later as a dead tab.
+func TestAttachPlanNamesTheTerminalPort(t *testing.T) {
+	var out bytes.Buffer
+	printAttachPlan(&out, testHost(), attachPreflight{port: portFree}, "1.2.3.4", defaultOgrePort, "/workspace")
+
+	if !strings.Contains(out.String(), "TCP 8443 must also be reachable") {
+		t.Errorf("the plan must name the terminal's own port:\n%s", out.String())
+	}
+}
+
+// An unavailable terminal with no reason is UNKNOWN: an orchestrator that
+// predates the field answers exactly that way, and inventing a cause for it is
+// worse than saying we do not have one.
+func TestAttachReportsAnUnexplainedTerminalAsUnknown(t *testing.T) {
+	var out bytes.Buffer
+	printTerminalVerdict(&out, &api.ActivateExternalResult{TerminalAvailable: false}, defaultOgrePort)
+
+	if !strings.Contains(out.String(), "reported no cause") {
+		t.Errorf("an absent reason must render as unknown:\n%s", out.String())
+	}
+}
+
+// Each machine-readable cause gets its own actionable line. The whole point of
+// the closed enum is that the user is told what to DO.
+func TestAttachRendersEachTerminalReasonDistinctly(t *testing.T) {
+	cases := map[string]string{
+		"AGENT_PORT_CONFLICT": "--ogre-port 8444",
+		"PROXY_UNREACHABLE":   "reachable from the internet",
+		"PROXY_START_FAILED":  ogreLogPath,
+	}
+	for reason, want := range cases {
+		var out bytes.Buffer
+		printTerminalVerdict(&out, &api.ActivateExternalResult{
+			TerminalAvailable:         false,
+			TerminalUnavailableReason: reason,
+		}, terminalProxyPort)
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("%s must tell the user %q:\n%s", reason, want, out.String())
+		}
 	}
 }
