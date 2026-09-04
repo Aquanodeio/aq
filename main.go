@@ -138,7 +138,7 @@ func main() {
 	case "idle":
 		run(idle(args))
 	// `job` is a command GROUP, not three top-level verbs, and that is a
-	// deliberate departure from the design doc. It asked for `aq run <job>`,
+	// deliberate departure from the plan in aq#63. It asked for `aq run <job>`,
 	// `aq runs <job>` and `aq logs <run-id>` — but `aq run` already means "push
 	// this directory to a box and run a command on it with my terminal
 	// attached", and `aq logs` already tails a box. Taking either verb would
