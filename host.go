@@ -34,6 +34,7 @@ type hostOptions struct {
 	sub       string // add | ls | rm
 	alias     string
 	ssh       string
+	sshUser   string
 	identity  string
 	mountPath string
 	ogrePort  int
@@ -63,7 +64,8 @@ func hostCmd(args []string) error {
 	sub, rest := args[0], args[1:]
 
 	fs := flag.NewFlagSet("host "+sub, flag.ContinueOnError)
-	ssh := fs.String("ssh", "", "SSH target for the box, e.g. root@1.2.3.4")
+	ssh := fs.String("ssh", "", "SSH target for the box, e.g. ubuntu@1.2.3.4 or root@1.2.3.4")
+	sshUserFlag := fs.String("ssh-user", "", "Login user for the box, when --ssh names only a host (default: root; aq has no way to know a BYO box's real login user, and many cloud images refuse root SSH entirely; must agree with --ssh if that already embeds a user)")
 	identity := fs.String("identity", "", "Private key to authenticate with (default: the key aq already uses)")
 	mountPath := fs.String("mount-path", "", "Workspace root on the box (default: "+defaultHostMountPath+")")
 	ogrePort := fs.Int("ogre-port", 0, "Port ogre's control API should listen on once attached (default: "+strconv.Itoa(defaultOgrePort)+")")
@@ -86,6 +88,7 @@ func hostCmd(args []string) error {
 		sub:       sub,
 		alias:     alias,
 		ssh:       strings.TrimSpace(*ssh),
+		sshUser:   strings.TrimSpace(*sshUserFlag),
 		identity:  strings.TrimSpace(*identity),
 		mountPath: strings.TrimSpace(*mountPath),
 		ogrePort:  *ogrePort,
@@ -136,7 +139,7 @@ func runHost(opts hostOptions) error {
 // rather than escaped in five places later.
 func validHostAlias(alias string) error {
 	if alias == "" {
-		return errors.New("an alias is required, usage: aq host add <alias> --ssh root@<ip>")
+		return errors.New("an alias is required, usage: aq host add <alias> --ssh ubuntu@<ip> (or root@<ip>)")
 	}
 	if len(alias) > 40 {
 		return fmt.Errorf("alias %q is too long, keep it to 40 characters", alias)
@@ -228,9 +231,9 @@ func runHostAdd(opts hostOptions) error {
 		return err
 	}
 	if opts.ssh == "" {
-		return fmt.Errorf("--ssh is required, usage: aq host add %s --ssh root@<ip>", opts.alias)
+		return fmt.Errorf("--ssh is required, usage: aq host add %s --ssh ubuntu@<ip> (or root@<ip>, or --ssh <ip> --ssh-user <user>)", opts.alias)
 	}
-	sshTarget, port, err := parseSSHTarget(opts.ssh)
+	sshTarget, port, defaultedRoot, err := parseSSHTarget(opts.ssh, opts.sshUser)
 	if err != nil {
 		return err
 	}
@@ -269,6 +272,9 @@ func runHostAdd(opts hostOptions) error {
 	// `aq import`: the user sees what aq found before anything changes.
 	raw, err := opts.run(h, surveyScript(mountPath))
 	if err != nil {
+		if hint := rootLoginHint(defaultedRoot, raw, err); hint != "" {
+			return fmt.Errorf("could not reach %s over ssh: %w (%s)", h.SSH, err, hint)
+		}
 		return fmt.Errorf("could not reach %s over ssh: %w", h.SSH, err)
 	}
 	survey, err := parseSurvey(raw)
@@ -443,7 +449,7 @@ func runHostLs(opts hostOptions) error {
 		return err
 	}
 	if len(hosts) == 0 {
-		fmt.Fprintln(opts.out, "No detached hosts registered. Add one with `aq host add <alias> --ssh root@<ip>`.")
+		fmt.Fprintln(opts.out, "No detached hosts registered. Add one with `aq host add <alias> --ssh ubuntu@<ip>` (or root@<ip>).")
 		return nil
 	}
 	w := tabwriter.NewWriter(opts.out, 0, 0, 2, ' ', 0)
@@ -491,39 +497,95 @@ func runHostRm(opts hostOptions) error {
 	return nil
 }
 
-// parseSSHTarget splits `user@host[:port]` into an ssh target and a port.
-func parseSSHTarget(target string) (sshTarget string, port int, err error) {
+// rootLoginHint turns an opaque SSH failure into an actionable one when it
+// looks like the well-known "this image refuses root SSH" shape: AWS/GCP/
+// Hyperstack-style base images ship a forced-command entry in root's
+// authorized_keys that prints "Please login as the user ..." and exits rather
+// than opening a shell, and a plain publickey rejection is the same story
+// minus the banner.
+//
+// It only fires when the login user was aq's own guess (defaultedRoot): an
+// explicit `--ssh root@host` or `--ssh-user root` is a deliberate choice by
+// someone who has presumably already confirmed root works, not a guess aq
+// made on their behalf, so that case gets the plain error instead.
+//
+// This is a pattern match on two known banner shapes, not a lookup table of
+// providers: aq has no data source naming which VM-pool providers disable
+// root, on a BYO host or anywhere else, so it never claims certainty about
+// *why* the login failed, only names the fix that is right either way.
+func rootLoginHint(defaultedRoot bool, raw []byte, sshErr error) string {
+	if !defaultedRoot {
+		return ""
+	}
+	text := strings.ToLower(string(raw))
+	if sshErr != nil {
+		text += " " + strings.ToLower(sshErr.Error())
+	}
+	switch {
+	case strings.Contains(text, "please login as the user"):
+		return "this image refuses root SSH and names its own login user in the banner above; re-run with --ssh-user <that user>, or --ssh <user>@<host>"
+	case strings.Contains(text, "permission denied"):
+		return "aq assumed root because --ssh named no user; many cloud images disable direct root SSH, so this may be that rather than a bad key, re-run with --ssh-user <user>, or --ssh <user>@<host>, naming the image's real login account"
+	default:
+		return ""
+	}
+}
+
+// parseSSHTarget splits an --ssh flag value into an ssh_config-ready
+// "user@host" target plus an optional port.
+//
+// sshUserOverride is --ssh-user. When target names no user, it fills the gap;
+// when target already embeds one, the two must agree: a mismatch is refused
+// rather than silently picking a winner, the same discipline as every other
+// two-source-of-truth conflict in this codebase (an unlisted case must never
+// resolve to the same value as a known one).
+//
+// defaultedRoot reports whether the final user is aq's own guess rather than
+// something the caller actually named: aq has no source of truth for a box it
+// did not provision (no provider/offer metadata reaches a BYO host at all), so
+// a bare `--ssh 1.2.3.4` silently landing on root is a guess, not a fact. The
+// caller uses this to turn a later login failure into a legible hint instead of
+// a bare SSH refusal.
+func parseSSHTarget(target, sshUserOverride string) (sshTarget string, port int, defaultedRoot bool, err error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return "", 0, errors.New("--ssh must name a login target, e.g. root@1.2.3.4")
+		return "", 0, false, errors.New("--ssh must name a login target, e.g. root@1.2.3.4 or ubuntu@1.2.3.4")
 	}
+	hadUser := strings.Contains(target, "@")
 	user, hostPart := splitSSHTarget(target)
+	if hadUser && sshUserOverride != "" && sshUserOverride != user {
+		return "", 0, false, fmt.Errorf("--ssh-user %q conflicts with the user already embedded in --ssh (%q); pass one or the other", sshUserOverride, user)
+	}
+	if !hadUser && sshUserOverride != "" {
+		user = sshUserOverride
+	}
+	defaultedRoot = !hadUser && sshUserOverride == ""
 	if strings.HasPrefix(hostPart, "[") {
 		// A bracketed IPv6 literal, optionally with :port after the bracket.
 		end := strings.Index(hostPart, "]")
 		if end < 0 {
-			return "", 0, fmt.Errorf("invalid --ssh %q: an IPv6 literal needs its closing ']'", target)
+			return "", 0, false, fmt.Errorf("invalid --ssh %q: an IPv6 literal needs its closing ']'", target)
 		}
 		rest := hostPart[end+1:]
 		hostPart = hostPart[1:end]
 		if strings.HasPrefix(rest, ":") {
 			if port, err = strconv.Atoi(rest[1:]); err != nil {
-				return "", 0, fmt.Errorf("invalid --ssh %q: %q is not a port", target, rest[1:])
+				return "", 0, false, fmt.Errorf("invalid --ssh %q: %q is not a port", target, rest[1:])
 			}
 		}
 	} else if i := strings.LastIndex(hostPart, ":"); i >= 0 && !strings.Contains(hostPart[i+1:], ":") && strings.Count(hostPart, ":") == 1 {
 		if port, err = strconv.Atoi(hostPart[i+1:]); err != nil {
-			return "", 0, fmt.Errorf("invalid --ssh %q: %q is not a port", target, hostPart[i+1:])
+			return "", 0, false, fmt.Errorf("invalid --ssh %q: %q is not a port", target, hostPart[i+1:])
 		}
 		hostPart = hostPart[:i]
 	}
 	if hostPart == "" {
-		return "", 0, fmt.Errorf("invalid --ssh %q: it names no host", target)
+		return "", 0, false, fmt.Errorf("invalid --ssh %q: it names no host", target)
 	}
 	if port < 0 || port > 65535 {
-		return "", 0, fmt.Errorf("invalid --ssh %q: port %d is out of range", target, port)
+		return "", 0, false, fmt.Errorf("invalid --ssh %q: port %d is out of range", target, port)
 	}
-	return user + "@" + hostPart, port, nil
+	return user + "@" + hostPart, port, defaultedRoot, nil
 }
 
 // resolveHostIdentity returns an ABSOLUTE path to the private key for this box.

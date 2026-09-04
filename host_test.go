@@ -51,34 +51,64 @@ func TestValidHostAliasRejectsWhatWouldNeedQuoting(t *testing.T) {
 
 func TestParseSSHTarget(t *testing.T) {
 	cases := []struct {
-		in     string
-		target string
-		port   int
-		bad    bool
+		in       string
+		override string
+		target   string
+		port     int
+		defRoot  bool
+		bad      bool
 	}{
 		{in: "root@1.2.3.4", target: "root@1.2.3.4"},
 		{in: "ubuntu@box.example.com:2222", target: "ubuntu@box.example.com", port: 2222},
-		{in: "1.2.3.4", target: "root@1.2.3.4"},
+		{in: "1.2.3.4", target: "root@1.2.3.4", defRoot: true},
 		{in: "root@[2001:db8::1]:22", target: "root@2001:db8::1", port: 22},
 		{in: "root@[2001:db8::1]", target: "root@2001:db8::1"},
 		{in: "root@box:notaport", bad: true},
 		{in: "", bad: true},
+		// --ssh-user fills in a bare host and is not a "defaulted" guess.
+		{in: "1.2.3.4", override: "ubuntu", target: "ubuntu@1.2.3.4"},
+		// --ssh-user agreeing with an embedded user is a no-op, not a conflict.
+		{in: "ubuntu@1.2.3.4", override: "ubuntu", target: "ubuntu@1.2.3.4"},
+		// --ssh-user disagreeing with an embedded user is refused, not silently
+		// resolved either way.
+		{in: "root@1.2.3.4", override: "ubuntu", bad: true},
 	}
 	for _, tc := range cases {
-		target, port, err := parseSSHTarget(tc.in)
+		target, port, defaultedRoot, err := parseSSHTarget(tc.in, tc.override)
 		if tc.bad {
 			if err == nil {
-				t.Errorf("parseSSHTarget(%q) = %q, %d; want an error", tc.in, target, port)
+				t.Errorf("parseSSHTarget(%q, %q) = %q, %d; want an error", tc.in, tc.override, target, port)
 			}
 			continue
 		}
 		if err != nil {
-			t.Errorf("parseSSHTarget(%q): %v", tc.in, err)
+			t.Errorf("parseSSHTarget(%q, %q): %v", tc.in, tc.override, err)
 			continue
 		}
 		if target != tc.target || port != tc.port {
-			t.Errorf("parseSSHTarget(%q) = %q, %d; want %q, %d", tc.in, target, port, tc.target, tc.port)
+			t.Errorf("parseSSHTarget(%q, %q) = %q, %d; want %q, %d", tc.in, tc.override, target, port, tc.target, tc.port)
 		}
+		if defaultedRoot != tc.defRoot {
+			t.Errorf("parseSSHTarget(%q, %q) defaultedRoot = %v; want %v", tc.in, tc.override, defaultedRoot, tc.defRoot)
+		}
+	}
+}
+
+func TestRootLoginHint(t *testing.T) {
+	// An explicit user (not defaulted) never gets aq's guess-hint: the caller
+	// already made a deliberate choice, so a login failure there is a plain
+	// SSH error, not "maybe you meant a different user".
+	if hint := rootLoginHint(false, []byte("Please login as the user \"ubuntu\""), errors.New("exit status 1")); hint != "" {
+		t.Errorf("rootLoginHint(defaultedRoot=false, ...) = %q, want no hint", hint)
+	}
+	if hint := rootLoginHint(true, []byte("Please login as the user \"ubuntu\" rather than the user \"root\"."), errors.New("exit status 1")); hint == "" {
+		t.Error("rootLoginHint: expected a hint for the forced-command banner shape")
+	}
+	if hint := rootLoginHint(true, nil, errors.New("Permission denied (publickey).")); hint == "" {
+		t.Error("rootLoginHint: expected a hint for a bare publickey rejection")
+	}
+	if hint := rootLoginHint(true, nil, errors.New("connection timed out")); hint != "" {
+		t.Errorf("rootLoginHint: unrelated failure got a hint: %q", hint)
 	}
 }
 

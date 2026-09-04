@@ -80,7 +80,7 @@ func lookupHost(alias string) (config.Host, error) {
 		return config.Host{}, err
 	}
 	if !ok {
-		return config.Host{}, fmt.Errorf("no host %q in your registry: add it with `aq host add %s --ssh root@<ip>`, or see `aq host ls`", alias, alias)
+		return config.Host{}, fmt.Errorf("no host %q in your registry: add it with `aq host add %s --ssh ubuntu@<ip>` (or root@<ip>), or see `aq host ls`", alias, alias)
 	}
 	return h, nil
 }

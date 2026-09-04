@@ -291,10 +291,13 @@ host / attach / release (boxes we never provisioned):
   loopback, so the box needs no inbound connectivity from us at all. Nothing in
   detached mode contacts the Aquanode API.
 
-  aq host add <alias> --ssh root@1.2.3.4
+  aq host add <alias> --ssh ubuntu@1.2.3.4
                              Survey the box, verify ogre's daemon answers on
                              loopback, and register it locally. Survey-first:
                              you see what aq found before anything changes.
+                             --ssh root@1.2.3.4 works too; if the box refuses
+                             root SSH (common on stock cloud images), name its
+                             real user there or with --ssh-user.
   aq host add … --dry-run    Survey and print the plan; write nothing, anywhere
   aq host ls                 List registered boxes
   aq host rm <alias>         Forget a box. The box itself is untouched.
