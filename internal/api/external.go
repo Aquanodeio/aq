@@ -2,11 +2,14 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // External-box endpoints: adopting a machine Aquanode never provisioned into the
@@ -133,11 +136,63 @@ type ActivateExternalResult struct {
 	// terminal answers FROM ITS OWN INFRASTRUCTURE, not merely that the box
 	// reported a listener to itself. Reported here so attach can say what the
 	// user actually got instead of leaving them to find a dead Terminal tab.
-	TerminalAvailable bool `json:"terminalAvailable"`
+	//
+	// A POINTER because it is three-state. `nil` is "not determined yet": the
+	// box configuration outlives the activate request (see Provisioning), and an
+	// orchestrator predating that field omits it entirely. A plain bool would
+	// render both of those as a confirmed dead terminal.
+	TerminalAvailable *bool `json:"terminalAvailable"`
 	// TerminalUnavailableReason is the orchestrator's machine-readable cause,
 	// empty when the terminal IS available or when the orchestrator predates the
 	// field. Empty is UNKNOWN, never "no reason".
 	TerminalUnavailableReason string `json:"terminalUnavailableReason"`
+	// ResticConfigured is whether the box holds the credential that makes a
+	// snapshot taken on it readable later. Three-state for the same reason as
+	// TerminalAvailable.
+	ResticConfigured *bool `json:"resticConfigured"`
+	// Provisioning is "complete" when every verdict above is a real answer, and
+	// "in_progress" when the attach SUCCEEDED and the box configuration is still
+	// running server-side. Empty from an orchestrator predating the field, which
+	// is the old always-synchronous behaviour and reads as complete.
+	//
+	// The attach itself is done in both cases. This distinguishes "we know what
+	// you got" from "you are attached and the optional extras are still being
+	// set up", which is the distinction that used to be lost entirely.
+	Provisioning string `json:"provisioning"`
+}
+
+// Attached reports whether the orchestrator says this box is attached, which is
+// the only question `aq attach` succeeds or fails on. Deliberately independent
+// of every verdict above: the terminal and the restic credential are optional
+// capabilities configured AFTER the attachment, and neither one failing means
+// the box is not attached.
+func (r *ActivateExternalResult) Attached() bool {
+	return r != nil && strings.EqualFold(r.Status, "active")
+}
+
+// StillProvisioning reports whether the box configuration outlived the request.
+func (r *ActivateExternalResult) StillProvisioning() bool {
+	return r != nil && r.Provisioning == "in_progress"
+}
+
+// IsTimeout reports whether an error is this CLI's own HTTP client giving up,
+// as opposed to the server answering with a refusal.
+//
+// THE DISTINCTION IS THE WHOLE POINT, and collapsing it is how `aq` reported a
+// FAILED attach on an attach that had completed. A timeout says nothing about
+// what the server did: the request may have been served in full a moment later.
+// It is never evidence of failure, only evidence that we stopped listening, so
+// a caller that hits one must go and ASK what happened rather than announce an
+// outcome it did not observe.
+func IsTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 // ActivateExternal asks the orchestrator to probe the box and, only if a real

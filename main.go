@@ -168,8 +168,12 @@ func run(err error) {
 	}
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `aq: Aquanode control CLI
+// usageText is the top-level help. Held as a named constant rather than
+// inlined into usage() so a test can read the exact bytes a user sees:
+// this block states flag defaults in prose, and one of them (--ogre-port)
+// silently disagreed with the constant that actually supplies it, telling
+// users to pick the one port that collides with ogre's own terminal proxy.
+const usageText = `aq: Aquanode control CLI
 
 Usage:
   aq <command> [flags]
@@ -297,7 +301,7 @@ host / attach / release (boxes we never provisioned):
 
   --identity <path>    Private key to authenticate with (default: aq's own)
   --mount-path <dir>   Workspace root on the box (default: /workspace)
-  --ogre-port <n>      Port ogre listens on once attached (default: 8443)
+  --ogre-port <n>      Port ogre listens on once attached (default: 8444)
   --ogre-binary <path> Upload this Linux x86_64 ogre when the box has none.
                        There is no public ogre installer, so aq will not
                        download one: it installs the binary you name, or
@@ -541,5 +545,8 @@ Environment:
                   hardware on a non-local host from a script or other
                   non-interactive shell. Same effect as passing --prod.
                   Typing at a terminal needs neither.
-`)
+`
+
+func usage() {
+	fmt.Fprint(os.Stderr, usageText)
 }

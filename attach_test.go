@@ -620,15 +620,46 @@ func TestAttachPlanNamesTheTerminalPort(t *testing.T) {
 	}
 }
 
-// An unavailable terminal with no reason is UNKNOWN: an orchestrator that
-// predates the field answers exactly that way, and inventing a cause for it is
-// worse than saying we do not have one.
+// An unavailable terminal with no reason is UNKNOWN, and inventing a cause for
+// it is worse than saying we do not have one.
 func TestAttachReportsAnUnexplainedTerminalAsUnknown(t *testing.T) {
 	var out bytes.Buffer
-	printTerminalVerdict(&out, &api.ActivateExternalResult{TerminalAvailable: false}, defaultOgrePort)
+	unavailable := false
+	printTerminalVerdict(&out, &api.ActivateExternalResult{TerminalAvailable: &unavailable}, defaultOgrePort)
 
 	if !strings.Contains(out.String(), "reported no cause") {
 		t.Errorf("an absent reason must render as unknown:\n%s", out.String())
+	}
+}
+
+// AN ABSENT VERDICT IS NOT A FALSE ONE, and the field being a pointer is what
+// keeps those apart. The box configuration outlives the activate request now,
+// so a successful attach routinely answers before the terminal is up: rendering
+// that as "not available" would report a terminal that is coming up fine as
+// broken, on every single attach.
+func TestAttachReportsAnUndeterminedTerminalAsStillComingUp(t *testing.T) {
+	var out bytes.Buffer
+	printTerminalVerdict(&out, &api.ActivateExternalResult{
+		Provisioning: "in_progress",
+	}, defaultOgrePort)
+
+	text := out.String()
+	if !strings.Contains(text, "still being set up") {
+		t.Errorf("an in-flight setup must not read as unavailable:\n%s", text)
+	}
+	if strings.Contains(text, "not available") {
+		t.Errorf("an in-flight setup must not claim the terminal is unavailable:\n%s", text)
+	}
+}
+
+// An orchestrator predating the three-state omits the field entirely. That is
+// UNKNOWN, distinct both from "unavailable" and from "still coming up".
+func TestAttachReportsAMissingTerminalFieldAsUnknown(t *testing.T) {
+	var out bytes.Buffer
+	printTerminalVerdict(&out, &api.ActivateExternalResult{}, defaultOgrePort)
+
+	if !strings.Contains(out.String(), "unknown") {
+		t.Errorf("an omitted verdict must render as unknown:\n%s", out.String())
 	}
 }
 
@@ -642,8 +673,9 @@ func TestAttachRendersEachTerminalReasonDistinctly(t *testing.T) {
 	}
 	for reason, want := range cases {
 		var out bytes.Buffer
+		unavailable := false
 		printTerminalVerdict(&out, &api.ActivateExternalResult{
-			TerminalAvailable:         false,
+			TerminalAvailable:         &unavailable,
 			TerminalUnavailableReason: reason,
 		}, terminalProxyPort)
 		if !strings.Contains(out.String(), want) {

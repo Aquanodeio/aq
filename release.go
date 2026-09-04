@@ -130,6 +130,16 @@ func runRelease(opts releaseOptions) error {
 	// us three-state whether it managed to. It cannot stop the daemon: ogre
 	// deliberately has no shutdown endpoint, so that half is ours, below.
 	released, err := opts.client.ReleaseExternal(deploymentID)
+	if err != nil && api.IsTimeout(err) {
+		// SAME FALSE NEGATIVE AS ATTACH, MIRRORED. This client gave up after
+		// thirty seconds while the server went on to complete the release and
+		// drop the row, so the user was told the release had failed on a box
+		// that had already been handed back, and was left holding a local host
+		// entry pointing at a deployment that no longer exists.
+		//
+		// A timeout is not an outcome. Ask.
+		released, err = confirmReleaseAfterTimeout(opts, deploymentID, err)
+	}
 	if err != nil {
 		return fmt.Errorf("could not release deployment #%d: %w", deploymentID, err)
 	}
@@ -185,6 +195,33 @@ func runRelease(opts releaseOptions) error {
 		ogrePort:    ogrePort,
 		wasAttached: wasAttached,
 	}, released, stopErr)
+}
+
+// confirmReleaseAfterTimeout asks the orchestrator whether the release landed
+// after this client stopped waiting for its response.
+//
+// A release DELETES the deployment row, so the question has a clean answer: a
+// 404 means the row is gone, which is exactly what a successful release leaves
+// behind. Anything else, including an error asking, returns the original
+// timeout, because "could not look" is never a verdict.
+//
+// The box-clear result is deliberately left three-state UNKNOWN on this path.
+// This client never saw the response, so it does not know whether the
+// credentials it pushed were removed from the machine, and reporting a clean
+// hand-back it did not observe is the one thing the three-state exists to stop.
+func confirmReleaseAfterTimeout(opts releaseOptions, deploymentID int, timeoutErr error) (*api.ReleaseResult, error) {
+	fmt.Fprintf(opts.out, "Aquanode did not answer in time. Asking whether deployment #%d was released anyway...\n", deploymentID)
+
+	_, err := opts.client.DeploymentStatus(deploymentID)
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == 404 {
+		return &api.ReleaseResult{
+			Released:       true,
+			BoxCleared:     nil,
+			BoxClearReason: "aq stopped waiting for the release response, so it never saw whether the box was cleared",
+		}, nil
+	}
+	return nil, timeoutErr
 }
 
 // releaseOgreScript stops the ogre daemon aq started and removes the credential

@@ -359,6 +359,25 @@ func runAttach(opts attachOptions) error {
 	// of a request that was merely accepted, and never on this CLI's own
 	// ability to reach the box, which proves a different thing entirely.
 	res, err := opts.client.ActivateExternal(adopted.DeploymentID)
+	if err != nil && api.IsTimeout(err) {
+		// A TIMEOUT IS NOT A FAILURE, AND TREATING IT AS ONE REPORTED A
+		// SUCCEEDED ATTACH AS A FAILED ONE.
+		//
+		// The activate handler used to hold this connection open for the whole
+		// of its post-attach box configuration, which could run to five minutes.
+		// This client gives up after thirty seconds, so the attach completed,
+		// the row went ACTIVE, and the user was told:
+		//
+		//   aq: could not activate deployment #NNNN: context deadline exceeded
+		//
+		// then found the box written off locally as never attached, and a later
+		// `aq release` describing it as "never finished attaching". The server
+		// side no longer blocks like that, but a timeout is a fact about this
+		// client and can happen for reasons the server does not control, so the
+		// answer is not to trust the shorter server path: it is to stop
+		// inferring an outcome we did not observe. Go and ASK.
+		res, err = confirmActivationAfterTimeout(opts, adopted.DeploymentID, err)
+	}
 	if err != nil {
 		var unreachable *api.ExternalUnreachableError
 		if errors.As(err, &unreachable) {
@@ -394,6 +413,37 @@ func runAttach(opts attachOptions) error {
 	fmt.Fprintf(opts.out, "  Hand it back any time with `aq release %s`: that revokes our credentials and drops the row.\n", h.Alias)
 	fmt.Fprintf(opts.out, "  The box keeps running, and no provider is ever contacted.\n")
 	return nil
+}
+
+// confirmActivationAfterTimeout asks the orchestrator what actually happened
+// after this client stopped waiting for the activate response.
+//
+// Three outcomes, and all three are answers rather than assumptions:
+//   - the row reads ACTIVE: the attach SUCCEEDED. Reported as the success it is,
+//     with the post-attach verdicts left UNKNOWN, because this path never saw
+//     them and inventing a `false` for the terminal would be the same class of
+//     confident wrong answer in the opposite direction.
+//   - the row reads anything else: the attach did not complete. The original
+//     timeout is returned, since that is still the most accurate thing we know.
+//   - we cannot ask either: the timeout is returned unchanged. "Could not look"
+//     never becomes a verdict.
+func confirmActivationAfterTimeout(opts attachOptions, deploymentID int, timeoutErr error) (*api.ActivateExternalResult, error) {
+	fmt.Fprintf(opts.out, "Aquanode did not answer in time. Asking whether deployment #%d attached anyway...\n", deploymentID)
+
+	status, err := opts.client.DeploymentStatus(deploymentID)
+	if err != nil {
+		return nil, timeoutErr
+	}
+	if !strings.EqualFold(status.Status, "active") {
+		return nil, timeoutErr
+	}
+	return &api.ActivateExternalResult{
+		Status: status.Status,
+		// Deliberately left nil/empty: this path observed an ACTIVE row and
+		// nothing else. The verdicts land on the deployment row server-side and
+		// the console renders them; claiming them from here would be a guess.
+		Provisioning: "in_progress",
+	}, nil
 }
 
 // printAttachPlan is the survey-show-confirm half of the posture `aq import`
@@ -650,7 +700,20 @@ func printTerminalVerdict(out io.Writer, res *api.ActivateExternalResult, ogrePo
 	if res == nil {
 		return
 	}
-	if res.TerminalAvailable {
+	// STILL BEING SET UP IS NOT A DEAD TERMINAL. The box configuration outlives
+	// the activate request on purpose, so that its latency can never be mistaken
+	// for the attach failing. While it runs there is no verdict yet, and saying
+	// "not available" here would report a terminal that is in the middle of
+	// coming up successfully as broken.
+	if res.TerminalAvailable == nil {
+		if res.StillProvisioning() {
+			fmt.Fprintln(out, "  Browser terminal: still being set up. The console shows it once Aquanode confirms it.")
+			return
+		}
+		fmt.Fprintln(out, "  Browser terminal: Aquanode did not report a verdict, so its state is unknown.")
+		return
+	}
+	if *res.TerminalAvailable {
 		fmt.Fprintf(out, "  Browser terminal: reachable on TCP %d.\n", terminalProxyPort)
 		return
 	}
