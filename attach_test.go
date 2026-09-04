@@ -476,6 +476,95 @@ func TestConfigureOgreRefusesAnUnreadableEnvFile(t *testing.T) {
 	}
 }
 
+// A root SSH target needs no elevation: wrapping it anyway would be a needless
+// extra hop and a needless place for the wrapper itself to break.
+func TestAsRootScriptPassesRootThrough(t *testing.T) {
+	h := testHost() // root@1.2.3.4
+	script := "echo hi\n"
+	got := asRootScript(h, script)
+	if got != script {
+		t.Fatalf("root host must not be wrapped, got:\n%s", got)
+	}
+}
+
+// A non-root SSH user (root SSH disabled, the common VM-pool case) must
+// have writeOgreEnvScript/restartOgreScript routed through `sudo -n`, probed
+// first so a genuinely missing grant is reported by name rather than surfacing
+// as a bare permission error from deep inside the wrapped script.
+func TestAsRootScriptWrapsANonRootUserBehindASudoProbe(t *testing.T) {
+	h := testHost()
+	h.SSH = "ubuntu@1.2.3.4"
+	script := "mkdir -p /etc/aquanode\ncat > /etc/aquanode/x <<'TAG'\nit's a secret's secret\nTAG\n"
+
+	got := asRootScript(h, script)
+
+	probe := strings.Index(got, "sudo -n true")
+	pipe := strings.Index(got, "base64 -d | sudo -n bash -s")
+	if probe < 0 || pipe < 0 || probe > pipe {
+		t.Fatalf("must probe `sudo -n true` before piping the script through sudo:\n%s", got)
+	}
+	if !strings.Contains(got, "ubuntu") || !strings.Contains(got, "NOPASSWD") {
+		t.Fatalf("the no-sudo refusal must name the actual user and the actual fix:\n%s", got)
+	}
+
+	// The wrapper must survive a script containing shell metacharacters
+	// (quotes, `$`, backticks) that an outer `sudo -n bash -c '<script>'`
+	// would have to re-escape — decoding the embedded payload must reproduce
+	// the original script byte-for-byte.
+	pipeStart := strings.Index(got, " | base64 -d | sudo -n bash -s")
+	if pipeStart < 0 {
+		t.Fatalf("missing the decode pipeline:\n%s", got)
+	}
+	payload := got[:pipeStart]
+	start := strings.LastIndex(payload, "echo ") + len("echo ")
+	decoded, err := base64.StdEncoding.DecodeString(payload[start:])
+	if err != nil {
+		t.Fatalf("embedded payload is not valid base64: %v\n%s", err, got)
+	}
+	if string(decoded) != script {
+		t.Fatalf("decoded payload does not round-trip:\ngot:  %q\nwant: %q", decoded, script)
+	}
+}
+
+// The two box-mutating steps of configureOgreOnBox must both go through the
+// sudo wrapper for a non-root user — the gap this ticket fixes was that
+// neither did, so `aq attach` failed unconditionally against any box with
+// root SSH disabled even when passwordless sudo was available.
+func TestConfigureOgreRoutesBothScriptsThroughSudoForANonRootUser(t *testing.T) {
+	h := testHost()
+	h.SSH = "ubuntu@1.2.3.4"
+	detachedSandbox(t, h)
+
+	var writeScript, restartScript string
+	opts := attachOptions{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}.withDefaults()
+	opts.run = func(_ config.Host, remote string) ([]byte, error) {
+		switch {
+		case strings.Contains(remote, "__AQ_ABSENT__") || strings.Contains(remote, "__AQ_READ_OK__") || strings.Contains(remote, "__AQ_UNREADABLE__"):
+			return []byte("__AQ_ABSENT__\n"), nil
+		case strings.Contains(remote, "sudo -n"):
+			if writeScript == "" {
+				writeScript = remote
+			} else {
+				restartScript = remote
+			}
+			return nil, nil
+		default:
+			t.Fatalf("box-mutating call was not routed through sudo:\n%s", remote)
+			return nil, nil
+		}
+	}
+
+	if err := configureOgreOnBox(opts, h, &api.ExternalInstallConfig{OgreJWTSecret: "s"}, 4242, 8443); err != nil {
+		t.Fatalf("configureOgreOnBox: %v", err)
+	}
+	if writeScript == "" || restartScript == "" {
+		t.Fatalf("expected both the env write and the restart to run, got write=%q restart=%q", writeScript, restartScript)
+	}
+	if !strings.Contains(writeScript, "sudo -n true") || !strings.Contains(restartScript, "sudo -n true") {
+		t.Fatalf("both scripts must probe sudo before use:\nwrite: %s\nrestart: %s", writeScript, restartScript)
+	}
+}
+
 // The restart script is handed to the remote shell as ONE argv element, so that
 // shell's own /proc/<pid>/cmdline contains the whole script. A literal
 // `ogre -port 8443` in it makes `pkill -f` match the session running the attach
