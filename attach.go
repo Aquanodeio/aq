@@ -545,10 +545,10 @@ func configureOgreOnBox(opts attachOptions, h config.Host, install *api.External
 	}
 
 	fmt.Fprintf(opts.out, "Writing %s and restarting ogre on port %d...\n", ogreEnvPath, port)
-	if _, err := opts.run(h, writeOgreEnvScript(merged)); err != nil {
+	if _, err := opts.run(h, asRootScript(h, writeOgreEnvScript(merged))); err != nil {
 		return fmt.Errorf("could not write %s on the box: %w", ogreEnvPath, err)
 	}
-	if _, err := opts.run(h, restartOgreScript(port)); err != nil {
+	if _, err := opts.run(h, asRootScript(h, restartOgreScript(port))); err != nil {
 		return fmt.Errorf("could not start ogre on the box: %w", err)
 	}
 	return nil
@@ -574,6 +574,37 @@ func renderOgreEnv(install *api.ExternalInstallConfig, deploymentID, port int) s
 		b.WriteString("AQUANODE_ORCHESTRATOR_URL=" + shellQuote(install.OrchestratorURL) + "\n")
 	}
 	return b.String()
+}
+
+// asRootScript routes script through `sudo -n` when the box's configured SSH
+// user is not root, so writeOgreEnvScript and restartOgreScript work against
+// the common case of root SSH disabled and a sudo-capable login user instead.
+//
+// The script is base64-encoded and piped into `sudo -n bash -s` rather than
+// spliced into an outer `sudo -n bash -c '<script>'` string: both scripts
+// contain shell metacharacters an outer layer of quoting would have to
+// re-escape — writeOgreEnvScript's body is credential material already run
+// through shellQuote (so it can itself contain escaped-quote sequences), and
+// restartOgreScript is full of `$(...)`/`"..."` substitutions. Nesting either
+// inside another quoted string breaks the moment one of those quotes appears;
+// base64 has no shell metacharacters at all, so the outer sudo invocation
+// needs no escaping regardless of what the inner script contains. `sudo -n
+// true` is probed first so a genuinely missing sudo grant is reported by
+// name instead of surfacing as an unexplained failure from deep inside the
+// wrapped script.
+func asRootScript(h config.Host, script string) string {
+	user, _ := splitSSHTarget(h.SSH)
+	if user == "root" {
+		return script
+	}
+	enc := base64.StdEncoding.EncodeToString([]byte(script))
+	return "if ! sudo -n true 2>/dev/null; then\n" +
+		"  echo " + shellQuote("aq needs passwordless sudo for "+user+" on this box (SSH user is not root); "+
+		"grant NOPASSWD sudo for "+user+", or register the box with --ssh root@<host> instead, then re-run `aq attach`") +
+		" >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"echo " + enc + " | base64 -d | sudo -n bash -s\n"
 }
 
 // writeOgreEnvScript writes the merged file via a temp file + mv, so a
