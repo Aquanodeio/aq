@@ -487,7 +487,7 @@ func TestAsRootScriptPassesRootThrough(t *testing.T) {
 	}
 }
 
-// #959: a non-root SSH user (root SSH disabled, the common VM-pool case) must
+// A non-root SSH user (root SSH disabled, the common VM-pool case) must
 // have writeOgreEnvScript/restartOgreScript routed through `sudo -n`, probed
 // first so a genuinely missing grant is reported by name rather than surfacing
 // as a bare permission error from deep inside the wrapped script.
