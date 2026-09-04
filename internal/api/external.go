@@ -129,6 +129,15 @@ type ActivateExternalResult struct {
 	AgentLastSeen  string `json:"agentLastSeenAt"`
 	Error          string `json:"error"`
 	UnreachableWhy string `json:"reason"`
+	// TerminalAvailable is whether the orchestrator confirmed the box's browser
+	// terminal answers FROM ITS OWN INFRASTRUCTURE, not merely that the box
+	// reported a listener to itself. Reported here so attach can say what the
+	// user actually got instead of leaving them to find a dead Terminal tab.
+	TerminalAvailable bool `json:"terminalAvailable"`
+	// TerminalUnavailableReason is the orchestrator's machine-readable cause,
+	// empty when the terminal IS available or when the orchestrator predates the
+	// field. Empty is UNKNOWN, never "no reason".
+	TerminalUnavailableReason string `json:"terminalUnavailableReason"`
 }
 
 // ActivateExternal asks the orchestrator to probe the box and, only if a real
@@ -192,13 +201,28 @@ func unreachableReason(err error) (string, bool) {
 // ReleaseResult is the response to POST /deployments/:id/release.
 type ReleaseResult struct {
 	Released bool `json:"released"`
+	// BoxCleared is THREE-STATE and is a *bool for exactly that reason: true we
+	// cleared every credential we pushed to the box, false the box refused,
+	// nil we could not look (or the orchestrator predates the field). The last
+	// two both mean live credentials may remain on the customer's machine, and
+	// a bool would make them indistinguishable from a clean hand-back.
+	BoxCleared *bool `json:"boxCleared"`
+	// BoxClearReason is the orchestrator's own words for why, present whenever
+	// BoxCleared is not true.
+	BoxClearReason string `json:"boxClearReason"`
 }
 
-// ReleaseExternal revokes an external box's credentials and drops its row.
+// ReleaseExternal clears the state Aquanode pushed to the box, revokes its
+// credentials and drops its row.
 //
-// It never contacts the box and never reaches a provider adapter. The machine
+// It never reaches a provider adapter and nothing is torn down. The machine
 // keeps running exactly as it was — it is on a lease we do not hold and have no
 // business ending. This is why the verb is `release` and not `terminate`.
+//
+// It DOES contact the box, over ogre's own API, and reports three-state whether
+// that succeeded. The daemon itself is stopped by `aq release` over ssh, which
+// is the half no HTTP call can do: ogre exposes no shutdown endpoint on
+// purpose.
 func (c *Client) ReleaseExternal(deploymentID int) (*ReleaseResult, error) {
 	var out ReleaseResult
 	if err := c.postJSON("/deployments/"+strconv.Itoa(deploymentID)+"/release", map[string]any{}, &out); err != nil {

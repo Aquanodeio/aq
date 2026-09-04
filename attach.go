@@ -19,7 +19,21 @@ import (
 // defaultOgrePort is the port an attached box publishes ogre's control API on.
 // Only attached boxes ever listen for us: in detached mode ogre's CLI reaches
 // its daemon over loopback and nothing dials in from outside at all.
-const defaultOgrePort = 8443
+//
+// IT MUST NOT BE 8443, WHICH IT USED TO BE. 8443 is the port ogre's own managed
+// terminal proxy binds, and that number is a constant inside ogre, not
+// something we pass it. A control API sitting there means the proxy can never
+// take the port. Worse, ogre decides "a proxy is already running" from a
+// bare TCP connect, so it would answer started=false pointing at the control
+// API and the console would advertise a browser terminal that is not there
+// (#878). The two ports have to be different numbers for both features to
+// exist on one box.
+const defaultOgrePort = 8444
+
+// terminalProxyPort is ogre's fixed managed-proxy port (internal/proxy's
+// DefaultListenPort). Named here only so attach can warn when the control port
+// the user chose would collide with it; aq never binds it.
+const terminalProxyPort = 8443
 
 // ogreEnvPath is the file `aq attach` writes ogre's managed-mode credentials
 // into. It is under a directory aq creates, so nothing else on the box owns it —
@@ -374,6 +388,7 @@ func runAttach(opts attachOptions) error {
 
 	fmt.Fprintf(opts.out, "\n✓ %s is attached as deployment #%d (%s).\n", h.Alias, adopted.DeploymentID, orUnknown(res.Status))
 	fmt.Fprintf(opts.out, "  Aquanode completed a round-trip to %s:%d.\n", publicHost, port)
+	printTerminalVerdict(opts.out, res, port)
 	fmt.Fprintf(opts.out, "  The box bills nothing: we did not rent it and never will.\n")
 	fmt.Fprintf(opts.out, "  Run a setup on it with `aq job create <setup> <version> --on %s`: it bills nothing.\n", h.Alias)
 	fmt.Fprintf(opts.out, "  Hand it back any time with `aq release %s`: that revokes our credentials and drops the row.\n", h.Alias)
@@ -411,6 +426,20 @@ func printAttachPlan(out io.Writer, h config.Host, pre attachPreflight, publicHo
 	case portFree:
 		// Nothing to warn about.
 	}
+
+	if ogrePort == terminalProxyPort {
+		fmt.Fprintf(out, "\nWarning: port %d is the port ogre's own web terminal binds, so this box will\n"+
+			"have no browser terminal in the console while ogre's control API sits there.\n"+
+			"Everything else works. Re-run with --ogre-port %d (the default) to get both.\n",
+			terminalProxyPort, defaultOgrePort)
+	}
+
+	// The terminal is reached on its own port, not the control port, and it is
+	// the one thing attach sets up that the user has to open separately. Said
+	// here rather than discovered as a dead Terminal tab later.
+	fmt.Fprintf(out, "\nFor the console's browser terminal, TCP %d must also be reachable from the\n"+
+		"internet. Attach works without it; the Terminal tab will say why it is not there.\n",
+		terminalProxyPort)
 
 	// Section K, stated up front rather than discovered later by whoever paid
 	// for eight GPUs and expected to hand three of them to three people.
@@ -528,6 +557,27 @@ func writeOgreEnvScript(content string) string {
 // Building the pattern from $AQ_OGRE_PORT keeps the literal out of the script
 // text, and skipping $$ makes the self-exclusion explicit rather than a
 // property of how the string happens to be spelled.
+//
+// IT WAITS FOR THE OLD DAEMON TO EXIT BEFORE STARTING THE NEW ONE (#878).
+// SIGTERM is a request, not an event: ogre finishes what it is doing before it
+// releases the listener, and the previous version of this script started the
+// replacement immediately afterwards. The new process then lost the bind race
+// to a daemon that had not finished dying, hit ogre's second-instance guard
+// (`FATAL: another ogre already owns :<port>`) and exited, leaving the old one
+// dead, the new one never started, and NOTHING listening on the control port.
+// Observed on a real re-attach; the deployment row stranded in PROVISIONING.
+//
+// The guard itself is correct and is not weakened here: it is the only thing
+// standing between this and two agents fighting over one port. What was wrong
+// is asking it to arbitrate a race we can simply not run. So: TERM, wait for
+// the pids to actually go, escalate to KILL if they will not, and refuse to
+// start rather than start into a port somebody still owns. Refusing is loud and
+// recoverable; racing is silent and leaves the box unreachable.
+//
+// The liveness check afterwards records the pid set BEFORE the start and
+// accepts only a pid that was not in it: an old daemon still winding down
+// would otherwise satisfy "something matches the pattern" and report a green
+// restart for a new process that never came up.
 func restartOgreScript(port int) string {
 	p := strconv.Itoa(port)
 	return "set -a\n" +
@@ -535,18 +585,89 @@ func restartOgreScript(port int) string {
 		"set +a\n" +
 		"AQ_OGRE_PORT=" + p + "\n" +
 		`AQ_OGRE_PAT="ogre -port ${AQ_OGRE_PORT}"` + "\n" +
-		// Kill previous daemons, never this shell or its ancestors.
-		"for pid in $(pgrep -f -- \"$AQ_OGRE_PAT\" 2>/dev/null); do\n" +
-		"  [ \"$pid\" = \"$$\" ] && continue\n" +
-		"  kill \"$pid\" >/dev/null 2>&1 || true\n" +
+		// aq_pids prints every daemon matching our own invocation, never this
+		// shell or its ancestors.
+		"aq_pids() {\n" +
+		"  for pid in $(pgrep -f -- \"$AQ_OGRE_PAT\" 2>/dev/null); do\n" +
+		"    [ \"$pid\" = \"$$\" ] && continue\n" +
+		"    echo \"$pid\"\n" +
+		"  done\n" +
+		"}\n" +
+		"AQ_OGRE_OLD=\"$(aq_pids | tr '\\n' ' ')\"\n" +
+		"for pid in $AQ_OGRE_OLD; do kill \"$pid\" >/dev/null 2>&1 || true; done\n" +
+		// Up to 30s of polite waiting. A daemon mid-snapshot legitimately takes
+		// seconds to release the port, and killing it sooner is how a capture
+		// gets truncated. Whole seconds only: a fractional `sleep` is a GNU
+		// coreutils extension and busybox's sleep rejects it outright, which
+		// would turn the wait into a no-op on exactly the minimal images most
+		// likely to be running here.
+		"AQ_WAIT=0\n" +
+		"while [ \"$AQ_WAIT\" -lt 30 ] && [ -n \"$(aq_pids)\" ]; do\n" +
+		"  sleep 1\n" +
+		"  AQ_WAIT=$((AQ_WAIT + 1))\n" +
 		"done\n" +
+		// Still there after 30s: escalate once, then give it a last moment.
+		"if [ -n \"$(aq_pids)\" ]; then\n" +
+		"  for pid in $(aq_pids); do kill -9 \"$pid\" >/dev/null 2>&1 || true; done\n" +
+		"  AQ_WAIT=0\n" +
+		"  while [ \"$AQ_WAIT\" -lt 5 ] && [ -n \"$(aq_pids)\" ]; do\n" +
+		"    sleep 1\n" +
+		"    AQ_WAIT=$((AQ_WAIT + 1))\n" +
+		"  done\n" +
+		"fi\n" +
+		// Refuse rather than race. Starting here would only feed the
+		// second-instance guard and leave the box with nothing listening.
+		"if [ -n \"$(aq_pids)\" ]; then\n" +
+		"  echo \"an ogre on port ${AQ_OGRE_PORT} would not exit; refusing to start a second one\" >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
 		"touch " + shellQuote(ogreLogPath) + " 2>/dev/null || true\n" +
 		"nohup ogre -port \"$AQ_OGRE_PORT\" >> " + shellQuote(ogreLogPath) + " 2>&1 &\n" +
 		"sleep 1\n" +
+		// Accept only a pid that is not one we just waited out. See the header:
+		// a lingering old daemon must never be read as a started new one.
 		"AQ_OGRE_UP=0\n" +
-		"for pid in $(pgrep -f -- \"$AQ_OGRE_PAT\" 2>/dev/null); do\n" +
-		"  [ \"$pid\" = \"$$\" ] && continue\n" +
+		"for pid in $(aq_pids); do\n" +
+		"  case \" $AQ_OGRE_OLD \" in *\" $pid \"*) continue ;; esac\n" +
 		"  AQ_OGRE_UP=1\n" +
 		"done\n" +
 		"[ \"$AQ_OGRE_UP\" = 1 ] || { echo 'ogre did not stay up, see " + ogreLogPath + " on the box' >&2; exit 1; }\n"
+}
+
+// printTerminalVerdict says whether the console's browser terminal is actually
+// there, in the one place the user is already reading.
+//
+// It is reported, not assumed. The orchestrator confirms the proxy answers from
+// ITS OWN network before saying yes, because the box reporting a loopback
+// listener says nothing about whether the port is open to the internet, and an
+// attach that quietly claimed a terminal it had not reached is how a user finds
+// a dead tab days later with no explanation anywhere.
+//
+// An EMPTY reason next to an unavailable terminal is UNKNOWN, not "no reason":
+// an orchestrator that predates the field answers exactly that way, and saying
+// "unavailable, cause unknown" is the honest rendering of it.
+func printTerminalVerdict(out io.Writer, res *api.ActivateExternalResult, ogrePort int) {
+	if res == nil {
+		return
+	}
+	if res.TerminalAvailable {
+		fmt.Fprintf(out, "  Browser terminal: reachable on TCP %d.\n", terminalProxyPort)
+		return
+	}
+	switch res.TerminalUnavailableReason {
+	case "":
+		fmt.Fprintln(out, "  Browser terminal: not available; Aquanode reported no cause.")
+	case "AGENT_PORT_CONFLICT":
+		fmt.Fprintf(out, "  Browser terminal: not available. Port %d is where ogre's terminal listens,\n"+
+			"    and this box runs ogre's control API there. Re-attach with --ogre-port %d.\n",
+			ogrePort, defaultOgrePort)
+	case "PROXY_UNREACHABLE":
+		fmt.Fprintf(out, "  Browser terminal: not available. It is running on the box but TCP %d is not\n"+
+			"    reachable from the internet. Open that port and re-attach to pick it up.\n",
+			terminalProxyPort)
+	case "PROXY_START_FAILED":
+		fmt.Fprintln(out, "  Browser terminal: not available. ogre would not start it; see "+ogreLogPath+" on the box.")
+	default:
+		fmt.Fprintf(out, "  Browser terminal: not available (%s).\n", res.TerminalUnavailableReason)
+	}
 }
