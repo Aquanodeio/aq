@@ -194,6 +194,19 @@ type Deployment struct {
 	RestoreCompatibility json.RawMessage `json:"restore_compatibility"`
 	RestoreWarnings      json.RawMessage `json:"restore_warnings"`
 
+	// SSHLoginUser is the account name this box's SSH key actually landed on,
+	// recorded by the orchestrator at provision time from the provider's own
+	// capability declaration (deployments.ssh_login_user).
+	//
+	// THREE-STATE, and the empty string is a real answer: "no login user was
+	// recorded for this box". That covers every deployment created before the
+	// column shipped, every provider that has not established its own login
+	// user, and a backend too old to send the field at all. It must NEVER be
+	// read as "root" — assuming root platform-wide is the bug this field
+	// exists to fix (managed hyperstack boxes refuse it outright, see
+	// sshconfig.go's sshUser).
+	SSHLoginUser string `json:"ssh_login_user"`
+
 	// Inventory fields for `aq ls`. All snake_case only: GET /deployments
 	// returns raw untransformed rows, unlike /:id and /:id/status.
 	Provider  string `json:"provider"`
