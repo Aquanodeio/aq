@@ -556,7 +556,7 @@ func printConnection(out io.Writer, dep api.Deployment) {
 	// `SSH: aq ssh <name>` above is a promise that the command works first try.
 	// It only does if aq knows which account the key landed on — so when nobody
 	// recorded one, say so right here rather than letting the user find out
-	// from a refused connection (#965). Silent when the login user is known.
+	// from a refused connection. Silent when the login user is known.
 	if note := loginUserNote(dep); note != "" {
 		fmt.Fprintf(out, "  Note:  %s\n", note)
 	}

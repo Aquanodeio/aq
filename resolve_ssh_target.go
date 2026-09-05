@@ -64,7 +64,7 @@ func resolveSSHAlias(client *api.Client, target, verb string, errOut io.Writer) 
 	warnIfKeyUnregistered(client, errOut)
 	// Named, before the handoff, so a refused connection is explainable from
 	// what aq already printed rather than only from the box's own banner. Says
-	// nothing when the login user IS recorded (#965).
+	// nothing when the login user IS recorded.
 	warnUnknownLoginUser(errOut, dep)
 
 	// The alias must exist before we exec, and it is what we exec against — so

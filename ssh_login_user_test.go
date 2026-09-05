@@ -14,8 +14,8 @@ import (
 // a forced-command banner. Four fresh boxes (deployments 3513, 3519, 3521,
 // 3528) failed that way while aq wrote `User root` for every one of them.
 //
-// The generated stanza must now carry whatever login user the platform
-// recorded for the box (#965).
+// The generated stanza must carry whatever login user the platform recorded
+// for the box, not an assumed root.
 func TestEntriesForCarriesTheRecordedLoginUser(t *testing.T) {
 	dep := api.Deployment{
 		ID:           3528,
