@@ -519,24 +519,11 @@ func authorizedKeysSummary(content string) string {
 //
 // The env file is merged into a marker region rather than overwritten, and the
 // current content is read first: if it exists and holds anything outside our
-// markers, aq refuses rather than replacing something it did not write. The
-// read goes through asRootScript exactly like the write and the restart do
-// (#962): a prior attach on a disabled-root box leaves ogre.env root-owned at
-// mode 0600, so a plain non-root read of it hits __AQ_UNREADABLE__ on every
-// second attach unless it is sudo-wrapped the same way.
+// markers, aq refuses rather than replacing something it did not write.
 func configureOgreOnBox(opts attachOptions, h config.Host, install *api.ExternalInstallConfig, deploymentID, port int) error {
-	existing, err := opts.run(h, asRootScript(h, readOgreEnvScript()))
+	text, err := readOgreEnvOnBox(opts, h)
 	if err != nil {
-		return fmt.Errorf("could not read %s on the box: %w", ogreEnvPath, err)
-	}
-	text := string(existing)
-	switch {
-	case strings.Contains(text, "__AQ_ABSENT__"):
-		text = ""
-	case strings.Contains(text, "__AQ_READ_OK__"):
-		text = strings.TrimSuffix(text, "__AQ_READ_OK__\n")
-	default:
-		return fmt.Errorf("%s exists on %s but aq cannot read it, refusing to overwrite a file it could not first look at", ogreEnvPath, h.SSH)
+		return err
 	}
 
 	body := renderOgreEnv(install, deploymentID, port)
@@ -556,6 +543,68 @@ func configureOgreOnBox(opts attachOptions, h config.Host, install *api.External
 		return fmt.Errorf("could not start ogre on the box: %w", err)
 	}
 	return nil
+}
+
+// readOgreEnvScript reports the current state of the env file on stdout as one
+// of three sentinels: absent, readable (contents first), or present-but-not-
+// readable by whoever ran it.
+func readOgreEnvScript() string {
+	q := shellQuote(ogreEnvPath)
+	return "if [ -e " + q + " ]; then if [ -r " + q + " ]; then cat " + q +
+		"; echo '__AQ_READ_OK__'; else echo '__AQ_UNREADABLE__'; fi; else echo '__AQ_ABSENT__'; fi"
+}
+
+// readOgreEnvOnBox returns the current content of the env file, or "" when it
+// genuinely does not exist yet.
+//
+// THE READ IS ELEVATED THE SAME WAY THE WRITE IS. aq's own write runs under
+// `umask 077` through sudo, so the file it leaves behind is root:root 0600
+// inside a root:root 0700 /etc/aquanode — which the plain non-root login user
+// cannot read on the NEXT attach, even though that same user has exactly the
+// sudo grant that created it. Re-attaching a box (after a config change, a
+// dropped connection, a port change) is ordinary, so the unelevated read has to
+// be retried as root or the second attach refuses a box it set up itself.
+//
+// BOTH non-READ_OK answers are retried, not just __AQ_UNREADABLE__. Today the
+// live shape is __AQ_UNREADABLE__ — writeOgreEnvScript runs `mkdir -p` BEFORE
+// it sets `umask 077`, so /etc/aquanode ends up 0755 and only the file itself
+// is 0600 (verified on a real hyperstack box: `drwxr-xr-x root root
+// /etc/aquanode`, `-rw------- root root ogre.env`). But an unprivileged reader
+// that cannot traverse the directory at all gets `[ -e ... ]` failing with
+// EACCES, which reports __AQ_ABSENT__ for a file that is very much there — and
+// that verdict is the dangerous one, because "absent" authorises a write that
+// would silently drop whatever the file held outside aq's markers, the exact
+// thing the refusal below exists to prevent. Tightening that directory (an
+// operator hardening the box, or a later reordering of those two lines) must
+// not turn a refusal into a silent overwrite, so a non-root user's answer is
+// trusted only when it actually read the bytes.
+//
+// A root SSH user needs none of this: asRootScript is identity for root, the
+// scripts compare equal, and the single unelevated read stands.
+func readOgreEnvOnBox(opts attachOptions, h config.Host) (string, error) {
+	script := readOgreEnvScript()
+	out, err := opts.run(h, script)
+	if err != nil {
+		return "", fmt.Errorf("could not read %s on the box: %w", ogreEnvPath, err)
+	}
+	text := string(out)
+
+	if elevated := asRootScript(h, script); elevated != script && !strings.Contains(text, "__AQ_READ_OK__") {
+		out, err = opts.run(h, elevated)
+		if err != nil {
+			return "", fmt.Errorf("could not read %s on the box as root: %w", ogreEnvPath, err)
+		}
+		text = string(out)
+	}
+
+	switch {
+	case strings.Contains(text, "__AQ_READ_OK__"):
+		return strings.TrimSuffix(text, "__AQ_READ_OK__\n"), nil
+	case strings.Contains(text, "__AQ_ABSENT__"):
+		return "", nil
+	default:
+		return "", fmt.Errorf("%s exists on %s but aq cannot read it, refusing to overwrite a file it could not first look at", ogreEnvPath, h.SSH)
+	}
 }
 
 // ogreEnvHeredocTag delimits the env file during transfer. Quoted in the script
@@ -609,14 +658,6 @@ func asRootScript(h config.Host, script string) string {
 		"  exit 1\n" +
 		"fi\n" +
 		"echo " + enc + " | base64 -d | sudo -n bash -s\n"
-}
-
-// readOgreEnvScript reports whether ogreEnvPath is absent, readable (in which
-// case it prints the content followed by the marker), or present-but-unreadable.
-// Wrapped in asRootScript by configureOgreOnBox so a root-owned file left by a
-// prior sudo-wrapped write is still readable back by a non-root SSH user.
-func readOgreEnvScript() string {
-	return "if [ -e " + shellQuote(ogreEnvPath) + " ]; then if [ -r " + shellQuote(ogreEnvPath) + " ]; then cat " + shellQuote(ogreEnvPath) + "; echo '__AQ_READ_OK__'; else echo '__AQ_UNREADABLE__'; fi; else echo '__AQ_ABSENT__'; fi"
 }
 
 // writeOgreEnvScript writes the merged file via a temp file + mv, so a

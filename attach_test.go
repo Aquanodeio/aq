@@ -476,6 +476,143 @@ func TestConfigureOgreRefusesAnUnreadableEnvFile(t *testing.T) {
 	}
 }
 
+// unwrapSudoScript returns the script a remote invocation actually runs on the
+// box: the argument itself when it was sent unelevated, or the base64 payload
+// asRootScript wrapped it in. Tests must classify calls by what RUNS, not by
+// the outer text — every sudo-wrapped script looks identical on the outside.
+func unwrapSudoScript(t *testing.T, remote string) string {
+	t.Helper()
+	const pipe = " | base64 -d | sudo -n bash -s"
+	i := strings.Index(remote, pipe)
+	if i < 0 {
+		return remote
+	}
+	payload := remote[:i]
+	start := strings.LastIndex(payload, "echo ") + len("echo ")
+	decoded, err := base64.StdEncoding.DecodeString(payload[start:])
+	if err != nil {
+		t.Fatalf("sudo-wrapped payload is not valid base64: %v\n%s", err, remote)
+	}
+	return string(decoded)
+}
+
+// A SECOND `aq attach` against a box whose root SSH is disabled must read back
+// the root-owned ogre.env its own FIRST attach wrote. aq writes that file as
+// root under `umask 077`, so the plain login user can no longer read it (nor
+// stat through the 0700 directory holding it) — without elevating the read too,
+// the re-attach refuses a box it set up itself, and the pre-existing content
+// outside aq's markers would be at risk of a silent overwrite.
+func TestConfigureOgreReadsBackARootOwnedEnvFileThroughSudo(t *testing.T) {
+	h := testHost()
+	h.SSH = "ubuntu@1.2.3.4"
+	detachedSandbox(t, h)
+
+	const foreign = "OPERATOR_SET=keepme\n"
+	prior := foreign + beginMarker + " (managed by `aq`, do not edit this block)\nJWT_SECRET='old'\n" + endMarker + "\n"
+
+	var reads int
+	var wrote string
+	opts := attachOptions{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}.withDefaults()
+	opts.run = func(_ config.Host, remote string) ([]byte, error) {
+		inner := unwrapSudoScript(t, remote)
+		elevated := strings.Contains(remote, "sudo -n")
+		switch {
+		case strings.Contains(inner, "__AQ_READ_OK__"):
+			reads++
+			// The unelevated read is exactly what a non-root user gets against
+			// a root-owned 0600 file; only the elevated one sees the bytes.
+			if !elevated {
+				return []byte("__AQ_UNREADABLE__\n"), nil
+			}
+			return []byte(prior + "__AQ_READ_OK__\n"), nil
+		case strings.Contains(inner, ogreEnvHeredocTag):
+			wrote = inner
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	if err := configureOgreOnBox(opts, h, &api.ExternalInstallConfig{OgreJWTSecret: "new"}, 4242, 8443); err != nil {
+		t.Fatalf("a re-attach must read its own root-owned env file back, got: %v", err)
+	}
+	if reads != 2 {
+		t.Fatalf("expected the unreadable plain read to be retried as root, got %d read(s)", reads)
+	}
+	if wrote == "" {
+		t.Fatalf("expected the env file to be rewritten")
+	}
+	if !strings.Contains(wrote, foreign) {
+		t.Fatalf("content outside aq's markers must survive the merge:\n%s", wrote)
+	}
+	if !strings.Contains(wrote, "JWT_SECRET='new'") || strings.Contains(wrote, "JWT_SECRET='old'") {
+		t.Fatalf("the marker region must be replaced with the new credentials:\n%s", wrote)
+	}
+}
+
+// A non-root user that cannot traverse /etc/aquanode at all gets `[ -e ... ]`
+// failing with EACCES, which reports a file that IS there as ABSENT. Trusting
+// that would authorise a write dropping everything the file held outside aq's
+// markers — the precise thing the unreadable-file refusal exists to prevent. So
+// "absent" from an unprivileged reader is re-checked as root too. aq's own
+// write leaves that directory 0755 today, so this is the hardened-box case
+// rather than the one a plain re-attach hits; it is pinned because the
+// difference between the two verdicts is a refusal versus a silent overwrite.
+func TestConfigureOgreRecheckAnAbsentVerdictFromANonRootUser(t *testing.T) {
+	h := testHost()
+	h.SSH = "ubuntu@1.2.3.4"
+	detachedSandbox(t, h)
+
+	const foreign = "OPERATOR_SET=keepme\n"
+	var wrote string
+	opts := attachOptions{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}.withDefaults()
+	opts.run = func(_ config.Host, remote string) ([]byte, error) {
+		inner := unwrapSudoScript(t, remote)
+		switch {
+		case strings.Contains(inner, "__AQ_READ_OK__"):
+			if !strings.Contains(remote, "sudo -n") {
+				return []byte("__AQ_ABSENT__\n"), nil
+			}
+			return []byte(foreign + "__AQ_READ_OK__\n"), nil
+		case strings.Contains(inner, ogreEnvHeredocTag):
+			wrote = inner
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	if err := configureOgreOnBox(opts, h, &api.ExternalInstallConfig{OgreJWTSecret: "s"}, 4242, 8443); err != nil {
+		t.Fatalf("configureOgreOnBox: %v", err)
+	}
+	if !strings.Contains(wrote, foreign) {
+		t.Fatalf("an EACCES-induced `absent` must not silently drop existing content:\n%s", wrote)
+	}
+}
+
+// A root SSH target already reads everything: elevating its read would be a
+// second pointless ssh hop on every attach.
+func TestConfigureOgreDoesNotRetryTheReadForARootUser(t *testing.T) {
+	h := testHost() // root@1.2.3.4
+	detachedSandbox(t, h)
+
+	var reads int
+	opts := attachOptions{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}.withDefaults()
+	opts.run = func(_ config.Host, remote string) ([]byte, error) {
+		if strings.Contains(remote, "__AQ_READ_OK__") {
+			reads++
+			return []byte("__AQ_ABSENT__\n"), nil
+		}
+		return nil, nil
+	}
+	if err := configureOgreOnBox(opts, h, &api.ExternalInstallConfig{OgreJWTSecret: "s"}, 4242, 8443); err != nil {
+		t.Fatalf("configureOgreOnBox: %v", err)
+	}
+	if reads != 1 {
+		t.Fatalf("root must read exactly once, got %d", reads)
+	}
+}
+
 // A root SSH target needs no elevation: wrapping it anyway would be a needless
 // extra hop and a needless place for the wrapper itself to break.
 func TestAsRootScriptPassesRootThrough(t *testing.T) {
@@ -526,41 +663,42 @@ func TestAsRootScriptWrapsANonRootUserBehindASudoProbe(t *testing.T) {
 	}
 }
 
-// All three box-touching steps of configureOgreOnBox — the pre-write read,
-// the write, and the restart — must go through the sudo wrapper for a
-// non-root user. The gap this ticket (#962) fixes is the read: #959 wrapped
-// only the write and the restart, so a SECOND `aq attach` against the same
-// disabled-root box (where the first attach already left ogre.env root-owned
-// at 0600) hit __AQ_UNREADABLE__ as the plain non-root SSH user and refused,
-// even with the exact same passwordless sudo grant that made the write
-// succeed in the first place.
-func TestConfigureOgreRoutesAllThreeScriptsThroughSudoForANonRootUser(t *testing.T) {
+// The two box-mutating steps of configureOgreOnBox must both go through the
+// sudo wrapper for a non-root user — the gap this ticket fixes was that
+// neither did, so `aq attach` failed unconditionally against any box with
+// root SSH disabled even when passwordless sudo was available.
+func TestConfigureOgreRoutesBothScriptsThroughSudoForANonRootUser(t *testing.T) {
 	h := testHost()
 	h.SSH = "ubuntu@1.2.3.4"
 	detachedSandbox(t, h)
 
-	var scripts []string
+	var writeScript, restartScript string
 	opts := attachOptions{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}.withDefaults()
 	opts.run = func(_ config.Host, remote string) ([]byte, error) {
-		scripts = append(scripts, remote)
-		if len(scripts) == 1 {
-			// Simulate the real outcome on a re-attach: root can read the
-			// root-owned file back even though the plain SSH user could not.
-			return []byte("JWT_SECRET=old\n__AQ_READ_OK__\n"), nil
+		switch {
+		case strings.Contains(unwrapSudoScript(t, remote), "__AQ_READ_OK__"):
+			return []byte("__AQ_ABSENT__\n"), nil
+		case strings.Contains(remote, "sudo -n"):
+			if writeScript == "" {
+				writeScript = remote
+			} else {
+				restartScript = remote
+			}
+			return nil, nil
+		default:
+			t.Fatalf("box-mutating call was not routed through sudo:\n%s", remote)
+			return nil, nil
 		}
-		return nil, nil
 	}
 
 	if err := configureOgreOnBox(opts, h, &api.ExternalInstallConfig{OgreJWTSecret: "s"}, 4242, 8443); err != nil {
 		t.Fatalf("configureOgreOnBox: %v", err)
 	}
-	if len(scripts) != 3 {
-		t.Fatalf("expected a read, a write and a restart call, got %d: %v", len(scripts), scripts)
+	if writeScript == "" || restartScript == "" {
+		t.Fatalf("expected both the env write and the restart to run, got write=%q restart=%q", writeScript, restartScript)
 	}
-	for i, remote := range scripts {
-		if !strings.Contains(remote, "sudo -n true") {
-			t.Fatalf("call %d was not routed through sudo:\n%s", i, remote)
-		}
+	if !strings.Contains(writeScript, "sudo -n true") || !strings.Contains(restartScript, "sudo -n true") {
+		t.Fatalf("both scripts must probe sudo before use:\nwrite: %s\nrestart: %s", writeScript, restartScript)
 	}
 }
 
