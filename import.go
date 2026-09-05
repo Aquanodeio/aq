@@ -731,7 +731,7 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 	fmt.Fprintln(out, "No `ogre` on PATH, fetching it from Aquanode...")
 	meta, err := client.OgreDownloadURL()
 	if err != nil {
-		return "", fmt.Errorf("could not get an ogre download URL; check your network connection: %w", err)
+		return "", ogreDownloadURLError(err)
 	}
 
 	if err := downloadAndVerify(meta.URL, meta.SHA256, dest); err != nil {
@@ -739,6 +739,21 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 	}
 	fmt.Fprintf(out, "Installed ogre %s to %s\n", meta.Version, dest)
 	return dest, nil
+}
+
+// ogreDownloadURLError wraps a failed OgreDownloadURL call with a message that
+// blames the right party. A `*api.APIError` means the orchestrator answered
+// — the request reached it and it refused (its own config guard, an auth
+// failure, whatever) — which is a server-side problem, never the user's
+// network. Only a genuine transport failure (no HTTP response received at
+// all: DNS, connection refused, TLS, timeout) is phrased as a connectivity
+// issue.
+func ogreDownloadURLError(err error) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return fmt.Errorf("Aquanode could not provide an ogre download: %s", apiErr.Message)
+	}
+	return fmt.Errorf("could not reach Aquanode to get an ogre download URL; check your network connection: %w", err)
 }
 
 // downloadAndVerify downloads url to dest, refusing to install it unless its

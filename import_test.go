@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -796,6 +797,49 @@ func TestRunImportWritesNoFileUnderConfigDir(t *testing.T) {
 	after := listFilesUnder(t, configDir)
 	if !slicesEqualUnordered(before, after) {
 		t.Errorf("files under the config dir changed during import: before=%v after=%v — aq must never write restic_password/import_token to disk on a box it doesn't control", before, after)
+	}
+}
+
+// TestOgreDownloadURLErrorBlamesServerNotNetworkOnAPIError pins the
+// regression: a definite response from the orchestrator (a 503 config-guard
+// refusal, an auth failure, anything the server actually answered) must never
+// tell the user to check their own network — that answer proves the network
+// worked.
+func TestOgreDownloadURLErrorBlamesServerNotNetworkOnAPIError(t *testing.T) {
+	apiErr := &api.APIError{
+		Status:  503,
+		Message: "MJOLNIR_BASE_URL and OGRE_ARTIFACT_REFRESH_SECRET must both be set to serve an ogre download URL",
+	}
+	got := ogreDownloadURLError(apiErr).Error()
+	if strings.Contains(strings.ToLower(got), "network") {
+		t.Fatalf("server-side refusal must not blame the user's network, got: %q", got)
+	}
+	if !strings.Contains(got, apiErr.Message) {
+		t.Fatalf("expected the server's own message to reach the user, got: %q", got)
+	}
+}
+
+// TestOgreDownloadURLErrorBlamesNetworkOnTransportFailure is the other half
+// of the regression: a genuine transport failure (no HTTP response at all)
+// is the one case where "check your network connection" is the right
+// diagnostic.
+func TestOgreDownloadURLErrorBlamesNetworkOnTransportFailure(t *testing.T) {
+	srv := httptest.NewServer(http.NewServeMux())
+	srv.Close() // closed before any request: guarantees connection refused, not a real answer
+
+	client := api.New(srv.URL)
+	_, err := client.OgreDownloadURL()
+	if err == nil {
+		t.Fatalf("expected a transport error against a closed server, got nil")
+	}
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		t.Fatalf("expected a transport-level error, not an *api.APIError: %v", err)
+	}
+
+	got := ogreDownloadURLError(err).Error()
+	if !strings.Contains(strings.ToLower(got), "network connection") {
+		t.Fatalf("expected a transport failure to mention the network, got: %q", got)
 	}
 }
 
