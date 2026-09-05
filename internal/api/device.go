@@ -5,9 +5,11 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -230,6 +232,32 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string { return e.Message }
+
+// IsTransportFailure reports whether err is a failure to REACH the API at all
+// (DNS, TCP, TLS, a timeout, a proxy refusing the connection) as opposed to
+// an ANSWER from it.
+//
+// The distinction is the difference between blaming the right party and the
+// wrong one. `aq import` used to print "check your network connection" for
+// every failure of the ogre download URL call, including the one that actually
+// happened: the orchestrator answering 503 because OGRE_ARTIFACT_REFRESH_SECRET
+// was missing from its own task env (#967). The user's network was fine for
+// months of that; ours was misconfigured, and every user who hit it was sent to
+// debug their laptop. A message that names the wrong side of the wire is worse
+// than a bare error, because it costs the reader the time to disprove it.
+//
+// Anything that came back with an HTTP status (an *APIError, or the non-JSON
+// gateway errors nonJSONError renders) is by definition an answer, so it is
+// never a transport failure. `http.Client.Do` wraps its own failures in
+// *url.Error, which is the one case that is.
+func IsTransportFailure(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return false
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
 
 // StartDevice begins a pairing.
 func (c *Client) StartDevice(clientName string, scopes []string) (*DeviceStart, error) {

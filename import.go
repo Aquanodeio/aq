@@ -731,7 +731,14 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 	fmt.Fprintln(out, "No `ogre` on PATH, fetching it from Aquanode...")
 	meta, err := client.OgreDownloadURL()
 	if err != nil {
-		return "", fmt.Errorf("could not get an ogre download URL; check your network connection: %w", err)
+		// Only a failure to REACH us is the user's network. An answer from our
+		// own API (a 503 from a misconfigured orchestrator is the one that
+		// actually shipped, #967) must say so, or the user spends the next
+		// hour on a laptop that was never the problem.
+		if api.IsTransportFailure(err) {
+			return "", fmt.Errorf("could not reach Aquanode to get an ogre download URL; check your network connection: %w", err)
+		}
+		return "", fmt.Errorf("Aquanode could not serve an ogre download URL (this is a fault on our side, not your network): %w", err)
 	}
 
 	if err := downloadAndVerify(meta.URL, meta.SHA256, dest); err != nil {
