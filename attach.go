@@ -519,9 +519,13 @@ func authorizedKeysSummary(content string) string {
 //
 // The env file is merged into a marker region rather than overwritten, and the
 // current content is read first: if it exists and holds anything outside our
-// markers, aq refuses rather than replacing something it did not write.
+// markers, aq refuses rather than replacing something it did not write. The
+// read goes through asRootScript exactly like the write and the restart do
+// (#962): a prior attach on a disabled-root box leaves ogre.env root-owned at
+// mode 0600, so a plain non-root read of it hits __AQ_UNREADABLE__ on every
+// second attach unless it is sudo-wrapped the same way.
 func configureOgreOnBox(opts attachOptions, h config.Host, install *api.ExternalInstallConfig, deploymentID, port int) error {
-	existing, err := opts.run(h, "if [ -e "+shellQuote(ogreEnvPath)+" ]; then if [ -r "+shellQuote(ogreEnvPath)+" ]; then cat "+shellQuote(ogreEnvPath)+"; echo '__AQ_READ_OK__'; else echo '__AQ_UNREADABLE__'; fi; else echo '__AQ_ABSENT__'; fi")
+	existing, err := opts.run(h, asRootScript(h, readOgreEnvScript()))
 	if err != nil {
 		return fmt.Errorf("could not read %s on the box: %w", ogreEnvPath, err)
 	}
@@ -605,6 +609,14 @@ func asRootScript(h config.Host, script string) string {
 		"  exit 1\n" +
 		"fi\n" +
 		"echo " + enc + " | base64 -d | sudo -n bash -s\n"
+}
+
+// readOgreEnvScript reports whether ogreEnvPath is absent, readable (in which
+// case it prints the content followed by the marker), or present-but-unreadable.
+// Wrapped in asRootScript by configureOgreOnBox so a root-owned file left by a
+// prior sudo-wrapped write is still readable back by a non-root SSH user.
+func readOgreEnvScript() string {
+	return "if [ -e " + shellQuote(ogreEnvPath) + " ]; then if [ -r " + shellQuote(ogreEnvPath) + " ]; then cat " + shellQuote(ogreEnvPath) + "; echo '__AQ_READ_OK__'; else echo '__AQ_UNREADABLE__'; fi; else echo '__AQ_ABSENT__'; fi"
 }
 
 // writeOgreEnvScript writes the merged file via a temp file + mv, so a
