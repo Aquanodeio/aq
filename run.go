@@ -45,6 +45,7 @@ func runCmd(args []string) error {
 	dir := fs.String("dir", "", "Directory to run in on the box (default: the push destination)")
 	del := fs.Bool("delete", false, "Delete remote files that no longer exist locally (needs rsync)")
 	noDefaults := fs.Bool("no-default-excludes", false, "Do not skip .git, node_modules, __pycache__, and friends")
+	includeSecrets := fs.Bool("include-secrets", false, "Also send .env, SSH keys, and other credential-shaped paths (skipped by default)")
 	noPush := fs.Bool("no-push", false, "Run without sending the working directory first")
 	detach := fs.Bool("detach", false, "Start the command and return: it keeps running after you disconnect")
 	printOnly := fs.Bool("print", false, "Print the commands that would run, and exit")
@@ -93,14 +94,15 @@ func runCmd(args []string) error {
 		dir:     *dir,
 		print:   *printOnly,
 		push: pushOptions{
-			cred:       cred,
-			target:     target,
-			from:       *from,
-			to:         dest,
-			excludes:   excludes,
-			noDefaults: *noDefaults,
-			del:        *del,
-			printOnly:  *printOnly,
+			cred:           cred,
+			target:         target,
+			from:           *from,
+			to:             dest,
+			excludes:       excludes,
+			noDefaults:     *noDefaults,
+			includeSecrets: *includeSecrets,
+			del:            *del,
+			printOnly:      *printOnly,
 		},
 		out:    os.Stdout,
 		errOut: os.Stderr,

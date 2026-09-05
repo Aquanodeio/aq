@@ -91,7 +91,7 @@ func TestResolveExcludes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolveExcludes(dir, []string{"scratch"}, true)
+	got, err := resolveExcludes(dir, []string{"scratch"}, true, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestResolveExcludes(t *testing.T) {
 		t.Fatalf("comments must not become patterns, got: %s", joined)
 	}
 
-	bare, err := resolveExcludes(dir, nil, false)
+	bare, err := resolveExcludes(dir, nil, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,6 +115,110 @@ func TestResolveExcludes(t *testing.T) {
 	// .aqignore is the user's own list, so it survives --no-default-excludes.
 	if !strings.Contains(strings.Join(bare, " "), "checkpoints/") {
 		t.Fatalf(".aqignore must still apply, got: %v", bare)
+	}
+}
+
+// TestResolveExcludesSkipsCredentialsByDefault is #779: a push from a directory
+// holding a real .env and an SSH private key must not need a hand-maintained
+// .aqignore to keep them off the wire.
+func TestResolveExcludesSkipsCredentialsByDefault(t *testing.T) {
+	dir := t.TempDir()
+	got, err := resolveExcludes(dir, nil, true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(got, " ")
+	for _, want := range []string{".env*", "*.pem", "*.key", "id_rsa*", "id_ecdsa*", "id_ed25519*", "*.p12", "*.pfx", ".aws", ".ssh", ".netrc", "credentials.json", ".npmrc", ".pypirc"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("want credential pattern %q in the exclude list, got: %s", want, joined)
+		}
+	}
+}
+
+// TestResolveExcludesIncludeSecretsIsTheOnlyWaiver: --include-secrets and
+// --no-default-excludes must be independent. Turning off build-noise
+// filtering must not silently also start sending .env, and vice versa.
+func TestResolveExcludesIncludeSecretsIsTheOnlyWaiver(t *testing.T) {
+	dir := t.TempDir()
+
+	waived, err := resolveExcludes(dir, nil, true, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(waived, " ")
+	if strings.Contains(joined, ".env*") || strings.Contains(joined, "id_rsa*") {
+		t.Fatalf("--include-secrets must drop the credential patterns, got: %s", joined)
+	}
+	if !strings.Contains(joined, ".git") {
+		t.Fatalf("--include-secrets must not also waive the build-noise defaults, got: %s", joined)
+	}
+
+	noDefaults, err := resolveExcludes(dir, nil, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(strings.Join(noDefaults, " "), ".env*") {
+		t.Fatalf("--no-default-excludes must not also send credentials, got: %v", noDefaults)
+	}
+}
+
+// TestCredentialExcludesReachBothTransports: buildRsyncArgs and buildTarArgs
+// are built separately from the same resolved exclude list, so a pattern
+// missing from one but not the other would ship secrets on whichever
+// transport a box happens to pick.
+func TestCredentialExcludesReachBothTransports(t *testing.T) {
+	dir := t.TempDir()
+	excludes, err := resolveExcludes(dir, nil, true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tarArgs := strings.Join(buildTarArgs(dir, excludes, false), " ")
+	rsyncArgs := strings.Join(buildRsyncArgs("aq-box", dir, "/workspace", excludes, false), " ")
+	for _, want := range []string{"--exclude .env*", "--exclude id_ed25519*", "--exclude credentials.json"} {
+		if !strings.Contains(tarArgs, want) {
+			t.Fatalf("tar argv missing %q: %s", want, tarArgs)
+		}
+		if !strings.Contains(rsyncArgs, want) {
+			t.Fatalf("rsync argv missing %q: %s", want, rsyncArgs)
+		}
+	}
+}
+
+// TestScanCredentialMatchesFindsSecretsAndPrunesBuildNoise: the scan drives the
+// user-facing skip summary, so it has to find what resolveExcludes actually
+// hides, and it must not descend into node_modules doing it.
+func TestScanCredentialMatchesFindsSecretsAndPrunesBuildNoise(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		".env":                   "SECRET=1\n",
+		"id_ed25519":             "-----BEGIN OPENSSH PRIVATE KEY-----\n",
+		"aqcfg/credentials.json": `{"apiKey":"x"}`,
+		"train.py":               "print(1)\n",
+		"node_modules/x/.env":    "SECRET=2\n",
+	}
+	for rel, body := range files {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	matches, err := scanCredentialMatches(dir, credentialExcludes(), defaultExcludes())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := strings.Join(matches, " ")
+	for _, want := range []string{".env", "id_ed25519", filepath.Join("aqcfg", "credentials.json")} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("want %q reported, got: %v", want, matches)
+		}
+	}
+	if strings.Contains(got, "node_modules") {
+		t.Fatalf("must not descend into a pruned build-noise directory, got: %v", matches)
 	}
 }
 

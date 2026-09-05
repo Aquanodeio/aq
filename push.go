@@ -14,16 +14,17 @@ import (
 // inject the alias resolver, the rsync probe, and the transfer executor so the
 // whole decision path runs without a box.
 type pushOptions struct {
-	cred       *config.Credential
-	target     string // "" → the single live deployment
-	from       string // local directory, "" → cwd
-	to         string // remote directory, "" → /workspace
-	excludes   []string
-	noDefaults bool
-	del        bool
-	printOnly  bool
-	out        io.Writer
-	errOut     io.Writer
+	cred           *config.Credential
+	target         string // "" → the single live deployment
+	from           string // local directory, "" → cwd
+	to             string // remote directory, "" → /workspace
+	excludes       []string
+	noDefaults     bool
+	includeSecrets bool
+	del            bool
+	printOnly      bool
+	out            io.Writer
+	errOut         io.Writer
 
 	resolveAlias func(target string, errOut io.Writer) (string, error)
 	probeRsync   func(alias string) bool
@@ -42,6 +43,7 @@ func push(args []string) error {
 	to := fs.String("to", "", "Destination directory on the box (default: "+defaultRemoteDir+")")
 	del := fs.Bool("delete", false, "Delete remote files that no longer exist locally (needs rsync)")
 	noDefaults := fs.Bool("no-default-excludes", false, "Do not skip .git, node_modules, __pycache__, and friends")
+	includeSecrets := fs.Bool("include-secrets", false, "Also send .env, SSH keys, and other credential-shaped paths (skipped by default)")
 	printOnly := fs.Bool("print", false, "Print the transfer command that would run, and exit")
 	var excludes stringList
 	fs.Var(&excludes, "exclude", "Skip paths matching this pattern (repeatable)")
@@ -76,16 +78,17 @@ func push(args []string) error {
 	}
 
 	return runPush(pushOptions{
-		cred:       cred,
-		target:     target,
-		from:       *from,
-		to:         dest,
-		excludes:   excludes,
-		noDefaults: *noDefaults,
-		del:        *del,
-		printOnly:  *printOnly,
-		out:        os.Stdout,
-		errOut:     os.Stderr,
+		cred:           cred,
+		target:         target,
+		from:           *from,
+		to:             dest,
+		excludes:       excludes,
+		noDefaults:     *noDefaults,
+		includeSecrets: *includeSecrets,
+		del:            *del,
+		printOnly:      *printOnly,
+		out:            os.Stdout,
+		errOut:         os.Stderr,
 	})
 }
 
@@ -114,9 +117,23 @@ func pushToAlias(alias string, opts pushOptions) error {
 	if err != nil {
 		return err
 	}
-	excludes, err := resolveExcludes(from, opts.excludes, !opts.noDefaults)
+	excludes, err := resolveExcludes(from, opts.excludes, !opts.noDefaults, opts.includeSecrets)
 	if err != nil {
 		return err
+	}
+
+	// The exclude patterns already keep credential-shaped paths off the wire;
+	// this scan only makes that skip visible, so a developer sees THAT a push
+	// dropped their .env rather than discovering it never arrived.
+	if !opts.includeSecrets {
+		skipped, err := scanCredentialMatches(from, credentialExcludes(), defaultExcludes())
+		if err != nil {
+			return err
+		}
+		if len(skipped) > 0 {
+			fmt.Fprintf(opts.errOut, "⚠ skipping %d credential-looking path(s) (.env, keys, credentials.json and friends; send anyway with --include-secrets): %s\n",
+				len(skipped), strings.Join(skipped, ", "))
+		}
 	}
 
 	plan, err := buildPlan(alias, from, to, excludes, opts.del, opts.probeRsync(alias))

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -171,5 +173,66 @@ func TestPushRunsTheResolvedPlan(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(got.argv, " "), "--exclude .git") {
 		t.Fatalf("default excludes must apply, got: %v", got.argv)
+	}
+}
+
+// TestPushReportsSkippedCredentials is #779's "the skip is reported to the
+// user" clause: a silent default-deny is the same failure shape as no
+// default-deny at all, since a developer who never sees it can't tell their
+// .env made it or not.
+func TestPushReportsSkippedCredentials(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("X=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "id_ed25519"), []byte("key\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	err := pushToAlias("aq-box", pushOptions{
+		from:       dir,
+		out:        io.Discard,
+		errOut:     &errOut,
+		probeRsync: func(string) bool { return false },
+		transfer:   func(transferPlan, io.Writer) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	msg := errOut.String()
+	if !strings.Contains(msg, "skipping 2 credential-looking path") {
+		t.Fatalf("want the skip reported with a count, got: %s", msg)
+	}
+	if !strings.Contains(msg, ".env") || !strings.Contains(msg, "id_ed25519") {
+		t.Fatalf("want the skipped paths named, got: %s", msg)
+	}
+	if !strings.Contains(msg, "--include-secrets") {
+		t.Fatalf("want the waiver flag named in the message, got: %s", msg)
+	}
+}
+
+// TestPushIncludeSecretsSuppressesTheWarning: the flag that sends the secrets
+// must also stop reporting a skip that no longer happens.
+func TestPushIncludeSecretsSuppressesTheWarning(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("X=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	err := pushToAlias("aq-box", pushOptions{
+		from:           dir,
+		includeSecrets: true,
+		out:            io.Discard,
+		errOut:         &errOut,
+		probeRsync:     func(string) bool { return false },
+		transfer:       func(transferPlan, io.Writer) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(errOut.String(), "skipping") {
+		t.Fatalf("--include-secrets must not warn about a skip that did not happen, got: %s", errOut.String())
 	}
 }
