@@ -40,10 +40,25 @@ const managedHostsConfigName = "aquanode-hosts.config"
 // `train` cannot generate the same stanza and silently shadow each other.
 const hostAliasPrefix = "aqh-"
 
-// sshUser is the login on every Aquanode box. There is no per-deployment user
-// field anywhere in the platform, and none is needed: ogre installs the user's
-// public key into /root/.ssh/authorized_keys on every provider, so the end user
-// lands on root regardless of which provider mjolnir used to reach the box.
+// sshUser is the DEFAULT login for the generated managed-deployment config.
+// There is no per-deployment login-user field anywhere in the platform, and
+// this default assumes the box's login key ends up on root — true for every
+// Docker-pool provider (vastai, runpod, simplepod, hotaisle, akash), where
+// ogre runs as the container's own root and the provider's native key
+// mechanism drops the key onto that same user.
+//
+// It is NOT true for every VM provider. Confirmed empirically on multiple
+// fresh hyperstack boxes provisioned through the managed `aq up` path: the
+// base image applies cloud-init's disable_root behaviour, so the platform's
+// provisioned key lands under a non-root default login user (ubuntu)
+// instead, and root's own authorized_keys carries a forced-command banner
+// ("Please login as the user \"ubuntu\" ...") rather than a usable key.
+// Neither mjolnir nor ogre ever write to /root/.ssh/authorized_keys
+// directly on the managed path — provisioning always defers to the
+// provider's own key-injection mechanism, so this default is only as good
+// as that mechanism's own choice of login user, and aq has no way to learn
+// which user actually works ahead of a failed connection. `aq ssh -user
+// <name>` is the manual override for exactly this case.
 const sshUser = "root"
 
 // sshEntry is one generated Host stanza.
@@ -53,9 +68,10 @@ type sshEntry struct {
 	Port         string
 	IdentityFile string
 	KnownHosts   string
-	// User overrides the login. Empty means sshUser (root), which is every
-	// Aquanode-provisioned box; a detached host the user leases may well log in
-	// as someone else.
+	// User overrides the login. Empty means sshUser (root) — the platform's
+	// default assumption, not a guarantee on every provider; see sshUser's own
+	// comment. A detached host the user leases may well log in as someone else
+	// too.
 	User string
 }
 
