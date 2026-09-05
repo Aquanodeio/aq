@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,39 @@ func defaultExcludes() []string {
 	}
 }
 
+// credentialExcludes are secrets, layered on top of defaultExcludes' build
+// noise. Unlike defaultExcludes this list is default-DENY: a project's .env or
+// SSH private key sits at the project root, which is the exact directory
+// `aq run`/`aq push` is designed to be run from, so a mitigation that requires
+// the user to already know to add it to .aqignore ships the secret on the very
+// first push. --include-secrets is the only waiver: resolveExcludes has no
+// un-exclude pattern (rsync and tar disagree about negation), so opting back
+// in has to be a flag, not something patched into .aqignore.
+//
+// ".aws" and ".ssh" are listed without a trailing slash (unlike the fix
+// direction's ".aws/"/".ssh/"): tar and rsync do not agree on trailing-slash
+// "directory only" semantics, and a bare name already matches both a file and
+// a directory of that name at any depth, which is the same rule bare ".git" in
+// defaultExcludes already relies on.
+func credentialExcludes() []string {
+	return []string{
+		".env*",
+		"*.pem",
+		"*.key",
+		"id_rsa*",
+		"id_ecdsa*",
+		"id_ed25519*",
+		"*.p12",
+		"*.pfx",
+		".aws",
+		".ssh",
+		".netrc",
+		"credentials.json",
+		".npmrc",
+		".pypirc",
+	}
+}
+
 // transferPlan is the fully-resolved description of one push: which local
 // directory goes to which remote directory over which transport, with argv
 // already built. Producing it is pure, so the interesting decisions are
@@ -66,15 +100,21 @@ func (p transferPlan) describe() string {
 	return local + " | ssh " + shellJoin(p.remoteCmd)
 }
 
-// resolveExcludes assembles the exclude list: defaults (unless waived), then
-// the project's .aqignore, then whatever --exclude flags were passed. Later
-// entries are additive — there is deliberately no un-exclude, because rsync and
-// tar disagree about negation and a pattern language that behaves differently
-// per transport would be worse than none.
-func resolveExcludes(from string, extra []string, useDefaults bool) ([]string, error) {
+// resolveExcludes assembles the exclude list: build-noise defaults (unless
+// waived by --no-default-excludes), then credential-shaped paths (unless
+// waived by --include-secrets), then the project's .aqignore, then whatever
+// --exclude flags were passed. The two waivers are independent: turning off
+// build-noise filtering must not also start sending .env, and vice versa.
+// Later entries are additive: there is deliberately no un-exclude, because
+// rsync and tar disagree about negation and a pattern language that behaves
+// differently per transport would be worse than none.
+func resolveExcludes(from string, extra []string, useDefaults, includeSecrets bool) ([]string, error) {
 	var out []string
 	if useDefaults {
 		out = append(out, defaultExcludes()...)
+	}
+	if !includeSecrets {
+		out = append(out, credentialExcludes()...)
 	}
 	fromFile, err := readIgnoreFile(filepath.Join(from, ignoreFileName))
 	if err != nil {
@@ -83,6 +123,70 @@ func resolveExcludes(from string, extra []string, useDefaults bool) ([]string, e
 	out = append(out, fromFile...)
 	out = append(out, extra...)
 	return out, nil
+}
+
+// matchesPattern reports whether name (a single path component) matches a
+// tar/rsync-style exclude pattern. Both transports treat a pattern with no
+// slash as matching any path component at any depth, the same rule that lets
+// a bare ".git" in defaultExcludes already exclude a nested repo, so
+// scanCredentialMatches below has to use the identical rule for its count to
+// agree with what the transport actually leaves behind.
+func matchesPattern(pattern, name string) bool {
+	ok, _ := filepath.Match(pattern, name)
+	return ok
+}
+
+// scanCredentialMatches walks `from` and returns every relative path whose
+// name matches one of patterns, without descending into a directory that
+// itself matched (mirroring how tar/rsync prune a whole matched directory
+// rather than reporting every file inside it) or into a directory matching
+// prune (defaultExcludes' build noise, so a node_modules or .git tree never
+// slows this down; resolveExcludes is what actually keeps those off the wire,
+// independent of this scan).
+//
+// This exists purely to make the skip visible to the user; it does not decide
+// what gets sent. A push with an unreadable subdirectory reports what it could
+// see rather than failing the whole push over a permissions quirk in a tree
+// that was headed for exclusion anyway.
+func scanCredentialMatches(from string, patterns, prune []string) ([]string, error) {
+	var matches []string
+	err := filepath.WalkDir(from, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if path == from {
+				return err
+			}
+			return nil
+		}
+		if path == from {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			for _, p := range prune {
+				if matchesPattern(p, name) {
+					return filepath.SkipDir
+				}
+			}
+		}
+		for _, p := range patterns {
+			if matchesPattern(p, name) {
+				rel, relErr := filepath.Rel(from, path)
+				if relErr != nil {
+					rel = path
+				}
+				matches = append(matches, rel)
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not scan %s for credential-shaped paths: %w", from, err)
+	}
+	return matches, nil
 }
 
 // readIgnoreFile parses .aqignore. A missing file is not an error; an

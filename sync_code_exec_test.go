@@ -22,6 +22,12 @@ func seedTree(t *testing.T) string {
 		"node_modules/x/index.js":   "junk\n",
 		"data/keep.txt":             "keep\n",
 		".aqignore":                 "data\n",
+		// #779: a real .env and SSH private key sitting at the project root,
+		// exactly what a developer's own working directory looks like, must
+		// never reach the box by default.
+		".env":                   "AQUANODE_API_KEY=super-secret\n",
+		"id_ed25519":             "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n",
+		"aqcfg/credentials.json": `{"apiKey":"super-secret"}`,
 	}
 	for rel, body := range files {
 		p := filepath.Join(dir, rel)
@@ -77,7 +83,7 @@ func TestTarTransportDeliversTheRightTree(t *testing.T) {
 	from := seedTree(t)
 	to := t.TempDir()
 
-	excludes, err := resolveExcludes(from, nil, true)
+	excludes, err := resolveExcludes(from, nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +121,7 @@ func TestRsyncTransportDeliversTheRightTree(t *testing.T) {
 	from := seedTree(t)
 	to := t.TempDir()
 
-	excludes, err := resolveExcludes(from, nil, true)
+	excludes, err := resolveExcludes(from, nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,5 +178,83 @@ func TestRsyncDeletePrunesTheRemoteTree(t *testing.T) {
 	}
 	if got := treeOf(t, to); strings.Join(got, ",") != "a.py" {
 		t.Fatalf("--delete must prune stale.py, got %v", got)
+	}
+}
+
+// wantTreeWithSecrets is what --include-secrets must deliver on top of
+// wantTree: the real .env, SSH private key and credentials.json from
+// seedTree, proving the waiver is a real opt-in and not just a no-op flag.
+var wantTreeWithSecrets = []string{".env", filepath.Join("aqcfg", "credentials.json"), "id_ed25519", "pkg/model.py", "train.py"}
+
+// TestTarTransportSendsSecretsWithIncludeSecrets is the explicit-opt-in half of
+// #779: --include-secrets must still be able to send a .env or private key on
+// purpose, on the transport every Docker-pool provider actually uses.
+func TestTarTransportSendsSecretsWithIncludeSecrets(t *testing.T) {
+	if _, err := exec.LookPath("tar"); err != nil {
+		t.Skip("no tar")
+	}
+	from := seedTree(t)
+	to := t.TempDir()
+
+	excludes, err := resolveExcludes(from, nil, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := buildTarArgs(from, excludes, tarSupportsNoXattrs())
+
+	archive := filepath.Join(t.TempDir(), "push.tgz")
+	f, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdout = f
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		f.Close()
+		t.Fatalf("tar failed: %v", err)
+	}
+	f.Close()
+
+	if out, err := exec.Command("tar", "xzf", archive, "-C", to).CombinedOutput(); err != nil {
+		t.Fatalf("extract failed: %v: %s", err, out)
+	}
+
+	got := treeOf(t, to)
+	if strings.Join(got, ",") != strings.Join(wantTreeWithSecrets, ",") {
+		t.Fatalf("--include-secrets delivered %v, want %v", got, wantTreeWithSecrets)
+	}
+}
+
+// TestRsyncTransportSendsSecretsWithIncludeSecrets is the rsync half of the
+// same proof: the two transports build their exclude args independently, so
+// the waiver has to be tested on both.
+func TestRsyncTransportSendsSecretsWithIncludeSecrets(t *testing.T) {
+	hasLocalRsync(t)
+	from := seedTree(t)
+	to := t.TempDir()
+
+	excludes, err := resolveExcludes(from, nil, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := buildRsyncArgs("aq-box", from, to, excludes, false)
+	local := []string{}
+	for i := 0; i < len(argv); i++ {
+		if argv[i] == "--rsync-path" {
+			i++
+			continue
+		}
+		local = append(local, argv[i])
+	}
+	local[len(local)-1] = withTrailingSlash(to)
+
+	if out, err := exec.Command(local[0], local[1:]...).CombinedOutput(); err != nil {
+		t.Fatalf("rsync failed: %v: %s", err, out)
+	}
+
+	got := treeOf(t, to)
+	if strings.Join(got, ",") != strings.Join(wantTreeWithSecrets, ",") {
+		t.Fatalf("--include-secrets delivered %v, want %v", got, wantTreeWithSecrets)
 	}
 }

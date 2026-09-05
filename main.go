@@ -394,6 +394,9 @@ push / run:
   --no-default-excludes
                      Send .git, node_modules, __pycache__ and friends too;
                      by default they are skipped
+  --include-secrets  Also send .env, SSH keys, credentials.json and other
+                     credential-shaped paths; by default they are skipped and
+                     the skip is reported on stderr
   --delete           Make the remote tree mirror the local one, deleting what
                      you deleted. Needs rsync on the box.
   --print            Print the command that would run, and exit
