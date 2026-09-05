@@ -16,7 +16,7 @@ import (
 type sshOptions struct {
 	cred      *config.Credential
 	target    string // "" → the single live deployment
-	user      string // "" → root
+	user      string // "" → the login user recorded for the box (see ssh_login_user.go)
 	forwards  []string
 	remote    []string // remote command, everything after a literal `--`
 	printOnly bool
@@ -42,7 +42,7 @@ func sshCmd(args []string) error {
 
 	fs := flag.NewFlagSet("ssh", flag.ContinueOnError)
 	printOnly := fs.Bool("print", false, "Print the ssh command that would run, and exit")
-	user := fs.String("user", "", "Override the login user (default: root)")
+	user := fs.String("user", "", "Override the login user (default: the one recorded for the box, or root if none was)")
 	var forwards stringList
 	fs.Var(&forwards, "L", "Forward a local port, e.g. 8888:localhost:8888 (repeatable)")
 	positional, err := parseInterspersed(fs, head)

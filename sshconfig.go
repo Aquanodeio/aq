@@ -40,25 +40,34 @@ const managedHostsConfigName = "aquanode-hosts.config"
 // `train` cannot generate the same stanza and silently shadow each other.
 const hostAliasPrefix = "aqh-"
 
-// sshUser is the DEFAULT login for the generated managed-deployment config.
-// There is no per-deployment login-user field anywhere in the platform, and
-// this default assumes the box's login key ends up on root — true for every
-// Docker-pool provider (vastai, runpod, simplepod, hotaisle, akash), where
-// ogre runs as the container's own root and the provider's native key
-// mechanism drops the key onto that same user.
+// sshUser is the LAST-RESORT login for a box whose login user was never
+// recorded — never a claim about what works.
 //
-// It is NOT true for every VM provider. Confirmed empirically on multiple
-// fresh hyperstack boxes provisioned through the managed `aq up` path: the
-// base image applies cloud-init's disable_root behaviour, so the platform's
-// provisioned key lands under a non-root default login user (ubuntu)
-// instead, and root's own authorized_keys carries a forced-command banner
-// ("Please login as the user \"ubuntu\" ...") rather than a usable key.
-// Neither mjolnir nor ogre ever write to /root/.ssh/authorized_keys
-// directly on the managed path — provisioning always defers to the
-// provider's own key-injection mechanism, so this default is only as good
-// as that mechanism's own choice of login user, and aq has no way to learn
-// which user actually works ahead of a failed connection. `aq ssh -user
-// <name>` is the manual override for exactly this case.
+// The real answer is per deployment: the orchestrator records
+// `deployments.ssh_login_user` at provision time from the provider adapter's
+// own capability declaration, because provisioning always defers to the
+// provider's key-injection mechanism and only that adapter knows which account
+// the key lands on. `entriesFor` writes that value into the stanza whenever it
+// is present, and this constant is used only when it is absent.
+//
+// Absent covers three cases, none of which is evidence for root: a deployment
+// created before the column shipped, a provider that has not established its
+// login user, and a backend too old to send the field. Root is chosen there
+// because it is correct on every Docker-pool provider (vastai, runpod,
+// simplepod, hotaisle, akash — ogre runs as the container's own root and the
+// provider's key mechanism drops the key onto that same user) and on every box
+// already running when this shipped; dropping the `User` line instead would
+// make ssh try the LOCAL account name, which is right nowhere.
+//
+// It is NOT right everywhere. Confirmed empirically on multiple fresh
+// hyperstack boxes provisioned through the managed `aq up` path: the base image
+// applies cloud-init's disable_root behaviour, so the platform's provisioned
+// key lands under `ubuntu` instead, and root's own authorized_keys carries a
+// forced-command banner ("Please login as the user \"ubuntu\" ...") rather than
+// a usable key. Hyperstack now declares `ubuntu` and reaches aq through the
+// recorded field; this fallback is what the remaining unestablished providers
+// get, and every use of it is ANNOUNCED — see warnUnknownLoginUser in
+// ssh_login_user.go. `aq ssh -user <name>` remains the manual override.
 const sshUser = "root"
 
 // sshEntry is one generated Host stanza.
@@ -68,10 +77,10 @@ type sshEntry struct {
 	Port         string
 	IdentityFile string
 	KnownHosts   string
-	// User overrides the login. Empty means sshUser (root) — the platform's
-	// default assumption, not a guarantee on every provider; see sshUser's own
-	// comment. A detached host the user leases may well log in as someone else
-	// too.
+	// User is the login this box is actually reachable as. Empty means UNKNOWN
+	// — nobody recorded one — and renders as sshUser, the announced last-resort
+	// fallback; see sshUser's own comment. A detached host the user leases may
+	// well log in as someone else too.
 	User string
 }
 
@@ -149,6 +158,10 @@ func entriesFor(dep api.Deployment, identityFile, knownHosts string) []sshEntry 
 			Port:         port,
 			IdentityFile: identityFile,
 			KnownHosts:   knownHosts,
+			// The login user the platform recorded for THIS box, not an
+			// assumption. Empty when none was recorded, which renderStanzas
+			// falls back to sshUser for and the ssh/up paths announce.
+			User: dep.SSHLoginUser,
 		})
 	}
 	return entries

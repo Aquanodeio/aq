@@ -553,6 +553,13 @@ func printConnection(out io.Writer, dep api.Deployment) {
 	fmt.Fprintf(out, "\n  IP:    %s\n", host)
 	fmt.Fprintf(out, "  SSH:   aq ssh %s\n", sshTarget(dep))
 	fmt.Fprintf(out, "  Alias: %s   (works with ssh, scp, rsync, VSCode Remote-SSH)\n", aliasFor(dep.Name, dep.ID))
+	// `SSH: aq ssh <name>` above is a promise that the command works first try.
+	// It only does if aq knows which account the key landed on — so when nobody
+	// recorded one, say so right here rather than letting the user find out
+	// from a refused connection. Silent when the login user is known.
+	if note := loginUserNote(dep); note != "" {
+		fmt.Fprintf(out, "  Note:  %s\n", note)
+	}
 }
 
 // sshTarget is the shortest thing the user can type to reach this box.
