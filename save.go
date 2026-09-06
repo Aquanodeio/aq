@@ -37,7 +37,7 @@ type snapshotOptions struct {
 // flag; parseInterspersed is the shared workaround every verb here uses.
 func parseSnapshotArgs(args []string) (snapshotArgs, error) {
 	fs := flag.NewFlagSet("save", flag.ContinueOnError)
-	name := fs.String("name", "", "name for this setup's save lineage (default: the setup's own name; only matters on the first save)")
+	name := fs.String("name", "", "name for this pod's save lineage (default: the pod's own name; only matters on the first save)")
 	path := fs.String("path", "/workspace", "directory to capture")
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -62,7 +62,7 @@ func snapshot(args []string) error {
 		return err
 	}
 	if parsed.target == "" {
-		return fmt.Errorf("a setup is required, usage: aq save <setup>")
+		return fmt.Errorf("a pod is required, usage: aq save <pod>")
 	}
 
 	// Detached: the box captures itself into its own bucket via `ogre snapshot`.
@@ -171,7 +171,7 @@ func lineageNameForFirstSave(client *api.Client, setupID string) string {
 		return defaultName
 	}
 
-	fmt.Fprintf(os.Stdout, "Name this setup's save lineage [%s]: ", defaultName)
+	fmt.Fprintf(os.Stdout, "Name this pod's save lineage [%s]: ", defaultName)
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	line = strings.TrimSpace(line)
 	if line == "" {

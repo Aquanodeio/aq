@@ -93,7 +93,7 @@ type jobCreateOptions struct {
 // OPTIONAL budget over billed time for the calendar month.
 func jobCreate(args []string) error {
 	fs := flag.NewFlagSet("job create", flag.ContinueOnError)
-	name := fs.String("name", "", "job name (default: the setup's own name)")
+	name := fs.String("name", "", "job name (default: the pod's own name)")
 	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this job may run (required)")
 	monthlyCapCents := fs.Int64("monthly-cap-cents", -1, "optional monthly budget in cents; new runs stop once the month's spend reaches it")
 	on := fs.String("on", "", "run this job on a host you already attached with `aq attach`, instead of renting hardware")
@@ -103,12 +103,12 @@ func jobCreate(args []string) error {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return errors.New("usage: aq job create <setup> <version> --max-instances <n> [--monthly-cap-cents <n>] [--on <alias>]")
+		return errors.New("usage: aq job create <pod> <version> --max-instances <n> [--monthly-cap-cents <n>] [--on <alias>]")
 	}
 	setupTarget := positional[0]
 	version, err := strconv.Atoi(positional[1])
 	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
+		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq pods` (e.g. 3 for v3)", positional[1])
 	}
 	if *maxInstances <= 0 {
 		return errors.New("--max-instances is required and must be a positive number: a job hands out a GPU budget, so it never defaults to unbounded")
@@ -252,7 +252,7 @@ func jobPoint(args []string) error {
 	target := positional[0]
 	version, err := strconv.Atoi(positional[1])
 	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
+		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq pods` (e.g. 3 for v3)", positional[1])
 	}
 
 	cred, err := requireLogin()

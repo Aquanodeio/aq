@@ -22,7 +22,7 @@ import (
 // treating the input as, or resolving it via, a deployment id.
 func resolveSetupID(client *api.Client, target string) (string, error) {
 	if target == "" {
-		return "", errors.New("a setup is required")
+		return "", errors.New("a pod is required")
 	}
 	if looksLikeUUID(target) {
 		return target, nil
@@ -30,7 +30,7 @@ func resolveSetupID(client *api.Client, target string) (string, error) {
 
 	setups, err := client.ListSetups()
 	if err != nil {
-		return "", fmt.Errorf("could not list setups: %w", err)
+		return "", fmt.Errorf("could not list pods: %w", err)
 	}
 
 	var matches []api.Setup
@@ -41,11 +41,11 @@ func resolveSetupID(client *api.Client, target string) (string, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("no setup named %q", target)
+		return "", fmt.Errorf("no pod named %q", target)
 	case 1:
 		return matches[0].ID, nil
 	default:
-		return "", fmt.Errorf("%q matches %d setups; pass the setup id instead", target, len(matches))
+		return "", fmt.Errorf("%q matches %d pods; pass the pod id instead", target, len(matches))
 	}
 }
 
@@ -56,14 +56,14 @@ func resolveSetupID(client *api.Client, target string) (string, error) {
 func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 	setups, err := client.ListSetups()
 	if err != nil {
-		return nil, fmt.Errorf("could not list setups: %w", err)
+		return nil, fmt.Errorf("could not list pods: %w", err)
 	}
 	for i := range setups {
 		if setups[i].ID == setupID {
 			return &setups[i], nil
 		}
 	}
-	return nil, fmt.Errorf("setup %q not found", setupID)
+	return nil, fmt.Errorf("pod %q not found", setupID)
 }
 
 // setupIDForDeployment maps a deployment id to the setup whose lease it
@@ -73,12 +73,12 @@ func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 func setupIDForDeployment(client *api.Client, deploymentID int) (string, error) {
 	setups, err := client.ListSetups()
 	if err != nil {
-		return "", fmt.Errorf("could not list setups: %w", err)
+		return "", fmt.Errorf("could not list pods: %w", err)
 	}
 	for _, s := range setups {
 		if s.LeaseDeploymentID != nil && *s.LeaseDeploymentID == deploymentID {
 			return s.ID, nil
 		}
 	}
-	return "", fmt.Errorf("no setup found holding deployment #%d's lease, cannot save before terminating", deploymentID)
+	return "", fmt.Errorf("no pod found holding deployment #%d's lease, cannot save before terminating", deploymentID)
 }

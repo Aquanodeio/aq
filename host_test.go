@@ -170,7 +170,7 @@ func TestHostAddDryRunWritesNothing(t *testing.T) {
 	}
 
 	text := out.String()
-	for _, want := range []string{"Would:", "Would NOT: contact the Aquanode API", "one box runs one setup", "--dry-run: nothing was installed"} {
+	for _, want := range []string{"Would:", "Would NOT: contact the Aquanode API", "one box runs one pod", "--dry-run: nothing was installed"} {
 		if !strings.Contains(strings.ToLower(text), strings.ToLower(want)) {
 			t.Errorf("dry-run output is missing %q:\n%s", want, text)
 		}

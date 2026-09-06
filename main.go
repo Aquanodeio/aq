@@ -133,8 +133,8 @@ func main() {
 		run(forceDetach(args))
 	case "sync-now":
 		run(syncNow(args))
-	case "setups":
-		run(setups(args))
+	case "pods":
+		run(pods(args))
 	case "idle":
 		run(idle(args))
 	// `job` is a command GROUP, not three top-level verbs, and that is a
@@ -181,30 +181,30 @@ Usage:
 Commands:
   gpus          Browse live GPU offers across every provider (no account needed)
   login         Pair this CLI to your Aquanode account (device login)
-  up            Rent the cheapest matching GPU and bring up a working setup
+  up            Rent the cheapest matching GPU and bring up a working pod
   deploy        Restore a save onto a freshly-rented Aquanode GPU box
-  import        Capture a box you rent elsewhere into a new Aquanode setup
+  import        Capture a box you rent elsewhere into a new Aquanode pod
   host          Register a box you own or lease, and drive it with no account
   attach        Adopt a registered box into your Aquanode control plane
   release       Hand an attached box back. The box keeps running
-  ssh           Open a shell on a setup (managed key + ~/.ssh/config alias)
+  ssh           Open a shell on a pod (managed key + ~/.ssh/config alias)
   push          Send your working directory to a box you already rented
   run           Push the working directory, then run a command on the box
   logs          Read a detached run's output
   ls            List your deployments: what is running and what it costs
-  status        Show a setup's status, HTTPS URL, and credentials
-  save          Save a setup's current state into its named lineage
-  share         Get a link to one saved version of a setup
-  fork          Turn a share link into a new setup in your own library
+  status        Show a pod's status, HTTPS URL, and credentials
+  save          Save a pod's current state into its named lineage
+  share         Get a link to one saved version of a pod
+  fork          Turn a share link into a new pod in your own library
   edit-version  Edit a saved version's label, description, or visibility
-  pause         Save a setup, then release its machine (resume later with up)
-  autopause     Turn a setup's auto-pause-when-idle preference on or off
-  force-detach  Break a setup's lease even mid-sync (can lose unsynced work)
-  sync-now      Force a setup's sync tick right now
-  setups        List the setups you own
+  pause         Save a pod, then release its machine (resume later with up)
+  autopause     Turn a pod's auto-pause-when-idle preference on or off
+  force-detach  Break a pod's lease even mid-sync (can lose unsynced work)
+  sync-now      Force a pod's sync tick right now
+  pods          List the pods you own
   idle          View or change a DEPLOYMENT's idle-auto-pause thresholds
   job           Create, run, inspect and cancel GPU jobs
-  down          Tear down a setup (stop the rented GPU box)
+  down          Tear down a pod (stop the rented GPU box)
   logout        Remove the stored CLI credential
   whoami        Show the current login state
   version       Print the aq version
@@ -258,15 +258,15 @@ deploy flags:
 
 import:
   Run ON a box you already rent somewhere else (RunPod, Vast, your own
-  hardware). Captures its environment into a new Aquanode setup, so it can
+  hardware). Captures its environment into a new Aquanode pod, so it can
   be launched on any provider we support. Survey-first: aq shows exactly what
   it will and won't capture, and asks before anything is uploaded.
 
-  aq import                 Survey, confirm, capture, and register the setup
+  aq import                 Survey, confirm, capture, and register the pod
   aq import --dry-run       Survey and print the plan; capture/upload nothing
   aq import --include <path>  Add a path to capture (repeatable)
   aq import --exclude <path>  Drop a detected path from capture (repeatable)
-  aq import --name <name>   Name the resulting setup (default: from hostname)
+  aq import --name <name>   Name the resulting pod (default: from hostname)
   aq import --yes           Skip the interactive confirmation
   aq import --launch [--gpu <model>] [--max-price <n>] [--provider <name>]
                              After import, rent a GPU and restore onto it
@@ -274,14 +274,14 @@ import:
                              template, suggested hardware, compatibility
                              warnings, before anything is rented. Defaults
                              the GPU to the one observed on the source box.
-  aq import --resume <setup-id>
+  aq import --resume <pod-id>
                              Resume an import that started but didn't finish
                              (e.g. the upload credentials expired mid-capture).
                              Re-mints write credentials and re-runs the
                              capture into the exact same storage location:
                              restic dedups what already landed, so this never
                              restarts from zero and never bills a second,
-                             parallel setup for the same box.
+                             parallel pod for the same box.
 
 host / attach / release (boxes we never provisioned):
   Two modes for a machine you already own or lease, sharing one artifact format.
@@ -349,8 +349,8 @@ host / attach / release (boxes we never provisioned):
   aq refuses to write to any file it could not first read. Your existing
   authorized_keys is never replaced.
 
-  One attached box is ONE deployment running ONE setup at a time. Aquanode
-  cannot partition a multi-GPU box into several independent setups: the whole
+  One attached box is ONE deployment running ONE pod at a time. Aquanode
+  cannot partition a multi-GPU box into several independent pods: the whole
   box attaches as a single target. That does not exist in either mode.
 
   aq release <alias>         Hand an attached box back: Aquanode revokes its
@@ -359,11 +359,11 @@ host / attach / release (boxes we never provisioned):
                              this is not a terminate. (--keep-host keeps the
                              box in your registry for detached use.)
 
-  Detached does: capture, restore, setups, run/logs/ssh/sync, ogre up
+  Detached does: capture, restore, pods, run/logs/ssh/sync, ogre up
   templates, BYO bucket.
   Attached adds: teams and RBAC, share/fork, the console, jobs and
   aq job run, cross-provider burst, the marketplace.
-  Neither does: splitting one box across several independent setups.
+  Neither does: splitting one box across several independent pods.
 
 ssh:
   aq ssh                     Open a shell on your only live deployment
@@ -432,7 +432,7 @@ ls / logs:
 
 idle:
   A PER-DEPLOYMENT idle-auto-pause policy (warn/pause thresholds, GPU idle %).
-  It always outranks a setup's own "aq autopause" preference below, see
+  It always outranks a pod's own "aq autopause" preference below, see
   "autopause" for how the two differ.
 
   aq idle status <name|id>   Show the deployment's idle-auto-pause policy and
@@ -450,11 +450,11 @@ job:
   "aq logs" already tails a box; those are daily commands, and "aq run mybox"
   and "aq run myjob" are the same string, so nothing could tell them apart.
 
-  aq job create <setup> <version>
-                              Make a setup version runnable as a job.
+  aq job create <pod> <version>
+                              Make a pod version runnable as a job.
                               Requires --max-instances: a job hands out a GPU
                               budget, so it never defaults to unbounded.
-                              (--name <name>, default: the setup's own name)
+                              (--name <name>, default: the pod's own name)
                               --on <alias>  Pin it to a box you already
                               attached (aq attach <alias>) instead of
                               renting hardware; that box bills nothing.
@@ -481,13 +481,13 @@ job:
                               released.
 
 status / save / share / fork / edit-version / pause / autopause /
-force-detach / sync-now / setups / down:
-  aq status <name|id>        Re-check a provisioning or running setup
+force-detach / sync-now / pods / down:
+  aq status <name|id>        Re-check a provisioning or running pod
                              (add --show-secrets to print the password)
-  aq save <name|id>          Save the setup's current state into its named
+  aq save <name|id>          Save the pod's current state into its named
                              save lineage. The first save on a
-                             setup asks for a lineage name once (Enter
-                             accepts the default, which is the setup's own
+                             pod asks for a lineage name once (Enter
+                             accepts the default, which is the pod's own
                              name; a non-interactive shell just uses the
                              default). Every later save reuses that lineage
                              silently and increments its version (v1, v2,
@@ -498,7 +498,7 @@ force-detach / sync-now / setups / down:
                              whatever the lineage's head becomes later.
   aq fork <token|link>       Turn a link from "aq share" (someone else's,
                              or your own team's own share of a team you've
-                             since left) into a brand new setup in your own
+                             since left) into a brand new pod in your own
                              library. Registers ownership only. It does
                              not itself boot any hardware.
                              (--name <name>, default: derived from the source)
@@ -509,33 +509,33 @@ force-detach / sync-now / setups / down:
                              a label/description back to empty.
                              (--label <text>, --description <text>,
                              --visibility private|team|public)
-  aq pause <name|id>         Save the setup, then release its machine.
+  aq pause <name|id>         Save the pod, then release its machine.
                              Pick it back up with "aq deploy --snapshot <id>"
                              (the paused deployment's id, which pause prints).
   aq autopause <name|id> on|off
-                             Turn this SETUP's auto-pause-when-idle
+                             Turn this POD's auto-pause-when-idle
                              preference on or off, using the platform's
                              default idle thresholds. This is NOT "aq idle"
                              above: idle policy is a per-DEPLOYMENT threshold
                              config that always outranks this, and this
                              carries no thresholds of its own: use "aq idle
                              set" to change WHEN idle counts as idle, and
-                             this to turn auto-pause on setups on/off at all.
+                             this to turn auto-pause on pods on/off at all.
   aq force-detach <name|id> --yes
-                             Break the setup's lease even mid-sync, for
+                             Break the pod's lease even mid-sync, for
                              when a deployment died holding it and it needs
                              freeing before anything else can attach.
                              --yes acknowledges work since the last
                              completed sync may be lost; there is no
                              silent form of this command.
   aq sync-now <name|id>      Force a sync tick right now instead of waiting
-                             for the setup's own schedule, e.g. right
+                             for the pod's own schedule, e.g. right
                              before "aq share"/"aq fork" so the link
-                             reflects your latest work. Requires the setup
+                             reflects your latest work. Requires the pod
                              to be attached to a running deployment.
-  aq setups                  List the setups you own: name, whether it's
+  aq pods                    List the pods you own: name, whether it's
                              running, latest saved version, and size.
-  aq down <name|id>          Tear the setup down and stop billing
+  aq down <name|id>          Tear the pod down and stop billing
                              (--save saves first; terminate is skipped
                              if the save fails)
 

@@ -42,7 +42,7 @@ func pause(args []string) error {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return fmt.Errorf("a setup is required, usage: aq pause <setup>")
+		return fmt.Errorf("a pod is required, usage: aq pause <pod>")
 	}
 	target := positional[0]
 

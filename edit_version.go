@@ -42,12 +42,12 @@ func editVersion(args []string) error {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return errors.New("usage: aq edit-version <setup> <version> [--label ...] [--description ...] [--visibility private|team|public]")
+		return errors.New("usage: aq edit-version <pod> <version> [--label ...] [--description ...] [--visibility private|team|public]")
 	}
 	target := positional[0]
 	version, err := strconv.Atoi(positional[1])
 	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save`/`aq setups` (e.g. 3 for v3)", positional[1])
+		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save`/`aq pods` (e.g. 3 for v3)", positional[1])
 	}
 
 	if *visibility != "" && *visibility != "private" && *visibility != "team" && *visibility != "public" {

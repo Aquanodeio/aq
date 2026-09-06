@@ -233,7 +233,7 @@ func TestAttachDryRunCreatesNothingAndStatesTheLimit(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"one box is one deployment running one setup",
+		"one box is one deployment running one pod",
 		"cannot",
 		"partition",
 		"# BEGIN aquanode",

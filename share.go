@@ -33,12 +33,12 @@ func share(args []string) error {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return fmt.Errorf("usage: aq share <setup> <version>")
+		return fmt.Errorf("usage: aq share <pod> <version>")
 	}
 	target := positional[0]
 	version, err := strconv.Atoi(positional[1])
 	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq setups` (e.g. 3 for v3)", positional[1])
+		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq pods` (e.g. 3 for v3)", positional[1])
 	}
 
 	cred, err := requireLogin()

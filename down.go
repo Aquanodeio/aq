@@ -38,7 +38,7 @@ type downOptions struct {
 // save to restore, not an action.
 func down(args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
-	snap := fs.Bool("save", false, "save your setup before terminating")
+	snap := fs.Bool("save", false, "save your pod before terminating")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -103,7 +103,7 @@ func downWithCheckpoint(
 	}
 
 	if opts.snapshot {
-		fmt.Fprintln(out, "Saving your setup before terminating…")
+		fmt.Fprintln(out, "Saving your pod before terminating…")
 		res, err := checkpoint(snapshotOptions{
 			cred:    opts.cred,
 			setupID: opts.setupID,
@@ -128,7 +128,7 @@ func downWithCheckpoint(
 		// aquanode-backend orchestrator/src/configs/idle.config.ts). The
 		// defect this fixes was the silence, not the default.
 		fmt.Fprintln(out, "Terminating without saving: nothing on this box is kept, and it cannot be resumed.")
-		fmt.Fprintf(out, "To save your setup before stopping the box, use: aq down --save %s\n", opts.target)
+		fmt.Fprintf(out, "To save your pod before stopping the box, use: aq down --save %s\n", opts.target)
 	}
 
 	return terminate(opts)

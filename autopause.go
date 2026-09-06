@@ -28,7 +28,7 @@ func autopause(args []string) error {
 		return err
 	}
 	if len(positional) < 2 || positional[0] == "" {
-		return errors.New("usage: aq autopause <setup> on|off")
+		return errors.New("usage: aq autopause <pod> on|off")
 	}
 	target := positional[0]
 
@@ -80,7 +80,7 @@ func runAutopause(opts autopauseOptions) error {
 
 	res, err := client.SetSetupAutopause(setupID, opts.enabled)
 	if err != nil {
-		return fmt.Errorf("could not update auto-pause for setup %q: %w", opts.target, err)
+		return fmt.Errorf("could not update auto-pause for pod %q: %w", opts.target, err)
 	}
 
 	// AutopauseEnabled is three-state on the wire (nil = unset, follows the

@@ -35,7 +35,7 @@ func forceDetach(args []string) error {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("a setup is required, usage: aq force-detach <setup> --yes")
+		return errors.New("a pod is required, usage: aq force-detach <pod> --yes")
 	}
 	if !*yes {
 		return errors.New("force-detach can lose work written since the last completed sync, rerun with --yes to confirm")

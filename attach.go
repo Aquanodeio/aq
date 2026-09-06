@@ -385,7 +385,7 @@ func runAttach(opts attachOptions) error {
 				"  reason: %s\n"+
 				"  Deployment #%d stays PROVISIONING and the probe failure is recorded; release it with `aq release %s`.\n"+
 				"  Open inbound TCP %d from the internet and re-run, or stay in detached mode: it needs no inbound connectivity at all\n"+
-				"  and keeps capture, restore, setups, run, logs, ssh and sync exactly as they are.\n"+
+				"  and keeps capture, restore, pods, run, logs, ssh and sync exactly as they are.\n"+
 				"  If this box is on a container-pool marketplace listing (simplepod, vast.ai and similar), this is\n"+
 				"  likely why: attach needs the port ogre listens on and the port we dial to be the SAME port, and a\n"+
 				"  port-mapped box remaps them, so port %d reaching this box from the internet is never possible no\n"+
@@ -409,7 +409,7 @@ func runAttach(opts attachOptions) error {
 	fmt.Fprintf(opts.out, "  Aquanode completed a round-trip to %s:%d.\n", publicHost, port)
 	printTerminalVerdict(opts.out, res, port)
 	fmt.Fprintf(opts.out, "  The box bills nothing: we did not rent it and never will.\n")
-	fmt.Fprintf(opts.out, "  Run a setup on it with `aq job create <setup> <version> --on %s`: it bills nothing.\n", h.Alias)
+	fmt.Fprintf(opts.out, "  Run a pod on it with `aq job create <pod> <version> --on %s`: it bills nothing.\n", h.Alias)
 	fmt.Fprintf(opts.out, "  Hand it back any time with `aq release %s`: that revokes our credentials and drops the row.\n", h.Alias)
 	fmt.Fprintf(opts.out, "  The box keeps running, and no provider is ever contacted.\n")
 	return nil
@@ -493,8 +493,8 @@ func printAttachPlan(out io.Writer, h config.Host, pre attachPreflight, publicHo
 
 	// Section K, stated up front rather than discovered later by whoever paid
 	// for eight GPUs and expected to hand three of them to three people.
-	fmt.Fprintln(out, "\nOne box is one deployment running one setup at a time. Aquanode cannot")
-	fmt.Fprintln(out, "partition a multi-GPU box into several independent setups: the whole box")
+	fmt.Fprintln(out, "\nOne box is one deployment running one pod at a time. Aquanode cannot")
+	fmt.Fprintln(out, "partition a multi-GPU box into several independent pods: the whole box")
 	fmt.Fprintln(out, "attaches as a single target. That capability does not exist in either mode.")
 }
 

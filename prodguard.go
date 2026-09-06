@@ -46,7 +46,7 @@ import (
 var billableCommands = map[string]string{
 	"up":     "rent a GPU box",
 	"deploy": "rent a GPU box to restore a save onto",
-	"import": "launch the imported setup onto a rented box",
+	"import": "launch the imported pod onto a rented box",
 }
 
 // nonMutatingCommands are the verbs that change nothing on the account, so
@@ -64,7 +64,7 @@ var nonMutatingCommands = map[string]bool{
 	"ls":     true,
 	"status": true,
 	"logs":   true,
-	"setups": true,
+	"pods":   true,
 	"whoami": true,
 	// `calls` is GONE — it was a top-level verb and is now `aq job runs`.
 	// `job` is deliberately NOT listed in its place: this allowlist keys on the

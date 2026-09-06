@@ -28,7 +28,7 @@ type forkOptions struct {
 // version is refused server-side.
 func fork(args []string) error {
 	fs := flag.NewFlagSet("fork", flag.ContinueOnError)
-	name := fs.String("name", "", "name for the forked setup (default: derived from the source)")
+	name := fs.String("name", "", "name for the forked pod (default: derived from the source)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -67,7 +67,7 @@ func extractShareToken(raw string) string {
 // Forking only registers ownership of the lineage — it does not itself boot
 // any hardware, and aq has no verb yet to install/run a version onto a fresh
 // box (that flow is console-only today: install-preview + install). So the
-// success message points at `aq setups` to see the new entry rather than
+// success message points at `aq pods` to see the new entry rather than
 // implying `aq up`/`aq deploy` can bring it online, which they can't.
 func runFork(opts forkOptions) error {
 	out := opts.out
@@ -78,9 +78,9 @@ func runFork(opts forkOptions) error {
 	client := newControlClient(opts.cred)
 	res, err := client.ForkSetup(api.ForkSetupRequest{Token: opts.token, Name: opts.name})
 	if err != nil {
-		return fmt.Errorf("could not fork shared setup: %w", err)
+		return fmt.Errorf("could not fork shared pod: %w", err)
 	}
 
-	fmt.Fprintf(out, "✓ Forked into %q. See it with `aq setups`. aq has no install/run-version verb yet; bring it online from the console for now.\n", res.Name)
+	fmt.Fprintf(out, "✓ Forked into %q. See it with `aq pods`. aq has no install/run-version verb yet; bring it online from the console for now.\n", res.Name)
 	return nil
 }

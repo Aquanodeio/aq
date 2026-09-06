@@ -399,7 +399,7 @@ func printHostPlan(out io.Writer, h config.Host, s hostSurvey) {
 	fmt.Fprintf(out, "  • add one `%s` stanza to ~/.ssh/%s (included from your ~/.ssh/config)\n", hostAliasFor(h.Alias), managedHostsConfigName)
 	fmt.Fprintln(out, "\nWould NOT: contact the Aquanode API, change your box's ssh keys, or start any workload.")
 	fmt.Fprintln(out, "\nThe whole box is one target. Aquanode cannot split a multi-GPU box into")
-	fmt.Fprintln(out, "several independent setups: one box runs one setup at a time.")
+	fmt.Fprintln(out, "several independent pods: one box runs one pod at a time.")
 }
 
 func hostsPathForDisplay() string {

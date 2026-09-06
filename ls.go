@@ -13,7 +13,7 @@ import (
 
 // lsCmd parses `aq ls` and prints the team's deployments.
 //
-// `aq setups` answers "what have I built"; this answers "what is running and
+// `aq pods` answers "what have I built"; this answers "what is running and
 // costing me money right now" — the question you ask before walking away from
 // the terminal. Live boxes only by default, since a closed one cannot surprise
 // you on a bill.
