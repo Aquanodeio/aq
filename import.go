@@ -68,13 +68,13 @@ func importCmd(args []string) error {
 	var includes, excludes stringList
 	fs.Var(&includes, "include", "Add a path to capture (repeatable)")
 	fs.Var(&excludes, "exclude", "Drop a detected path from capture (repeatable)")
-	name := fs.String("name", "", "Name the resulting setup (default: derived from the box's hostname)")
+	name := fs.String("name", "", "Name the resulting pod (default: derived from the box's hostname)")
 	yes := fs.Bool("yes", false, "Skip the interactive confirmation")
 	launch := fs.Bool("launch", false, "After import, rent a GPU and restore onto it (billable)")
 	gpu := fs.String("gpu", "", "With --launch: filter to a GPU model (substring, e.g. \"RTX 4090\")")
 	maxPrice := fs.Float64("max-price", 0, "With --launch: only rent GPUs at or below this hourly price")
 	provider := fs.String("provider", "", "With --launch: restrict to a single provider (e.g. massecompute)")
-	resume := fs.String("resume", "", "Resume a previously started import for this setup id (re-mints credentials; restic dedups what already landed)")
+	resume := fs.String("resume", "", "Resume a previously started import for this pod id (re-mints credentials; restic dedups what already landed)")
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func runImport(opts importOptions) error {
 		return fmt.Errorf("could not start the import: %w", err)
 	}
 
-	fmt.Fprintf(opts.out, "\nCapturing and uploading to setup %s...\n", start.SetupID)
+	fmt.Fprintf(opts.out, "\nCapturing and uploading to pod %s...\n", start.SetupID)
 
 	// Credentials go through the child's environment, never argv — argv is
 	// world-readable via /proc on a multi-user box, which is exactly the
@@ -200,7 +200,7 @@ func runImport(opts importOptions) error {
 	// defaults it: a start response missing it is a hard, loud failure
 	// before a single byte moves.
 	if start.ResticBackupID == "" {
-		return fmt.Errorf("setup %s was created but the orchestrator did not return a restic_backup_id, refusing to guess where in storage to write the capture (see CONTRACT.md section G); update aq or the orchestrator, then resume with `aq import --resume %s`", start.SetupID, start.SetupID)
+		return fmt.Errorf("pod %s was created but the orchestrator did not return a restic_backup_id, refusing to guess where in storage to write the capture (see CONTRACT.md section G); update aq or the orchestrator, then resume with `aq import --resume %s`", start.SetupID, start.SetupID)
 	}
 
 	// aq keeps NO local copy of storage_prefix/restic_backup_id/restic_password/
@@ -212,7 +212,7 @@ func runImport(opts importOptions) error {
 	// POST /setups/import/credentials instead (setupImportResume below).
 	captured, err := runOgreCapture(ogrePath, start.Credentials.Endpoint, start.Credentials.Bucket, start.Credentials.Region, start.StoragePrefix, start.ResticBackupID, obs.Capture.MountPath, opts.includes, opts.excludes, env, opts.errOut)
 	if err != nil {
-		return fmt.Errorf("setup %s exists but the capture failed, resume it with `aq import --resume %s` once fixed (restic dedups what already landed): %w", start.SetupID, start.SetupID, err)
+		return fmt.Errorf("pod %s exists but the capture failed, resume it with `aq import --resume %s` once fixed (restic dedups what already landed): %w", start.SetupID, start.SetupID, err)
 	}
 
 	// 4. Register the version, synthesizing a launchable recipe from what was
@@ -226,15 +226,15 @@ func runImport(opts importOptions) error {
 		Observation:    captured.Observation,
 	})
 	if err != nil {
-		return fmt.Errorf("capture succeeded but registering the setup failed, resume with `aq import --resume %s` to retry: %w", start.SetupID, err)
+		return fmt.Errorf("capture succeeded but registering the pod failed, resume with `aq import --resume %s` to retry: %w", start.SetupID, err)
 	}
 
-	fmt.Fprintf(opts.out, "\n✓ Imported into setup %s (version %d). See it with `aq setups`.\n", complete.SetupID, complete.VersionID)
+	fmt.Fprintf(opts.out, "\n✓ Imported into pod %s (version %d). See it with `aq pods`.\n", complete.SetupID, complete.VersionID)
 	printImportWarnings(opts.out, complete.Warnings)
 
 	if opts.launch {
 		if err := launchImportedSetup(client, opts, complete.VersionID, obs); err != nil {
-			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact; launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
+			return fmt.Errorf("pod %s (version %d) was imported successfully and is intact; launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
 		}
 	}
 
@@ -344,7 +344,7 @@ func printHeldStorageCost(out io.Writer, obs api.ImportObservation) {
 			break
 		}
 	}
-	fmt.Fprintf(out, "\nOnce imported, this setup's held storage (%s%s) is billed at %s.\n", floor, formatBytes(total), heldStorageRateLabel)
+	fmt.Fprintf(out, "\nOnce imported, this pod's held storage (%s%s) is billed at %s.\n", floor, formatBytes(total), heldStorageRateLabel)
 }
 
 // printImportWarnings prints /setups/import/complete's non-blocking warnings,
@@ -375,14 +375,14 @@ func printImportWarnings(out io.Writer, warnings []string) {
 func runImportResume(client *api.Client, opts importOptions) error {
 	out := opts.out
 
-	fmt.Fprintf(out, "Resuming import for setup %s...\n", opts.resumeSetupID)
+	fmt.Fprintf(out, "Resuming import for pod %s...\n", opts.resumeSetupID)
 
 	refreshed, err := client.RefreshImportCredentials(opts.resumeSetupID)
 	if err != nil {
-		return fmt.Errorf("could not resume import for setup %s: %w", opts.resumeSetupID, err)
+		return fmt.Errorf("could not resume import for pod %s: %w", opts.resumeSetupID, err)
 	}
 	if refreshed.ResticBackupID == "" {
-		return fmt.Errorf("setup %s: the orchestrator did not return a restic_backup_id, refusing to guess where in storage to write the capture (see CONTRACT.md section G)", opts.resumeSetupID)
+		return fmt.Errorf("pod %s: the orchestrator did not return a restic_backup_id, refusing to guess where in storage to write the capture (see CONTRACT.md section G)", opts.resumeSetupID)
 	}
 
 	ogrePath := opts.ogrePath
@@ -419,15 +419,15 @@ func runImportResume(client *api.Client, opts importOptions) error {
 		Observation:    captured.Observation,
 	})
 	if err != nil {
-		return fmt.Errorf("resume capture succeeded but registering the setup failed: %w", err)
+		return fmt.Errorf("resume capture succeeded but registering the pod failed: %w", err)
 	}
 
-	fmt.Fprintf(out, "\n✓ Resumed import into setup %s (version %d). See it with `aq setups`.\n", complete.SetupID, complete.VersionID)
+	fmt.Fprintf(out, "\n✓ Resumed import into pod %s (version %d). See it with `aq pods`.\n", complete.SetupID, complete.VersionID)
 	printImportWarnings(out, complete.Warnings)
 
 	if opts.launch {
 		if err := launchImportedSetup(client, opts, complete.VersionID, captured.Observation); err != nil {
-			return fmt.Errorf("setup %s (version %d) was imported successfully and is intact; launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
+			return fmt.Errorf("pod %s (version %d) was imported successfully and is intact; launching it failed, so bring it online from the console instead: %w", complete.SetupID, complete.VersionID, err)
 		}
 	}
 
@@ -491,7 +491,7 @@ func launchImportedSetup(client *api.Client, opts importOptions, versionID int, 
 
 	ran, err := client.RunSetupVersion(versionID, api.RunSetupVersionRequest{TargetDeploymentID: installed.DeploymentID})
 	if err != nil {
-		return fmt.Errorf("deployment #%d is up but restoring the imported setup onto it failed: %w", installed.DeploymentID, err)
+		return fmt.Errorf("deployment #%d is up but restoring the imported pod onto it failed: %w", installed.DeploymentID, err)
 	}
 	fmt.Fprintf(out, "✓ %s\n", ran.Message)
 	if len(ran.Compatibility.Warnings) > 0 {

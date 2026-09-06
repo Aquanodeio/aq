@@ -8,7 +8,7 @@ package main
 // mirrors of it. Nothing links them at build time, so they move in the same
 // change or this CLI quotes a rate we do not charge.
 //
-// UNIT: per GiB (2^30) per 30-day month — the same unit `formatSetupSize`
+// UNIT: per GiB (2^30) per 30-day month — the same unit `formatPodSize`
 // renders sizes in, so `displayed size x rate` matches the invoice.
 //
 // Taking a snapshot is free and a bucket you bring yourself is never billed;
