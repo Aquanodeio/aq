@@ -6,6 +6,8 @@ package api
 // rename a field without checking that contract first, since ogre and the
 // orchestrator implement against it independently.
 
+import "net/url"
+
 // ImportObservationSchema is the only ImportObservation.Schema value this aq
 // build understands. The contract requires every consumer to reject an
 // unknown schema loudly rather than guess at a shape it was never told about.
@@ -281,13 +283,25 @@ type OgreDownloadURLResult struct {
 	ExpiresAt string `json:"expires_at"`
 	SHA256    string `json:"sha256"`
 	Version   string `json:"version"`
+	// Asset is the file the URL serves, e.g. ogre_Darwin_arm64.tar.gz. It is
+	// the wire's own statement that this is a TAR.GZ ARCHIVE for one platform
+	// rather than a bare binary — the thing nothing on this path ever said,
+	// which is why aq installed the tarball itself as the executable and every
+	// `aq import` died with `exec format error` (#970).
+	Asset string `json:"asset"`
 }
 
 // OgreDownloadURL fetches a presigned download URL for the ogre binary this
 // account's orchestrator expects, for a laptop that has no `ogre` on PATH.
-func (c *Client) OgreDownloadURL() (*OgreDownloadURLResult, error) {
+//
+// goos/goarch are the CALLER's platform (runtime.GOOS / runtime.GOARCH). The
+// server selects the matching build and answers 404 when it publishes none —
+// which the caller must surface as its own refusal, because there is no
+// runnable second choice.
+func (c *Client) OgreDownloadURL(goos, goarch string) (*OgreDownloadURLResult, error) {
 	var out OgreDownloadURLResult
-	if err := c.getJSON("/artifacts/ogre/download-url", &out); err != nil {
+	path := "/artifacts/ogre/download-url?os=" + url.QueryEscape(goos) + "&arch=" + url.QueryEscape(goarch)
+	if err := c.getJSON(path, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
+	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -729,17 +733,45 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 	}
 
 	fmt.Fprintln(out, "No `ogre` on PATH, fetching it from Aquanode...")
-	meta, err := client.OgreDownloadURL()
+	meta, err := client.OgreDownloadURL(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return "", ogreDownloadURLError(err)
 	}
 
-	if err := downloadAndVerify(meta.URL, meta.SHA256, dest); err != nil {
+	if err := downloadAndInstall(meta.URL, meta.SHA256, meta.Asset, dest); err != nil {
 		return "", fmt.Errorf("could not fetch ogre: %w", err)
+	}
+	// EXEC the thing we just installed, before anything downstream depends on
+	// it. Every cheaper check passed on the broken build: the download
+	// succeeded, the file landed, the sha256 matched — and the file was a
+	// gzip stream that `fork/exec` rejected with `exec format error` the
+	// moment aq tried to survey the box (#970). "It runs here" is the only
+	// assertion that would have caught that, so it is the one that ships.
+	if err := verifyOgreRuns(dest); err != nil {
+		return "", err
 	}
 	fmt.Fprintf(out, "Installed ogre %s to %s\n", meta.Version, dest)
 	return dest, nil
 }
+
+// verifyOgreRuns executes the installed binary's cheapest verb and requires it
+// to succeed. `ogre version` prints a line and exits 0 without a daemon, a
+// config file, GPUs or network, so it is safe to run on any laptop.
+func verifyOgreRuns(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), ogreVersionTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, path, "version")
+	outBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("installed ogre at %s does not run (%v): %s", path, err, strings.TrimSpace(string(outBytes)))
+	}
+	return nil
+}
+
+// ogreVersionTimeout bounds the post-install exec check. Generous: on macOS the
+// first run of a freshly written binary pays Gatekeeper's scan.
+const ogreVersionTimeout = 30 * time.Second
 
 // ogreDownloadURLError wraps a failed OgreDownloadURL call with a message that
 // blames the right party. A `*api.APIError` means the orchestrator answered
@@ -751,15 +783,40 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 func ogreDownloadURLError(err error) error {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
+		// 404 is the platform refusal: the orchestrator answered, positively,
+		// that no ogre build exists for this machine. It is NOT a transient
+		// failure and NOT something a retry fixes, so it gets its own exit
+		// code and says what the user can actually do. Anything else here
+		// would either loop or, worse, install some other platform's binary.
+		if apiErr.Status == http.StatusNotFound {
+			return &exitError{
+				code: exitNoOgreBuildForPlatform,
+				err: fmt.Errorf("no ogre build is published for %s/%s: %s\n"+
+					"    `aq import` needs to run `ogre` on THIS machine to survey the box.\n"+
+					"    Run it from a machine Aquanode builds ogre for, or install ogre yourself and put it on PATH",
+					runtime.GOOS, runtime.GOARCH, apiErr.Message),
+			}
+		}
 		return fmt.Errorf("Aquanode could not provide an ogre download: %s", apiErr.Message)
 	}
 	return fmt.Errorf("could not reach Aquanode to get an ogre download URL; check your network connection: %w", err)
 }
 
-// downloadAndVerify downloads url to dest, refusing to install it unless its
-// sha256 matches wantSHA256 exactly — aq must never execute an unverified
-// binary it just pulled off the network.
-func downloadAndVerify(url, wantSHA256, dest string) error {
+// downloadAndInstall downloads the ogre release ARCHIVE at url, refuses it
+// unless its sha256 matches wantSHA256 exactly, and installs the `ogre` member
+// extracted from it at dest.
+//
+// The archive/binary distinction is the whole point. What the server serves is
+// a goreleaser tar.gz (asset names it, e.g. ogre_Darwin_arm64.tar.gz) and what
+// dest must contain is the executable INSIDE it. Streaming the response body
+// straight to dest, as this did until #970, installs the gzip stream as the
+// binary: sha256 verification passes (the published checksum IS the archive's),
+// the file lands, and the first exec fails with `exec format error`.
+//
+// Verification order is deliberate: the archive is checksummed BEFORE a single
+// byte of it is decompressed, so nothing untrusted is ever fed to the tar
+// reader.
+func downloadAndInstall(url, wantSHA256, asset, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(dest), err)
 	}
@@ -794,11 +851,81 @@ func downloadAndVerify(url, wantSHA256, dest string) error {
 		return fmt.Errorf("checksum mismatch: expected %s, got %s (refusing to run an unverified binary)", wantSHA256, got)
 	}
 
-	if err := os.Chmod(tmpPath, 0o755); err != nil {
+	binPath, err := extractOgreFromTarball(tmpPath, asset)
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, dest); err != nil {
+	defer os.Remove(binPath)
+
+	if err := os.Chmod(binPath, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(binPath, dest); err != nil {
 		return fmt.Errorf("install ogre to %s: %w", dest, err)
 	}
 	return nil
+}
+
+// ogreArchiveMember is the executable's name inside every goreleaser archive
+// ogre publishes (`binary: ogre` in .goreleaser.yml).
+const ogreArchiveMember = "ogre"
+
+// extractOgreFromTarball pulls the `ogre` member out of a verified gzip tar
+// archive and returns the path of the extracted file, in the same directory as
+// the archive so the caller's rename into place stays atomic.
+//
+// Everything about an archive that does not contain exactly what we expect is a
+// refusal, not a best effort: a wrong member name, a member outside the archive
+// root, or no `ogre` at all. asset is used only to name the archive in errors.
+func extractOgreFromTarball(archivePath, asset string) (string, error) {
+	if asset == "" {
+		asset = "the ogre release archive"
+	}
+
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a gzip archive: %w", asset, err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", asset, err)
+		}
+		// Match on the base name and refuse anything with a path in it: a
+		// member called ../../something would otherwise write outside the
+		// install directory. goreleaser archives are flat.
+		if hdr.Typeflag != tar.TypeReg || filepath.Base(hdr.Name) != ogreArchiveMember || strings.Contains(hdr.Name, "/") {
+			continue
+		}
+
+		outFile, err := os.CreateTemp(filepath.Dir(archivePath), ".ogre-extract-*")
+		if err != nil {
+			return "", err
+		}
+		outPath := outFile.Name()
+		if _, err := io.Copy(outFile, tr); err != nil {
+			outFile.Close()
+			os.Remove(outPath)
+			return "", fmt.Errorf("extracting %s from %s: %w", ogreArchiveMember, asset, err)
+		}
+		if err := outFile.Close(); err != nil {
+			os.Remove(outPath)
+			return "", err
+		}
+		return outPath, nil
+	}
+
+	return "", fmt.Errorf("%s contains no %q member: refusing to install anything else from it", asset, ogreArchiveMember)
 }

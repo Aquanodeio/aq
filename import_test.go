@@ -1,14 +1,21 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -828,7 +835,7 @@ func TestOgreDownloadURLErrorBlamesNetworkOnTransportFailure(t *testing.T) {
 	srv.Close() // closed before any request: guarantees connection refused, not a real answer
 
 	client := api.New(srv.URL)
-	_, err := client.OgreDownloadURL()
+	_, err := client.OgreDownloadURL(runtime.GOOS, runtime.GOARCH)
 	if err == nil {
 		t.Fatalf("expected a transport error against a closed server, got nil")
 	}
@@ -862,4 +869,189 @@ func slicesEqualUnordered(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// --- ogre install: archive in, RUNNABLE binary out (#970) --------------------
+
+// ogreTarball builds a gzip tar archive carrying one member named `ogre` with
+// the given contents, mirroring what goreleaser publishes.
+func ogreTarball(t *testing.T, member string, body []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     member,
+		Mode:     0o755,
+		Size:     int64(len(body)),
+		Typeflag: tar.TypeReg,
+	}); err != nil {
+		t.Fatalf("tar header: %v", err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatalf("tar write: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// ogreArtifactServer serves the two calls ensureOgreBinary makes: the
+// orchestrator's download-url endpoint and the "presigned" archive itself. It
+// records the platform query it was asked for.
+func ogreArtifactServer(t *testing.T, archive []byte, asset string) (*httptest.Server, *url.Values) {
+	t.Helper()
+	sum := sha256.Sum256(archive)
+	gotQuery := &url.Values{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/artifacts/ogre/download-url", func(w http.ResponseWriter, r *http.Request) {
+		*gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":true,"data":{"url":"http://%s/archive","sha256":%q,"version":"v0.1.58-dev","asset":%q}}`,
+			r.Host, hex.EncodeToString(sum[:]), asset)
+	})
+	mux.HandleFunc("/archive", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Write(archive)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, gotQuery
+}
+
+// isolateOgreInstall points ensureOgreBinary at a scratch install dir and
+// empties PATH, so neither a real `ogre` on the operator's machine nor their
+// real ~/.local/share can affect (or be affected by) the test.
+func isolateOgreInstall(t *testing.T) string {
+	t.Helper()
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	t.Setenv("PATH", t.TempDir())
+	return filepath.Join(dataHome, "aquanode", "bin", "ogre")
+}
+
+// THE regression test for #970. It EXECS the installed artifact rather than
+// stat-ing it, because every cheaper assertion passed while the feature was
+// completely broken: aq streamed the served tar.gz to disk as `ogre`, the
+// published sha256 matched (it is the ARCHIVE's checksum), the file existed
+// and was mode 0755 — and `aq import` died with
+// `fork/exec .../ogre: exec format error` on every platform.
+//
+// The member is a shell script rather than a compiled binary so the test needs
+// no toolchain, but the property under test is the same one the bug violated:
+// what lands at dest must be the thing INSIDE the archive, and it must run.
+func TestEnsureOgreBinaryInstallsSomethingThatActuallyRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /bin/sh")
+	}
+	dest := isolateOgreInstall(t)
+
+	const script = "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'ogre v0.1.58-dev'; exit 0; fi\nexit 9\n"
+	archive := ogreTarball(t, "ogre", []byte(script))
+	srv, gotQuery := ogreArtifactServer(t, archive, "ogre_Linux_x86_64.tar.gz")
+
+	var out bytes.Buffer
+	path, err := ensureOgreBinary(api.New(srv.URL), &out)
+	if err != nil {
+		t.Fatalf("ensureOgreBinary: %v", err)
+	}
+	if path != dest {
+		t.Fatalf("installed to %q, want %q", path, dest)
+	}
+
+	// The claim: RUN it. Not "it exists", not "it is 0755".
+	ran, err := exec.Command(path, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("the installed artifact does not execute: %v (%s)", err, ran)
+	}
+	if !strings.Contains(string(ran), "ogre v0.1.58-dev") {
+		t.Fatalf("installed artifact is not the archive's ogre member, ran output: %q", ran)
+	}
+
+	// And the specific shape of the old bug: the archive itself must not be
+	// what landed.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read installed file: %v", err)
+	}
+	if len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
+		t.Fatal("the installed file is a gzip stream: aq installed the tarball as the binary again (#970)")
+	}
+
+	// The client must ask for its OWN platform, or the server cannot select.
+	if gotQuery.Get("os") != runtime.GOOS || gotQuery.Get("arch") != runtime.GOARCH {
+		t.Fatalf("download-url was asked for %s/%s, want %s/%s",
+			gotQuery.Get("os"), gotQuery.Get("arch"), runtime.GOOS, runtime.GOARCH)
+	}
+}
+
+// An installed file that cannot run is a hard failure, never a warning: the
+// alternative is what shipped, where the breakage surfaced later as a survey
+// error blaming the box.
+func TestEnsureOgreBinaryRefusesAnArtifactThatCannotRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /bin/sh")
+	}
+	isolateOgreInstall(t)
+
+	// A member that is not executable content at all.
+	archive := ogreTarball(t, "ogre", []byte{0x00, 0x01, 0x02, 0x03})
+	srv, _ := ogreArtifactServer(t, archive, "ogre_Linux_x86_64.tar.gz")
+
+	_, err := ensureOgreBinary(api.New(srv.URL), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected a refusal for an artifact that does not execute")
+	}
+	if !strings.Contains(err.Error(), "does not run") {
+		t.Fatalf("refusal must say the installed binary does not run, got: %v", err)
+	}
+}
+
+// A 404 from the download-url endpoint is the server saying, definitively,
+// that no build exists for this machine. It must surface with its own
+// documented exit code (12) and name the platform — folding it into the
+// generic exit 1 would make a permanent refusal indistinguishable from a
+// transient failure, and every scripted caller would retry it forever.
+func TestNoBuildForThisPlatformExitsWithItsOwnCode(t *testing.T) {
+	apiErr := &api.APIError{
+		Status:  http.StatusNotFound,
+		Message: "Aquanode publishes no ogre build for linux/arm64",
+	}
+	err := ogreDownloadURLError(apiErr)
+
+	var exitErr *exitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("a platform refusal must carry its own exit code, got %T: %v", err, err)
+	}
+	if exitErr.code != exitNoOgreBuildForPlatform {
+		t.Fatalf("exit code = %d, want %d", exitErr.code, exitNoOgreBuildForPlatform)
+	}
+	if exitErr.code == exitFailure {
+		t.Fatal("the platform refusal must not share the generic failure code")
+	}
+	if !strings.Contains(err.Error(), runtime.GOOS+"/"+runtime.GOARCH) {
+		t.Fatalf("the refusal must name the platform it ran on, got: %v", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "network") {
+		t.Fatalf("a 404 is an answer, not a network failure, got: %v", err)
+	}
+}
+
+// An archive that does not carry `ogre` is refused rather than half-installed:
+// there is no other member worth executing.
+func TestExtractOgreFromTarballRefusesAnArchiveWithoutOgre(t *testing.T) {
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "a.tar.gz")
+	if err := os.WriteFile(archivePath, ogreTarball(t, "README.md", []byte("hi")), 0o644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	if _, err := extractOgreFromTarball(archivePath, "ogre_Darwin_arm64.tar.gz"); err == nil {
+		t.Fatal("expected a refusal for an archive with no ogre member")
+	} else if !strings.Contains(err.Error(), "ogre_Darwin_arm64.tar.gz") {
+		t.Fatalf("refusal must name the archive, got: %v", err)
+	}
 }
