@@ -11,6 +11,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -160,11 +161,39 @@ func main() {
 	}
 }
 
-// run reports a command error to stderr and exits non-zero.
+// Exit codes. 1 is the catch-all for "the command failed"; a code above it is
+// a SPECIFIC, documented refusal a script can branch on. Give a refusal its own
+// code rather than folding it into 1: a caller that cannot distinguish "no
+// build exists for your machine, and never will" from "the network blipped"
+// retries forever.
+//
+//	1   command failed
+//	12  no ogre build is published for this platform (`aq import`)
+const (
+	exitFailure                = 1
+	exitNoOgreBuildForPlatform = 12
+)
+
+// exitError carries a specific exit code out of a command. Anything that does
+// not wrap one exits exitFailure.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string { return e.err.Error() }
+func (e *exitError) Unwrap() error { return e.err }
+
+// run reports a command error to stderr and exits non-zero, with the error's
+// own documented code when it carries one.
 func run(err error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aq: %v\n", err)
-		os.Exit(1)
+		var exitErr *exitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.code)
+		}
+		os.Exit(exitFailure)
 	}
 }
 
@@ -551,6 +580,12 @@ Environment:
                   hardware on a non-local host from a script or other
                   non-interactive shell. Same effect as passing --prod.
                   Typing at a terminal needs neither.
+
+Exit codes:
+  1               The command failed
+  12              "aq import": Aquanode publishes no ogre build for this
+                  machine's OS/architecture, so aq cannot survey the box from
+                  here. Retrying will not help
 `
 
 func usage() {
