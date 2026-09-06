@@ -180,21 +180,23 @@ func lineageNameForFirstSave(client *api.Client, setupID string) string {
 	return line
 }
 
-// setupDisplayName fetches a setup's own name (via GET /setups — there is no
-// single-setup endpoint) to default its save-lineage name to. A failed
-// lookup must never abort the save — it falls back to a generic label
-// instead.
+// setupDisplayName fetches a pod's own name (the wire route is still
+// GET /setups, and there is no single-pod endpoint) to default its
+// save-lineage name to. A failed lookup must never abort the save — it falls
+// back to a generic label instead.
 func setupDisplayName(client *api.Client, setupID string) string {
 	setup, err := findSetup(client, setupID)
 	if err != nil || setup.Name == "" {
-		return fmt.Sprintf("setup-%s", setupID)
+		return fmt.Sprintf("pod-%s", setupID)
 	}
 	return setup.Name
 }
 
-// namedLineagesPath is aq's local record of which setups it has already
+// namedLineagesPath is aq's local record of which pods it has already
 // asked (or defaulted) a save-lineage name for, so `aq save` only prompts
-// once per setup even across separate CLI invocations. This is a
+// once per pod even across separate CLI invocations. The file name keeps its
+// old spelling: it is an on-disk cache key, and renaming it would re-prompt
+// every existing user once for no benefit. This is a
 // best-effort client-side cache, not the source of truth — the server is
 // free to already have a lineage bound even if this file doesn't know it
 // (e.g. a fresh AQ_CONFIG_DIR, or a save made from another machine); the
