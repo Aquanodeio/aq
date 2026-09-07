@@ -86,11 +86,13 @@ type Placement struct {
 	// request echo.
 	Provider string `json:"provider"`
 	GPUModel string `json:"gpuModel"`
-	// MovedFrom/MovedFromGpuModel/MovedReason are non-empty ONLY when the
-	// derived placement matched no capacity and the resume fell back to open
-	// ranking. A JSON `null` for any of these three decodes to "" and is
-	// never distinguished from an absent field -- callers branch on
-	// MovedFrom being non-empty, not on the other two alone.
+	// MovedFrom/MovedFromGpuModel/MovedReason describe a derived constraint
+	// that had no capacity and was dropped. Derivation is per field, so only
+	// the field that was actually DERIVED is reported: a caller who pinned
+	// -provider and lost only the derived GPU sees MovedFrom empty and
+	// MovedFromGpuModel set. A JSON `null` decodes to "" and is never
+	// distinguished from an absent field, so callers branch on MovedReason,
+	// the one field set for every kind of move.
 	MovedFrom         string `json:"movedFrom"`
 	MovedFromGpuModel string `json:"movedFromGpuModel"`
 	MovedReason       string `json:"movedReason"`

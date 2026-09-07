@@ -618,6 +618,48 @@ func TestRunDeployPrintsPlacementMoved(t *testing.T) {
 	}
 }
 
+// A GPU-only move: the caller pinned -provider, so only the DERIVED GPU gave
+// way. MovedFrom is empty here, which is exactly the case a MovedFrom-only
+// branch would print nothing for.
+func TestRunDeployPrintsPlacementMovedGpuOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+	server := &deployServer{
+		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
+		statusReadyAt: 1,
+		placement: map[string]any{
+			"source": "derived", "provider": "massecompute", "gpuModel": "RTX 4090",
+			"movedFrom": nil, "movedFromGpuModel": "A6000",
+			"movedReason": "no A6000 is available on massecompute right now",
+		},
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runDeploy(deployOptions{
+		cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+		snapshot:     "3566",
+		provider:     "massecompute",
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runDeploy error: %v", err)
+	}
+	wantLine1 := "! Deployment 3566 ran on a A6000, but no A6000 is available on massecompute right now.\n"
+	wantLine2 := "  Placing on massecompute (RTX 4090) instead. Pass -gpu A6000 to insist on it.\n"
+	if !strings.Contains(errOut.String(), wantLine1) || !strings.Contains(errOut.String(), wantLine2) {
+		t.Errorf("expected the GPU-only moved warning on stderr; got:\n%s", errOut.String())
+	}
+	if strings.Contains(out.String(), "Placing on") {
+		t.Errorf("a moved placement must not print the held-placement line on stdout; got:\n%s", out.String())
+	}
+}
+
 func TestRunDeployPrintsNothingExtraWithoutAPlacementOrWhenExplicit(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeFakePubKey(t, "ssh-ed25519 AAAA x")

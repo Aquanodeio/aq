@@ -191,15 +191,29 @@ func runDeploy(opts deployOptions) error {
 // printPlacement reports where a resume actually landed (#1003), once the
 // response is in hand. A nil Placement (an older backend, or `aq up`'s
 // request, which never sets one) prints nothing extra -- never an error.
-// `explicit`/`open` also print nothing: the caller either asked for that
-// placement directly, or there was nothing to derive in the first place.
+// `explicit`/`open` also print nothing: the caller pinned every placement
+// filter itself, or there was nothing to derive in the first place. A resume
+// that pinned only ONE of them still reports `derived`, because the other was
+// filled in from the source deployment and the user never typed it.
 func printPlacement(out, errOut io.Writer, snapshotSource string, p *api.Placement) {
 	if p == nil || p.Source != "derived" {
 		return
 	}
-	if p.MovedFrom != "" {
-		fmt.Fprintf(errOut, "! Deployment %s ran on %s (%s), but %s.\n", snapshotSource, p.MovedFrom, p.MovedFromGpuModel, p.MovedReason)
-		fmt.Fprintf(errOut, "  Placing on %s (%s) instead. Pass -provider %s to insist on it.\n", p.Provider, p.GPUModel, p.MovedFrom)
+	// MovedReason is the single trigger. Derivation is per field, so either
+	// the provider or the GPU alone can be the one that gave way, and
+	// branching on MovedFrom by itself would stay silent on a GPU-only move.
+	if p.MovedReason != "" {
+		switch {
+		case p.MovedFrom != "" && p.MovedFromGpuModel != "":
+			fmt.Fprintf(errOut, "! Deployment %s ran on %s (%s), but %s.\n", snapshotSource, p.MovedFrom, p.MovedFromGpuModel, p.MovedReason)
+			fmt.Fprintf(errOut, "  Placing on %s (%s) instead. Pass -provider %s to insist on it.\n", p.Provider, p.GPUModel, p.MovedFrom)
+		case p.MovedFrom != "":
+			fmt.Fprintf(errOut, "! Deployment %s ran on %s, but %s.\n", snapshotSource, p.MovedFrom, p.MovedReason)
+			fmt.Fprintf(errOut, "  Placing on %s (%s) instead. Pass -provider %s to insist on it.\n", p.Provider, p.GPUModel, p.MovedFrom)
+		default:
+			fmt.Fprintf(errOut, "! Deployment %s ran on a %s, but %s.\n", snapshotSource, p.MovedFromGpuModel, p.MovedReason)
+			fmt.Fprintf(errOut, "  Placing on %s (%s) instead. Pass -gpu %s to insist on it.\n", p.Provider, p.GPUModel, p.MovedFromGpuModel)
+		}
 		return
 	}
 	fmt.Fprintf(out, "Placing on %s (%s), same as deployment %s.\n", p.Provider, p.GPUModel, snapshotSource)
