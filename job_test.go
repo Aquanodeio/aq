@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
@@ -346,5 +348,57 @@ func TestDoJobRunWithoutFollowNeverTailsTheLog(t *testing.T) {
 	}
 	if *logsHit {
 		t.Fatal("without --follow the log endpoint must never be hit")
+	}
+}
+
+// TestJobLogsWarnsOnceAboutADroppedTail: `truncated` is a LIVE, per-read flag
+// on the box — once a log has rotated past its retained window it stays true
+// for every remaining poll, not just the poll that crossed the rollover. An
+// unguarded print therefore interleaved this warning into the user's log every
+// two seconds for the rest of the run. Said once, like `unreachable` above it.
+func TestJobLogsWarnsOnceAboutADroppedTail(t *testing.T) {
+	polls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "job-1", "name": "myjob"}})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs", func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		// The box clamped the follower forward to the oldest retained byte,
+		// so nextOffset is the SERVER's, never offset+len(chunk).
+		writeData(w, map[string]any{
+			"chunk":      fmt.Sprintf("line %d\n", polls),
+			"offset":     1000 * polls,
+			"nextOffset": 1000*polls + 7,
+			"size":       9000,
+			"truncated":  true,
+			"source":     "live",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runJobLogs(jobLogsOptions{
+		cred:     &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: srv.URL},
+		jobRef:   "myjob",
+		runID:    "run-1",
+		follow:   true,
+		maxPolls: 3,
+		out:      &out,
+		errOut:   &errOut,
+		sleep:    func(time.Duration) {},
+	})
+	if err != nil {
+		t.Fatalf("runJobLogs: %v", err)
+	}
+	if polls != 3 {
+		t.Fatalf("polled %d times, want 3", polls)
+	}
+	if got := strings.Count(errOut.String(), "retained tail"); got != 1 {
+		t.Fatalf("the dropped-tail warning was printed %d times across %d polls, want exactly 1:\n%s", got, polls, errOut.String())
+	}
+	if out.String() != "line 1\nline 2\nline 3\n" {
+		t.Fatalf("the log itself must be unaffected, got %q", out.String())
 	}
 }
