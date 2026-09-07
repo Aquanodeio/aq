@@ -71,7 +71,12 @@ type jobCreateOptions struct {
 	// managed path, never send it as a bare "0" or a negative number; the
 	// wire key must be absent unless this is a real attached deployment id.
 	pinnedDeploymentID int
-	out                io.Writer
+	// secrets names `type: "env"` team secrets (`aq secret set --type env`,
+	// ticket #1004) this job's Runs need injected at dispatch. nil/empty
+	// means none; CreateJobRequest.Secrets carries `omitempty` for exactly
+	// that, the same convention every optional field on the request follows.
+	secrets []string
+	out     io.Writer
 }
 
 // jobCreate parses `aq job create <setup> <version>` and wires the
@@ -97,6 +102,8 @@ func jobCreate(args []string) error {
 	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this job may run (required)")
 	monthlyCapCents := fs.Int64("monthly-cap-cents", -1, "optional monthly budget in cents; new runs stop once the month's spend reaches it")
 	on := fs.String("on", "", "run this job on a host you already attached with `aq attach`, instead of renting hardware")
+	var secrets stringList
+	fs.Var(&secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Runs (repeatable)")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -153,6 +160,7 @@ func jobCreate(args []string) error {
 		monthlyCapCents:    *monthlyCapCents,
 		onAlias:            onAlias,
 		pinnedDeploymentID: pinnedDeploymentID,
+		secrets:            []string(secrets),
 		out:                os.Stdout,
 	})
 }
@@ -193,6 +201,7 @@ func runJobCreate(opts jobCreateOptions) error {
 		VersionID:          versionRowID,
 		MaxInstances:       opts.maxInstances,
 		PinnedDeploymentID: opts.pinnedDeploymentID,
+		Secrets:            opts.secrets,
 	}
 	// OMITTED unless set. The backend's schema is optional, and optional means
 	// the key is ABSENT -- sending 0 would read as "a budget of nothing", which

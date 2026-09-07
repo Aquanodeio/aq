@@ -148,6 +148,8 @@ func main() {
 	// `aq run mybox` and `aq run myjob` are the same string.
 	case "job":
 		run(job(args))
+	case "secret":
+		run(secret(args))
 	case "down":
 		run(down(args))
 	case "logout":
@@ -233,6 +235,8 @@ Commands:
   pods          List the pods you own
   idle          View or change a DEPLOYMENT's idle-auto-pause thresholds
   job           Create, run, inspect and cancel GPU jobs
+  secret        Manage team secrets: env vars and registry credentials a job
+                can reference by name, never sent to the CLI as plaintext
   down          Tear down a pod (stop the rented GPU box)
   logout        Remove the stored CLI credential
   whoami        Show the current login state
@@ -487,6 +491,8 @@ job:
                               --on <alias>  Pin it to a box you already
                               attached (aq attach <alias>) instead of
                               renting hardware; that box bills nothing.
+                              --secret <name>  Inject a "aq secret set --type
+                              env" secret into the job's Runs (repeatable).
   aq job point <name> <version>
                               Repoint a job at a different version in its
                               lineage (also how you roll back).
@@ -508,6 +514,29 @@ job:
   aq job cancel <job> <run-id>
                               Stop a run. Billing stops when the machine is
                               released.
+
+secret:
+  Team secrets: env vars and private-registry credentials a job can reference
+  by NAME. A value is written once and never read back, by aq or anyone else:
+  "aq secret list" shows names and metadata only.
+
+  aq secret set <name> --type env --value <value>
+                              Store an env secret. --value can be omitted to
+                              read the value from stdin instead (it never
+                              lands in shell history or a process list that
+                              way). <name> must be a valid env var identifier,
+                              since it IS the env var key a job's runs see.
+  aq secret set <name> --type registry --server <host> --username <user> --token <token>
+                              Store a private-registry credential (PAT or
+                              password). <name> here is just a label.
+  aq secret list              List secret names, types and rotation dates.
+                              Never prints a value.
+  aq secret rotate <name|id> --value <value>
+                              Replace an env secret's stored value.
+  aq secret rotate <name|id> --server <host> --username <user> --token <token>
+                              Replace a registry secret's stored credential.
+  aq secret rm <name|id>      Delete a secret. A job still referencing it
+                              starts failing that reference at its next run.
 
 status / save / share / fork / edit-version / pause / autopause /
 force-detach / sync-now / pods / down:
