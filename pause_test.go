@@ -51,7 +51,7 @@ func TestPausePrintsARestoreCommandThatCanTargetTheSetup(t *testing.T) {
 	if strings.Contains(got, "aq up") {
 		t.Errorf("pause still points at `aq up`, which cannot target a setup; got:\n%s", got)
 	}
-	// #1003: the deployment row above carries no provider/gpu (predates the
+	// The deployment row above carries no provider/gpu (predates the
 	// column, or an old backend) -- the "comes back on" line must be OMITTED
 	// entirely rather than guess.
 	if strings.Contains(got, "comes back on") {
@@ -59,7 +59,7 @@ func TestPausePrintsARestoreCommandThatCanTargetTheSetup(t *testing.T) {
 	}
 }
 
-// Ticket #1003 -- `aq deploy --snapshot <id>` now derives its placement from
+// `aq deploy --snapshot <id>` now derives its placement from
 // this same deployment row, so the suggested resume command is safe to paste
 // verbatim. `aq pause` names where it comes back using the row it already
 // fetched, so pasting the suggestion holds no surprise.

@@ -100,7 +100,7 @@ func runPause(opts pauseOptions) error {
 	// fresh empty box and cannot target this setup.
 	fmt.Fprintf(out, "✓ Saving %s and releasing the machine.\n", setup.Name)
 	fmt.Fprintf(out, "\nPick up where you left off with:\n  aq deploy --snapshot %d\n", deploymentID)
-	// #1003: the resume above now DERIVES its placement from this same
+	// The resume above now DERIVES its placement from this same
 	// deployment row, so the suggested command is safe to paste verbatim --
 	// name where it comes back so that isn't a surprise. `dep` is the row
 	// `GetDeployment` (GET /deployments/:id, untransformed) already fetched

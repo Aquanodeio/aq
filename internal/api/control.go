@@ -73,7 +73,7 @@ type UpRequest struct {
 	IdlePolicy *IdlePolicyUpdate `json:"idlePolicy,omitempty"`
 }
 
-// Placement is where a resumed deployment actually landed (#1003) -- returned
+// Placement is where a resumed deployment actually landed -- returned
 // only by POST /deployments/deploy-snapshot, and only on a backend new enough
 // to compute it. Absent on an older backend: `UpResult.Placement` stays nil,
 // which every caller must read as "say nothing extra", never as an error.

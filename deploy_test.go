@@ -28,7 +28,7 @@ type deployServer struct {
 	// never appears; set false to exercise that path.
 	noServiceURL bool
 	// placement, when non-nil, is echoed on the deploy-snapshot response
-	// (#1003). nil reproduces an older backend that never sends the field.
+	// nil reproduces an older backend that never sends the field.
 	placement map[string]any
 }
 
@@ -478,7 +478,7 @@ func TestDeployAcceptsPositionalSnapshot(t *testing.T) {
 	}
 }
 
-// Ticket #1003 -- the pre-call line must stop claiming "cheapest" when it does
+// The pre-call line must stop claiming "cheapest" when it does
 // not know that it is: only an explicit -provider says anything before the
 // response comes back.
 func TestRunDeployPreCallMessageNoProvider(t *testing.T) {
@@ -542,7 +542,7 @@ func TestRunDeployPreCallMessageWithProvider(t *testing.T) {
 	}
 }
 
-// Ticket #1003 -- once the response is in hand, a "derived" placement that
+// Once the response is in hand, a "derived" placement that
 // held reports where it landed; a "derived" placement that moved reports the
 // move loudly (to stderr); "explicit"/"open"/absent print nothing extra.
 func TestRunDeployPrintsPlacementDerivedNoMove(t *testing.T) {

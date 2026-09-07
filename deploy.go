@@ -145,7 +145,7 @@ func runDeploy(opts deployOptions) error {
 		return err
 	}
 
-	// 2. Rent a box + restore the snapshot onto it. #1003: a resume with no
+	// 2. Rent a box + restore the snapshot onto it. A resume with no
 	// -provider derives its placement from the source deployment server-side
 	// (see `Placement` below), so this pre-call line must stop claiming
 	// "cheapest" when it does not yet know that it is -- only an explicit
@@ -188,7 +188,7 @@ func runDeploy(opts deployOptions) error {
 	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
 }
 
-// printPlacement reports where a resume actually landed (#1003), once the
+// printPlacement reports where a resume actually landed, once the
 // response is in hand. A nil Placement (an older backend, or `aq up`'s
 // request, which never sets one) prints nothing extra -- never an error.
 // `explicit`/`open` also print nothing: the caller pinned every placement
