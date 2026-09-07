@@ -100,5 +100,17 @@ func runPause(opts pauseOptions) error {
 	// fresh empty box and cannot target this setup.
 	fmt.Fprintf(out, "✓ Saving %s and releasing the machine.\n", setup.Name)
 	fmt.Fprintf(out, "\nPick up where you left off with:\n  aq deploy --snapshot %d\n", deploymentID)
+	// The resume above now DERIVES its placement from this same
+	// deployment row, so the suggested command is safe to paste verbatim --
+	// name where it comes back so that isn't a surprise. `dep` is the row
+	// `GetDeployment` (GET /deployments/:id, untransformed) already fetched
+	// above; an empty Provider means an old/incomplete row, never a guess.
+	if dep.Provider != "" {
+		if dep.GPU != "" {
+			fmt.Fprintf(out, "It comes back on %s with the same %s unless you pass -provider or -gpu.\n", dep.Provider, dep.GPU)
+		} else {
+			fmt.Fprintf(out, "It comes back on %s unless you pass -provider.\n", dep.Provider)
+		}
+	}
 	return nil
 }

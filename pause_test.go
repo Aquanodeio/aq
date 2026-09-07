@@ -51,4 +51,45 @@ func TestPausePrintsARestoreCommandThatCanTargetTheSetup(t *testing.T) {
 	if strings.Contains(got, "aq up") {
 		t.Errorf("pause still points at `aq up`, which cannot target a setup; got:\n%s", got)
 	}
+	// The deployment row above carries no provider/gpu (predates the
+	// column, or an old backend) -- the "comes back on" line must be OMITTED
+	// entirely rather than guess.
+	if strings.Contains(got, "comes back on") {
+		t.Errorf("must not print a placement note when the deployment row has no provider; got:\n%s", got)
+	}
+}
+
+// `aq deploy --snapshot <id>` now derives its placement from
+// this same deployment row, so the suggested resume command is safe to paste
+// verbatim. `aq pause` names where it comes back using the row it already
+// fetched, so pasting the suggestion holds no surprise.
+func TestPauseNamesWhereItComesBack(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{
+			{"id": "11111111-2222-3333-4444-555555555555", "name": "trainer", "leaseDeploymentId": 3566},
+		})
+	})
+	mux.HandleFunc("/deployments/3566", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{
+			"id": 3566, "project_id": "proj-1", "provider": "hyperstack", "gpu": "A6000",
+		})
+	})
+	mux.HandleFunc("/deployments/project/proj-1/pause", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"status": "PAUSED"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	if err := runPause(pauseOptions{cred: cred, target: "trainer", out: &out}); err != nil {
+		t.Fatalf("runPause: %v", err)
+	}
+
+	got := out.String()
+	want := "It comes back on hyperstack with the same A6000 unless you pass -provider or -gpu.\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("expected the placement note; got:\n%s", got)
+	}
 }

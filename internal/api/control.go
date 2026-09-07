@@ -73,12 +73,40 @@ type UpRequest struct {
 	IdlePolicy *IdlePolicyUpdate `json:"idlePolicy,omitempty"`
 }
 
-// UpResult is the data returned by POST /deployments/up.
+// Placement is where a resumed deployment actually landed -- returned
+// only by POST /deployments/deploy-snapshot, and only on a backend new enough
+// to compute it. Absent on an older backend: `UpResult.Placement` stays nil,
+// which every caller must read as "say nothing extra", never as an error.
+type Placement struct {
+	// Source is "derived" (came from the snapshot's source deployment),
+	// "explicit" (the caller's own -provider/-gpu won), or "open" (nothing to
+	// derive -- an ext-/share- source, or the source row is gone).
+	Source string `json:"source"`
+	// Provider/GPUModel are the offer ACTUALLY committed to, never the
+	// request echo.
+	Provider string `json:"provider"`
+	GPUModel string `json:"gpuModel"`
+	// MovedFrom/MovedFromGpuModel/MovedReason describe a derived constraint
+	// that had no capacity and was dropped. Derivation is per field, so only
+	// the field that was actually DERIVED is reported: a caller who pinned
+	// -provider and lost only the derived GPU sees MovedFrom empty and
+	// MovedFromGpuModel set. A JSON `null` decodes to "" and is never
+	// distinguished from an absent field, so callers branch on MovedReason,
+	// the one field set for every kind of move.
+	MovedFrom         string `json:"movedFrom"`
+	MovedFromGpuModel string `json:"movedFromGpuModel"`
+	MovedReason       string `json:"movedReason"`
+}
+
+// UpResult is the data returned by POST /deployments/up (Placement always nil
+// there -- `aq up` has no source deployment to derive from) and by
+// POST /deployments/deploy-snapshot.
 type UpResult struct {
-	DeploymentID int    `json:"deploymentId"`
-	ProjectID    string `json:"projectId"`
-	Status       string `json:"status"`
-	Message      string `json:"message"`
+	DeploymentID int        `json:"deploymentId"`
+	ProjectID    string     `json:"projectId"`
+	Status       string     `json:"status"`
+	Message      string     `json:"message"`
+	Placement    *Placement `json:"placement,omitempty"`
 }
 
 // Up rents the cheapest matching GPU and brings up the requested template env.

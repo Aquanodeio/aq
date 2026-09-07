@@ -145,11 +145,21 @@ func runDeploy(opts deployOptions) error {
 		return err
 	}
 
-	// 2. Rent the cheapest matching GPU + restore the snapshot onto it.
-	if opts.template != "" {
-		fmt.Fprintf(opts.out, "Renting the cheapest matching GPU and restoring %s (relaunching %s)...\n", opts.snapshot, templateLabel(opts.template))
+	// 2. Rent a box + restore the snapshot onto it. A resume with no
+	// -provider derives its placement from the source deployment server-side
+	// (see `Placement` below), so this pre-call line must stop claiming
+	// "cheapest" when it does not yet know that it is -- only an explicit
+	// -provider tells us anything before the response comes back.
+	var prefix string
+	if opts.provider != "" {
+		prefix = fmt.Sprintf("Renting on %s and restoring %s", opts.provider, opts.snapshot)
 	} else {
-		fmt.Fprintf(opts.out, "Renting the cheapest matching GPU and restoring %s...\n", opts.snapshot)
+		prefix = fmt.Sprintf("Restoring %s onto a fresh box", opts.snapshot)
+	}
+	if opts.template != "" {
+		fmt.Fprintf(opts.out, "%s (relaunching %s)...\n", prefix, templateLabel(opts.template))
+	} else {
+		fmt.Fprintf(opts.out, "%s...\n", prefix)
 	}
 	res, err := client.Deploy(api.DeployRequest{
 		SnapshotSource: opts.snapshot,
@@ -164,6 +174,7 @@ func runDeploy(opts deployOptions) error {
 	if err != nil {
 		return fmt.Errorf("could not start deployment: %w", err)
 	}
+	printPlacement(opts.out, opts.errOut, opts.snapshot, res.Placement)
 	fmt.Fprintf(opts.out, "Deployment #%d created. Provisioning + restoring (this can take a few minutes)...\n", res.DeploymentID)
 
 	// 3. Poll until the service URL is live.
@@ -175,6 +186,37 @@ func runDeploy(opts deployOptions) error {
 		return waitForActive(client, res.DeploymentID, opts.out, opts.errOut, opts.pollInterval, opts.timeout, opts.now, printRestored)
 	}
 	return waitForServiceURL(client, res.DeploymentID, templateLabel(opts.template), opts.out, opts.errOut, opts.showSecrets, opts.probe, opts.pollInterval, opts.timeout, opts.now)
+}
+
+// printPlacement reports where a resume actually landed, once the
+// response is in hand. A nil Placement (an older backend, or `aq up`'s
+// request, which never sets one) prints nothing extra -- never an error.
+// `explicit`/`open` also print nothing: the caller pinned every placement
+// filter itself, or there was nothing to derive in the first place. A resume
+// that pinned only ONE of them still reports `derived`, because the other was
+// filled in from the source deployment and the user never typed it.
+func printPlacement(out, errOut io.Writer, snapshotSource string, p *api.Placement) {
+	if p == nil || p.Source != "derived" {
+		return
+	}
+	// MovedReason is the single trigger. Derivation is per field, so either
+	// the provider or the GPU alone can be the one that gave way, and
+	// branching on MovedFrom by itself would stay silent on a GPU-only move.
+	if p.MovedReason != "" {
+		switch {
+		case p.MovedFrom != "" && p.MovedFromGpuModel != "":
+			fmt.Fprintf(errOut, "! Deployment %s ran on %s (%s), but %s.\n", snapshotSource, p.MovedFrom, p.MovedFromGpuModel, p.MovedReason)
+			fmt.Fprintf(errOut, "  Placing on %s (%s) instead. Pass -provider %s to insist on it.\n", p.Provider, p.GPUModel, p.MovedFrom)
+		case p.MovedFrom != "":
+			fmt.Fprintf(errOut, "! Deployment %s ran on %s, but %s.\n", snapshotSource, p.MovedFrom, p.MovedReason)
+			fmt.Fprintf(errOut, "  Placing on %s (%s) instead. Pass -provider %s to insist on it.\n", p.Provider, p.GPUModel, p.MovedFrom)
+		default:
+			fmt.Fprintf(errOut, "! Deployment %s ran on a %s, but %s.\n", snapshotSource, p.MovedFromGpuModel, p.MovedReason)
+			fmt.Fprintf(errOut, "  Placing on %s (%s) instead. Pass -gpu %s to insist on it.\n", p.Provider, p.GPUModel, p.MovedFromGpuModel)
+		}
+		return
+	}
+	fmt.Fprintf(out, "Placing on %s (%s), same as deployment %s.\n", p.Provider, p.GPUModel, snapshotSource)
 }
 
 // waitForActive polls a deployment until it reaches a running state (a box with

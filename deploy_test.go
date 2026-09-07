@@ -27,6 +27,9 @@ type deployServer struct {
 	// service URL. A failed restore skips the app start server-side, so the URL
 	// never appears; set false to exercise that path.
 	noServiceURL bool
+	// placement, when non-nil, is echoed on the deploy-snapshot response
+	// nil reproduces an older backend that never sends the field.
+	placement map[string]any
 }
 
 type DeployBodyCapture struct {
@@ -58,11 +61,15 @@ func (s *deployServer) handler() http.Handler {
 			Provider:       str(body["provider"]),
 			Name:           str(body["name"]),
 		}
-		writeData(w, map[string]any{
+		resp := map[string]any{
 			"deploymentId": 5151,
 			"projectId":    "proj-d",
 			"status":       "PENDING",
-		})
+		}
+		if s.placement != nil {
+			resp["placement"] = s.placement
+		}
+		writeData(w, resp)
 	})
 
 	mux.HandleFunc("/deployments/5151/status", func(w http.ResponseWriter, r *http.Request) {
@@ -468,5 +475,236 @@ func TestDeployAcceptsPositionalSnapshot(t *testing.T) {
 	}
 	if server.deployBody.SnapshotSource != "ext-99" || server.deployBody.Template != templateJupyter {
 		t.Errorf("unexpected deploy body: %+v", server.deployBody)
+	}
+}
+
+// The pre-call line must stop claiming "cheapest" when it does
+// not know that it is: only an explicit -provider says anything before the
+// response comes back.
+func TestRunDeployPreCallMessageNoProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+	server := &deployServer{
+		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
+		statusReadyAt: 1,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err := runDeploy(deployOptions{
+		cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+		snapshot:     "3566",
+		out:          &out,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runDeploy error: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Restoring 3566 onto a fresh box...\n") {
+		t.Errorf("expected the no-provider pre-call line; got:\n%s", got)
+	}
+	if strings.Contains(got, "cheapest") {
+		t.Errorf("must not claim \"cheapest\" when no -provider was given; got:\n%s", got)
+	}
+}
+
+func TestRunDeployPreCallMessageWithProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+	server := &deployServer{
+		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
+		statusReadyAt: 1,
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err := runDeploy(deployOptions{
+		cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+		snapshot:     "3566",
+		provider:     "hyperstack",
+		template:     templateComfyUI,
+		out:          &out,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runDeploy error: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Renting on hyperstack and restoring 3566 (relaunching ComfyUI)...\n") {
+		t.Errorf("expected the explicit-provider pre-call line; got:\n%s", got)
+	}
+}
+
+// Once the response is in hand, a "derived" placement that
+// held reports where it landed; a "derived" placement that moved reports the
+// move loudly (to stderr); "explicit"/"open"/absent print nothing extra.
+func TestRunDeployPrintsPlacementDerivedNoMove(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+	server := &deployServer{
+		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
+		statusReadyAt: 1,
+		placement: map[string]any{
+			"source": "derived", "provider": "hyperstack", "gpuModel": "A6000",
+			"movedFrom": nil, "movedFromGpuModel": nil, "movedReason": nil,
+		},
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runDeploy(deployOptions{
+		cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+		snapshot:     "3566",
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runDeploy error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Placing on hyperstack (A6000), same as deployment 3566.\n") {
+		t.Errorf("expected the derived-no-move placement line; got:\n%s", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("a held placement must not warn on stderr; got:\n%s", errOut.String())
+	}
+}
+
+func TestRunDeployPrintsPlacementMoved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+	server := &deployServer{
+		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
+		statusReadyAt: 1,
+		placement: map[string]any{
+			"source": "derived", "provider": "massecompute", "gpuModel": "RTX 4090",
+			"movedFrom": "hyperstack", "movedFromGpuModel": "A6000",
+			"movedReason": "no A6000 is available on hyperstack right now",
+		},
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runDeploy(deployOptions{
+		cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+		snapshot:     "3566",
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runDeploy error: %v", err)
+	}
+	if strings.Contains(out.String(), "Placing on") {
+		t.Errorf("a moved placement must not print the held-placement line on stdout; got:\n%s", out.String())
+	}
+	wantLine1 := "! Deployment 3566 ran on hyperstack (A6000), but no A6000 is available on hyperstack right now.\n"
+	wantLine2 := "  Placing on massecompute (RTX 4090) instead. Pass -provider hyperstack to insist on it.\n"
+	if !strings.Contains(errOut.String(), wantLine1) || !strings.Contains(errOut.String(), wantLine2) {
+		t.Errorf("expected the moved-placement warning on stderr; got:\n%s", errOut.String())
+	}
+}
+
+// A GPU-only move: the caller pinned -provider, so only the DERIVED GPU gave
+// way. MovedFrom is empty here, which is exactly the case a MovedFrom-only
+// branch would print nothing for.
+func TestRunDeployPrintsPlacementMovedGpuOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+	server := &deployServer{
+		keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
+		statusReadyAt: 1,
+		placement: map[string]any{
+			"source": "derived", "provider": "massecompute", "gpuModel": "RTX 4090",
+			"movedFrom": nil, "movedFromGpuModel": "A6000",
+			"movedReason": "no A6000 is available on massecompute right now",
+		},
+	}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := runDeploy(deployOptions{
+		cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+		snapshot:     "3566",
+		provider:     "massecompute",
+		out:          &out,
+		errOut:       &errOut,
+		probe:        alwaysReady,
+		pollInterval: 2 * time.Millisecond,
+		timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runDeploy error: %v", err)
+	}
+	wantLine1 := "! Deployment 3566 ran on a A6000, but no A6000 is available on massecompute right now.\n"
+	wantLine2 := "  Placing on massecompute (RTX 4090) instead. Pass -gpu A6000 to insist on it.\n"
+	if !strings.Contains(errOut.String(), wantLine1) || !strings.Contains(errOut.String(), wantLine2) {
+		t.Errorf("expected the GPU-only moved warning on stderr; got:\n%s", errOut.String())
+	}
+	if strings.Contains(out.String(), "Placing on") {
+		t.Errorf("a moved placement must not print the held-placement line on stdout; got:\n%s", out.String())
+	}
+}
+
+func TestRunDeployPrintsNothingExtraWithoutAPlacementOrWhenExplicit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeFakePubKey(t, "ssh-ed25519 AAAA x")
+
+	cases := []struct {
+		name      string
+		placement map[string]any // nil = older backend, no field at all
+	}{
+		{name: "absent (older backend)", placement: nil},
+		{name: "explicit", placement: map[string]any{
+			"source": "explicit", "provider": "vastai", "gpuModel": "H100",
+			"movedFrom": nil, "movedFromGpuModel": nil, "movedReason": nil,
+		}},
+		{name: "open", placement: map[string]any{
+			"source": "open", "provider": "massecompute", "gpuModel": "RTX 4090",
+			"movedFrom": nil, "movedFromGpuModel": nil, "movedReason": nil,
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &deployServer{
+				keys:          []map[string]any{{"id": "k1", "name": "x", "public_key": "ssh-ed25519 AAAA x"}},
+				statusReadyAt: 1,
+				placement:     tc.placement,
+			}
+			srv := httptest.NewServer(server.handler())
+			defer srv.Close()
+
+			var out, errOut bytes.Buffer
+			err := runDeploy(deployOptions{
+				cred:         &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"},
+				snapshot:     "3566",
+				out:          &out,
+				errOut:       &errOut,
+				probe:        alwaysReady,
+				pollInterval: 2 * time.Millisecond,
+				timeout:      5 * time.Second,
+			})
+			if err != nil {
+				t.Fatalf("runDeploy error: %v", err)
+			}
+			if strings.Contains(out.String(), "Placing on") || errOut.Len() != 0 {
+				t.Errorf("expected no extra placement output; got stdout:\n%s\nstderr:\n%s", out.String(), errOut.String())
+			}
+		})
 	}
 }
