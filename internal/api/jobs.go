@@ -58,6 +58,12 @@ type CreateJobRequest struct {
 	// present-as-0. A zero budget would refuse every run.
 	MonthlySpendCapCents *int64 `json:"monthlySpendCapCents,omitempty"`
 	PinnedDeploymentID   int    `json:"pinnedDeploymentId,omitempty"`
+	// Secrets names `type: "env"` team secrets (POST /secrets/teams/:teamId,
+	// see internal/api/secrets.go) this job's Runs need injected at dispatch.
+	// omitempty: absent means "none", the same convention every optional
+	// field on this request already follows; never sent as an empty array.
+	// A name with no matching live secret on the team is refused (400).
+	Secrets []string `json:"secrets,omitempty"`
 }
 
 // CreateJob makes a setup version callable, returning the created
