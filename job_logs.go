@@ -88,6 +88,7 @@ func runJobLogs(opts jobLogsOptions) error {
 
 	var offset int64
 	var warnedUnreachable bool
+	var warnedTruncated bool
 	for polls := 0; ; polls++ {
 		chunk, err := client.GetRunLogs(jobID, opts.runID, offset, opts.attempt)
 		if err != nil {
@@ -106,8 +107,14 @@ func runJobLogs(opts jobLogsOptions) error {
 			fmt.Fprintln(errOut, "aq: can't reach the machine to read its log right now — this says nothing about whether your run is still going")
 			warnedUnreachable = true
 		}
-		if chunk.Truncated {
+		// Also said ONCE. `truncated` is a LIVE, per-read flag on the box
+		// (it stays true for every remaining poll of a rotated log, not
+		// just the poll that crossed the rollover), so printing it
+		// unguarded would interleave this line into the log every 2s for
+		// the rest of the run.
+		if chunk.Truncated && !warnedTruncated {
 			fmt.Fprintln(errOut, "aq: this log got long enough that its oldest output was dropped; you are seeing the retained tail")
+			warnedTruncated = true
 		}
 
 		if !opts.follow {
