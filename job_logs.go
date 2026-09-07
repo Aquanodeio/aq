@@ -51,7 +51,7 @@ func jobLogs(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runJobLogs(jobLogsOptions{
+	return runJobLogsFollow(jobLogsOptions{
 		cred:    cred,
 		jobRef:  rest[0],
 		runID:   rest[1],
