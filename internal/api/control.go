@@ -73,12 +73,38 @@ type UpRequest struct {
 	IdlePolicy *IdlePolicyUpdate `json:"idlePolicy,omitempty"`
 }
 
-// UpResult is the data returned by POST /deployments/up.
+// Placement is where a resumed deployment actually landed (#1003) -- returned
+// only by POST /deployments/deploy-snapshot, and only on a backend new enough
+// to compute it. Absent on an older backend: `UpResult.Placement` stays nil,
+// which every caller must read as "say nothing extra", never as an error.
+type Placement struct {
+	// Source is "derived" (came from the snapshot's source deployment),
+	// "explicit" (the caller's own -provider/-gpu won), or "open" (nothing to
+	// derive -- an ext-/share- source, or the source row is gone).
+	Source string `json:"source"`
+	// Provider/GPUModel are the offer ACTUALLY committed to, never the
+	// request echo.
+	Provider string `json:"provider"`
+	GPUModel string `json:"gpuModel"`
+	// MovedFrom/MovedFromGpuModel/MovedReason are non-empty ONLY when the
+	// derived placement matched no capacity and the resume fell back to open
+	// ranking. A JSON `null` for any of these three decodes to "" and is
+	// never distinguished from an absent field -- callers branch on
+	// MovedFrom being non-empty, not on the other two alone.
+	MovedFrom         string `json:"movedFrom"`
+	MovedFromGpuModel string `json:"movedFromGpuModel"`
+	MovedReason       string `json:"movedReason"`
+}
+
+// UpResult is the data returned by POST /deployments/up (Placement always nil
+// there -- `aq up` has no source deployment to derive from) and by
+// POST /deployments/deploy-snapshot.
 type UpResult struct {
-	DeploymentID int    `json:"deploymentId"`
-	ProjectID    string `json:"projectId"`
-	Status       string `json:"status"`
-	Message      string `json:"message"`
+	DeploymentID int        `json:"deploymentId"`
+	ProjectID    string     `json:"projectId"`
+	Status       string     `json:"status"`
+	Message      string     `json:"message"`
+	Placement    *Placement `json:"placement,omitempty"`
 }
 
 // Up rents the cheapest matching GPU and brings up the requested template env.
