@@ -13,7 +13,7 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// secret dispatches `aq secret <sub>`, the team secrets store (#1004): env
+// secret dispatches `aq secret <sub>`, the team secrets store: env
 // vars and private-registry credentials a Job's Runs can reference by NAME at
 // dispatch, instead of a real credential living in plaintext in a Job's
 // `image.env` or a script that built one. A value is only ever written here,

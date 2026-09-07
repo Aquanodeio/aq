@@ -2,7 +2,7 @@ package api
 
 import "net/url"
 
-// Team-scoped secrets store backing `aq secret` (ticket #1004): env vars and
+// Team-scoped secrets store backing `aq secret`: env vars and
 // private-registry credentials a Job's Runs can reference by NAME at dispatch,
 // so a real credential never has to live in plaintext in a Job's `image.env`
 // or in a script that built one.

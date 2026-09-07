@@ -71,8 +71,8 @@ type jobCreateOptions struct {
 	// managed path, never send it as a bare "0" or a negative number; the
 	// wire key must be absent unless this is a real attached deployment id.
 	pinnedDeploymentID int
-	// secrets names `type: "env"` team secrets (`aq secret set --type env`,
-	// ticket #1004) this job's Runs need injected at dispatch. nil/empty
+	// secrets names `type: "env"` team secrets (`aq secret set --type env`)
+	// this job's Runs need injected at dispatch. nil/empty
 	// means none; CreateJobRequest.Secrets carries `omitempty` for exactly
 	// that, the same convention every optional field on the request follows.
 	secrets []string
