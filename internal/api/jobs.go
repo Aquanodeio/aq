@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"net/http"
 	"net/url"
 	"strconv"
 )
@@ -231,6 +233,31 @@ func (c *Client) GetRunLogs(jobID, runID string, offset int64, attempt int) (*Ru
 		return nil, err
 	}
 	return &out, nil
+}
+
+// NewRunLogsStreamRequest builds (but does not send) the GET request for the
+// run-log SSE stream, sending the same x-api-key/x-team-id headers GetRunLogs
+// sends. It only builds the request: reading an SSE body a frame at a time
+// isn't something the JSON-envelope helpers in device.go (do/getJSON/...)
+// know how to do, so the caller drives resp.Body itself.
+func (c *Client) NewRunLogsStreamRequest(ctx context.Context, jobID, runID string, offset int64, attempt int) (*http.Request, error) {
+	q := url.Values{}
+	// The orchestrator's stream route shares resolveRunLogsTarget with the
+	// poll route, which reads req.query.offset -- not "from" (that name is
+	// only ogre's OWN direct stream endpoint's param, wire contract section
+	// 1). Sending "from" here silently asked for offset 0 every time.
+	q.Set("offset", itoa64(offset))
+	if attempt > 0 {
+		q.Set("attempt", itoa(attempt))
+	}
+	path := "/jobs/" + url.PathEscape(jobID) + "/runs/" + url.PathEscape(runID) + "/logs/stream?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+	setUserAgent(req)
+	return req, nil
 }
 
 // CancelRun asks for a run to stop. Cancelling an already-finished run is a
