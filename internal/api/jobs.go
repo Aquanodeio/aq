@@ -242,7 +242,11 @@ func (c *Client) GetRunLogs(jobID, runID string, offset int64, attempt int) (*Ru
 // know how to do, so the caller drives resp.Body itself.
 func (c *Client) NewRunLogsStreamRequest(ctx context.Context, jobID, runID string, offset int64, attempt int) (*http.Request, error) {
 	q := url.Values{}
-	q.Set("from", itoa64(offset))
+	// The orchestrator's stream route shares resolveRunLogsTarget with the
+	// poll route, which reads req.query.offset -- not "from" (that name is
+	// only ogre's OWN direct stream endpoint's param, wire contract section
+	// 1). Sending "from" here silently asked for offset 0 every time.
+	q.Set("offset", itoa64(offset))
 	if attempt > 0 {
 		q.Set("attempt", itoa(attempt))
 	}
