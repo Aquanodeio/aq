@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # check-harness-refs.sh — fail on a NEW reference to a harness (workspace-root)
 # artifact in this repo's own source.
@@ -11,13 +11,13 @@
 # that script — never edit a vendored copy directly;
 # scripts/govern/lint-harness-refs.sh detects and fails on drift between a
 # vendored copy and this file.
-# SOURCE-HASH: 536240b5020f8d045f7fdfa169c9aab1cdf9de6d47c01dcd633c1b23e44ed5a5
+# SOURCE-HASH: 9059ea4cdf4bf934ed0dc49a96b85543cf6829f825d00771649960d21400bd23
 #
 # Background: this repo is one of several independent git repos cloned inside
 # an `aquanode` meta-repo workspace. The workspace root's CLAUDE.md carries a
 # hard rule: product source must never cite a harness artifact — not a bare
 # `#N` work-item number from the workspace's `queue/tickets.md`, not
-# `.plans/`/`.specs/` (workspace-root, gitignored, deleted once implemented),
+# `.plans/`/`.specs/` (workspace-root: tracked in the meta-repo, absent from every sub-repo),
 # not a "see the root CLAUDE.md" pointer. Anyone who clones THIS repo alone —
 # which is the normal way it's consumed — cannot resolve any of those; the
 # citation is permanently dangling. It shipped repeatedly, including several
@@ -73,6 +73,23 @@
 #   directly alongside itself, so a standalone clone works unmodified.)
 #
 set -euo pipefail
+
+# `declare -A` (associative arrays, used below for the baseline set) needs
+# bash >= 4.0. Stock macOS ships /bin/bash 3.2 (Apple froze it at the GPLv2
+# boundary and never updated it), and a direct `./check-harness-refs.sh`
+# invocation resolves the `#!/usr/bin/env bash` shebang above to whatever
+# bash sits first on PATH — still /bin/bash 3.2 on a machine with no newer
+# bash installed. Measured 2026-09-04: under 3.2 this used to die deep
+# inside the script on `declare: -A: invalid option`, exit 2, with no
+# indication why. Refuse loud and early instead, with the actual fix.
+if [[ -z "${BASH_VERSINFO:-}" ]] || (( BASH_VERSINFO[0] < 4 )); then
+  echo "check-harness-refs: needs bash >= 4.0 for associative arrays (declare -A)." >&2
+  echo "  Running under: bash ${BASH_VERSION:-unknown}" >&2
+  echo "  Stock macOS /bin/bash is 3.2 — install a newer bash (e.g. 'brew install bash')" >&2
+  echo "  and invoke this script with it explicitly, e.g.:" >&2
+  echo "    \$(brew --prefix)/bin/bash $0" >&2
+  exit 2
+fi
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPTS_DIR}/.." && pwd)"
