@@ -12,7 +12,7 @@ sub-repo (aq, mjolnir, ogre, website, aquanode-backend) by
 scripts/govern/sync-harness-refs.sh. Edit the canonical copy and re-run that
 script — never edit a vendored copy directly; scripts/govern/lint-harness-refs.sh
 detects and fails on drift between a vendored copy and this file.
-SOURCE-HASH: 63e207f8dad2ab6028200e1962a22a37df545db83eb76b6d68e0abffab76f814
+SOURCE-HASH: 05d2a7e382fe8f89a19cc3ad45859835edbc773824409bbaead063d297e8c99e
 
 Read from stdin: NUL-separated tracked file paths (matches `git ls-files
 -z`). Prints "reason\x01path:lineno:content" for every offending line to
@@ -113,6 +113,22 @@ that 12-citation blast radius and getting a new ruling.
   dangling workspace-ticket numbers joined by a hyphen — so this shape is
   read as a numeric range describing a locally-defined list, not two
   citations, regardless of the enclosing word.
+- Markdown TOC anchor fragment — `[Eliminating Waterfalls](#1-eliminating-waterfalls)`.
+  `NUM_REF` requires a digit immediately after `#` but stops at the digit
+  run, so a numeric-led anchor fragment (a markdown heading whose slug
+  starts with a digit) fires exactly like a citation while a word-led one
+  (`#step-4`) already passed. Confirmed live 2026-09-12 by running this
+  matcher directly on that string; console's first-ever guard run flagged
+  136 such lines in vendored `.agents/skills/**/*.md`, all baselined so
+  nothing was laundered, but every new numeric-led anchor refiled the same
+  noise into the baseline. Recognized structurally, the mirror of the hex-color
+  check above: `#N` immediately followed by `-` then a letter is never a
+  bare citation (a real ticket number is never glued to a hyphenated word
+  with no separator), so it's allowed regardless of the digits' value. This
+  does not touch a genuine citation immediately followed by punctuation
+  other than `-`+letter (`see #823 for the follow-up`, `(#532).`) or a
+  numeric range (`#1-#3` fails this shape since the char after `-` is `#`,
+  not a letter).
 - Prose ENUMERATION, established ELSEWHERE IN THE SAME FILE — a bare `#N`
   with no qualifying word or range on its OWN line ("Why not answer it
   here. #4 reads ogre's own commit graph.") is still enumeration, not
@@ -270,6 +286,18 @@ def is_hex_color_ref(line: str, start: int, end: int) -> bool:
     return False
 
 
+def is_markdown_anchor_ref(line: str, end: int) -> bool:
+    """True if the #<digits> ending at `end` is immediately followed by
+    `-` then a letter — a markdown TOC anchor fragment
+    (`#1-eliminating-waterfalls`), not an issue/ticket citation. See the
+    module docstring's "Markdown TOC anchor" note. Checked by direct
+    character comparison, not `re.match(line, pos=end)`: a `^`-anchored
+    pattern matched with a `pos` argument only matches at the true start
+    of the string (or after a newline under MULTILINE), never at `pos`
+    itself, so that approach silently never fires here."""
+    return end + 1 < len(line) and line[end] == "-" and line[end + 1].isalpha()
+
+
 def collect_established_enum_numbers(lines: list) -> set:
     """Pass 1 of the per-file scan: every digit value proven, ON ITS OWN
     LINE, to be a locally-defined enumeration item (an ENUM_WORD_TAIL match
@@ -317,6 +345,8 @@ def find_numeric_violations(line: str, established: set = frozenset()) -> list:
             # "ACCEPTED GAP" note: this does not verify same-chain identity.
             allowed = True
         elif is_hex_color_ref(line, start, end):
+            allowed = True
+        elif is_markdown_anchor_ref(line, end):
             allowed = True
         elif ENUM_WORD_TAIL.search(prefix):
             allowed = True

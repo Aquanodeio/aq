@@ -69,3 +69,4 @@ up_test.go::#208
 up_test.go::#234
 up_test.go::#310
 up_test.go::#422
+internal/api/jobs_test.go::#1007
