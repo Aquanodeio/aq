@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -257,6 +258,300 @@ func TestCreateJobSendsMonthlyCapWhenSet(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"monthlySpendCapCents":2500`) {
 		t.Fatalf("monthly budget missing from the wire, got: %s", body)
+	}
+}
+
+// imageCreateServer answers POST /jobs (and, when a test needs it, GET
+// /jobs/hardware-availability for --any-gpu) for an image-source create,
+// which never resolves a setup or version and so never hits /setups.
+func imageCreateServer(t *testing.T, createJob http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs", createJob)
+	return httptest.NewServer(mux)
+}
+
+func baseImageCreateOpts(serverURL string) jobCreateOptions {
+	return jobCreateOptions{
+		cred:            &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: serverURL},
+		image:           "docker.io/acme/train:latest",
+		gpuModels:       []string{"H100", "A100"},
+		diskGB:          200,
+		maxInstances:    2,
+		monthlyCapCents: -1,
+		outputPath:      "/outputs",
+		out:             &bytes.Buffer{},
+	}
+}
+
+// decodeWireBody parses a raw request body into a generic map for
+// order-independent structural comparison: the parity clause is about the
+// JSON shape, not byte-for-byte text.
+func decodeWireBody(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("decode wire body: %v (body: %s)", err, body)
+	}
+	return m
+}
+
+// TestCreateJobImageSourceMatchesConsoleBuildParams is the ticket's parity
+// clause: the exact JSON an image-source `aq job create` sends must match
+// what console/app/jobs/new/page.tsx's buildParams() produces for the same
+// inputs (read directly off that function, not re-derived from this file's
+// own code. Mocking the component whose contract is at risk would let a
+// field-name break agree with itself).
+//
+// `wantJSON` deliberately excludes maxRuntimeSeconds, outputs, checkpoint,
+// schedule, webhookUrl, secrets and the placement-target patch: buildParams()
+// always/conditionally sends those too, but the ticket's own scope boundary
+// says not to add --max-runtime-seconds/--schedule/--webhook-url/--checkpoint/
+// --outputs/--monthly-cap-cents beyond what already exists, so this CLI path
+// never sends them and a full-body comparison would fail on an intentional,
+// pre-existing gap rather than on this change.
+func TestCreateJobImageSourceMatchesConsoleBuildParams(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train", "versionId": 0})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.registrySecret = "docker-hub"
+	opts.gpuOrder = "ordered" // 2 models given, so console WOULD send this
+	opts.argv = []string{"python", "train.py", "--epochs", "3"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+
+	const wantJSON = `{
+		"name": "train",
+		"image": {"ref": "docker.io/acme/train:latest", "registrySecret": "docker-hub"},
+		"maxInstances": 2,
+		"hardware": {"gpuModels": ["H100", "A100"], "gpuCount": 1, "diskGb": 200},
+		"placement": {"gpuOrder": "ordered"},
+		"entrypoint": {"kind": "command", "argv": ["python", "train.py", "--epochs", "3"], "outputPath": "/outputs"}
+	}`
+	got := decodeWireBody(t, body)
+	want := decodeWireBody(t, []byte(wantJSON))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("wire body does not match console buildParams() shape:\n got:  %s\nwant:  %s", body, wantJSON)
+	}
+}
+
+// TestCreateJobImageSourceOmitsVersionIdFromTheWire: the SOURCE XOR is
+// enforced on the WIRE, not just on the parsed Go struct: versionId must be
+// ABSENT, never present as 0, or the backend's both-or-neither check
+// (job.service.ts:618-632) reads the zero as "sent".
+func TestCreateJobImageSourceOmitsVersionIdFromTheWire(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.argv = []string{"python", "train.py"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+	if strings.Contains(string(body), "versionId") {
+		t.Fatalf("an image-source create must never put versionId on the wire, got: %s", body)
+	}
+}
+
+// TestCreateJobAnyGPUFetchesHardwareAvailabilityAndSendsEveryModel: --any-gpu
+// is the explicit opt-in to the console's "no card picked means any card"
+// default: it must fetch the model universe off GET
+// /jobs/hardware-availability and send every one of those names, never an
+// empty gpuModels list (placement refuses that outright).
+func TestCreateJobAnyGPUFetchesHardwareAvailabilityAndSendsEveryModel(t *testing.T) {
+	var body []byte
+	availabilityHit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/hardware-availability", func(w http.ResponseWriter, r *http.Request) {
+		availabilityHit = true
+		if got := r.URL.Query().Get("diskGb"); got != "200" {
+			t.Fatalf("hardware-availability diskGb = %q, want 200", got)
+		}
+		writeData(w, map[string]any{"models": []map[string]any{
+			{"gpuModel": "H100"}, {"gpuModel": "RTX4090"},
+		}, "offers": []any{}, "totalOffers": 0})
+	})
+	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.gpuModels = nil
+	opts.anyGPU = true
+	opts.argv = []string{"python", "train.py"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+	if !availabilityHit {
+		t.Fatal("--any-gpu must fetch GET /jobs/hardware-availability")
+	}
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if decoded.Hardware == nil || !reflect.DeepEqual(decoded.Hardware.GPUModels, []string{"H100", "RTX4090"}) {
+		t.Fatalf("hardware.gpuModels = %+v, want the full fetched universe [H100 RTX4090] (raw body: %s)", decoded.Hardware, body)
+	}
+}
+
+// TestCreateJobVersionSourceCommandOverridesEntrypoint: a command (argv
+// after `--`) applies to a VERSION-source create too, since
+// deriveDefaultEntrypoint only ever returns non-null for ComfyUI, and every
+// other template with no app port would otherwise 400 with no way to supply
+// one. Supplying an entrypoint explicitly skips derivation, so the request
+// must carry it in exactly the shape console/app/jobs/new/page.tsx's
+// buildParams() sends (kind/argv/outputPath); hardware/placement stay
+// UNSENT here, unlike the image-source path: this positional form never
+// selects hardware from the CLI, the backend still seeds it from the
+// version's own recipe.
+func TestCreateJobVersionSourceCommandOverridesEntrypoint(t *testing.T) {
+	var body []byte
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
+	})
+	defer srv.Close()
+
+	opts := baseCreateOpts(srv.URL)
+	opts.argv = []string{"bash", "run.sh"}
+	opts.outputPath = "/outputs"
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+
+	got := decodeWireBody(t, body)
+	entrypoint, _ := got["entrypoint"].(map[string]any)
+	want := map[string]any{"kind": "command", "argv": []any{"bash", "run.sh"}, "outputPath": "/outputs"}
+	if !reflect.DeepEqual(entrypoint, want) {
+		t.Fatalf("entrypoint = %+v, want %+v (raw body: %s)", entrypoint, want, body)
+	}
+	if _, present := got["hardware"]; present {
+		t.Fatalf("a version-source create must not send hardware, got: %s", body)
+	}
+}
+
+// The five local refusals the ticket's Tests section names, all checked with
+// no server running: each must be caught before requireLogin, let alone any
+// network call.
+
+// 1. No entrypoint on an image-source create.
+func TestJobCreateImageWithoutEntrypointRefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{"--image", "docker.io/acme/train:latest", "--gpu-model", "H100", "--max-instances", "1"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "must state its entrypoint") {
+		t.Fatalf("error should say an entrypoint is required, got: %v", err)
+	}
+}
+
+// 2. No --gpu-model (and no --any-gpu) on an image-source create.
+func TestJobCreateImageWithoutGPUModelRefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{"--image", "docker.io/acme/train:latest", "--max-instances", "1", "--", "python", "train.py"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "--gpu-model is required") || !strings.Contains(err.Error(), "aq gpus") {
+		t.Fatalf("error should require --gpu-model and name `aq gpus`, got: %v", err)
+	}
+}
+
+// 3. --registry-secret without --image.
+func TestJobCreateRegistrySecretWithoutImageRefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--registry-secret", "docker-hub"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "--registry-secret") || !strings.Contains(err.Error(), "--image") {
+		t.Fatalf("error should name --registry-secret and --image, got: %v", err)
+	}
+}
+
+// 4. Both sources given at once.
+func TestJobCreateBothSourcesRefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--image", "docker.io/acme/train:latest", "--max-instances", "1"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "exactly one source") {
+		t.Fatalf("error should say exactly one source is allowed, got: %v", err)
+	}
+}
+
+// 5. Neither source given.
+func TestJobCreateNeitherSourceRefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{"--max-instances", "1"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "usage: aq job create") {
+		t.Fatalf("error should print usage, got: %v", err)
+	}
+}
+
+// --gpu-model and --any-gpu together are ambiguous, refused locally rather
+// than silently preferring one.
+func TestJobCreateGPUModelAndAnyGPURefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{
+		"--image", "docker.io/acme/train:latest", "--gpu-model", "H100", "--any-gpu",
+		"--max-instances", "1", "--", "python", "train.py",
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("error should say --gpu-model and --any-gpu are mutually exclusive, got: %v", err)
+	}
+}
+
+// --on pins a box that already carries a saved version, so it cannot serve
+// an --image job. Mirrors job.service.ts's own PinnedBoxError.
+func TestJobCreateOnWithImageRefusesLocally(t *testing.T) {
+	detachedSandbox(t, attachedHost())
+	err := jobCreate([]string{
+		"--image", "docker.io/acme/train:latest", "--gpu-model", "H100", "--on", "lease-a",
+		"--max-instances", "1", "--", "python", "train.py",
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "cannot serve an --image job") {
+		t.Fatalf("error should say a pinned box cannot serve an --image job, got: %v", err)
+	}
+}
+
+// An argv token after `--` that itself looks like a flag (e.g. the user's own
+// `--epochs 3`) must reach the entrypoint verbatim, never be re-parsed as an
+// aq flag: the whole reason argv is split off before fs.Parse ever runs.
+func TestJobCreateArgvLookingLikeAFlagIsNeverReparsed(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{
+		jobTestSetupID, "3", "--max-instances", "1", "--", "python", "train.py", "--epochs", "3",
+	})
+	if err == nil {
+		t.Fatal("expected an error (no stored credential in the sandbox)")
+	}
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("argv containing flag-shaped tokens should reach the login check untouched, got: %v", err)
 	}
 }
 

@@ -52,10 +52,22 @@ func (c *Client) ListJobs() ([]Job, error) {
 // zero/negative one as a malformed pin. jobCreate resolves this from a
 // `--on <alias>` flag locally and refuses before ever building this request
 // unless the alias names a genuinely attached deployment.
+//
+// VersionID and Image are the job's SOURCE XOR (job.service.ts:618-632):
+// exactly one is sent, never both, never neither. VersionID carries
+// `omitempty` for exactly that reason: an image-source create leaves it at
+// its zero value in Go, and without `omitempty` that would post
+// `"versionId":0` and trip the backend's both-or-neither check, which reads
+// 0 as "sent" rather than "absent". A version row id is never legitimately
+// 0, so `omitempty` is safe on the version-source path too.
 type CreateJobRequest struct {
-	Name         string `json:"name"`
-	VersionID    int    `json:"versionId"`
-	MaxInstances int    `json:"maxInstances"`
+	Name         string        `json:"name"`
+	VersionID    int           `json:"versionId,omitempty"`
+	Image        *ImageSource  `json:"image,omitempty"`
+	Entrypoint   *Entrypoint   `json:"entrypoint,omitempty"`
+	Hardware     *Hardware     `json:"hardware,omitempty"`
+	Placement    *JobPlacement `json:"placement,omitempty"`
+	MaxInstances int           `json:"maxInstances"`
 	// Pointer + omitempty: optional means the key is ABSENT on the wire, never
 	// present-as-0. A zero budget would refuse every run.
 	MonthlySpendCapCents *int64 `json:"monthlySpendCapCents,omitempty"`
@@ -68,11 +80,93 @@ type CreateJobRequest struct {
 	Secrets []string `json:"secrets,omitempty"`
 }
 
+// ImageSource is the `{ ref, registrySecret? }` shape
+// job.service.ts's normalizeImageSource accepts. RegistrySecret is a NAME
+// resolved server-side against the team's `type: registry` secrets
+// (missingSecretNames), never a token typed on the command line. `aq secret
+// set --type registry` already mints and stores those. `omitempty` because a
+// public image sends no key at all, matching the console's own spread.
+type ImageSource struct {
+	Ref            string `json:"ref"`
+	RegistrySecret string `json:"registrySecret,omitempty"`
+}
+
+// Entrypoint is a `kind: "command"` entrypoint, the only kind this CLI can
+// express. `http`/`comfyui` entrypoints carry a port, a body template or a
+// whole workflow_api.json graph with no CLI-typeable shape, so `aq job
+// create` only ever emits `command`. Argv comes verbatim from everything
+// after a bare `--` on the command line (see splitRemoteCommand), never
+// shell-parsed, matching the "no quoting gymnastics" the ticket asked for.
+// OutputPath is required and must be absolute: entrypoint.go's
+// parseEntrypoint refuses a relative or empty one outright.
+type Entrypoint struct {
+	Kind       string   `json:"kind"`
+	Argv       []string `json:"argv"`
+	OutputPath string   `json:"outputPath"`
+}
+
+// Hardware constraints for an image-source Job. See the orchestrator's
+// hardware.ts HardwareSchema. GPUCount is always the closed literal 1: Jobs
+// are single-GPU only on the wire, never `aq up`'s free-form --gpus request.
+// GPUModels are exact marketplace names (see `aq gpus`), never `aq up`'s
+// substring --gpu match.
+type Hardware struct {
+	GPUModels []string `json:"gpuModels"`
+	GPUCount  int      `json:"gpuCount"`
+	DiskGB    int      `json:"diskGb"`
+}
+
+// JobPlacement is a Job's placement preferences. See the orchestrator's
+// hardware.ts PlacementSchema. Named JobPlacement, not Placement, because
+// control.go's Placement already names an unrelated concept (where a resumed
+// deployment landed). GPUOrder carries `omitempty`: an absent key already
+// means "cheapest" (today's behaviour), so that value is never written
+// explicitly, exactly as the console omits it.
+type JobPlacement struct {
+	GPUOrder string `json:"gpuOrder,omitempty"`
+}
+
 // CreateJob makes a setup version callable, returning the created
 // job row.
 func (c *Client) CreateJob(req CreateJobRequest) (*Job, error) {
 	var out Job
 	if err := c.postJSON("/jobs", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// HardwareAvailabilityModel is one element of GET /jobs/hardware-availability's
+// `models` array: the full GPU model UNIVERSE the marketplace can currently
+// offer, independent of any gpuModels filter on the request.
+type HardwareAvailabilityModel struct {
+	// GPUModel is spelled exactly as the marketplace feed reports it; this
+	// exact string is what goes back out as a `hardware.gpuModels` entry.
+	GPUModel string `json:"gpuModel"`
+}
+
+// HardwareAvailability is what GET /jobs/hardware-availability returns.
+// `--any-gpu` only needs the model universe, so this omits Offers/TotalOffers
+// (they scope to a gpuModels filter this call never sends).
+type HardwareAvailability struct {
+	Models []HardwareAvailabilityModel `json:"models"`
+}
+
+// HardwareAvailability fetches the GPU model universe the marketplace can
+// currently serve for a disk-size constraint: GET /jobs/hardware-availability
+// (team-scoped, unlike the public /marketplace feed `aq gpus` reads).
+//
+// Used only by `aq job create --image ... --any-gpu`, the explicit opt-in
+// that mirrors the console's "no card picked means any card" default
+// (console/app/jobs/new/page.tsx:510-516): fetch every model the market has
+// right now and send all of them, rather than leaving hardware.gpuModels
+// empty, which placement refuses outright with no_gpu_models.
+func (c *Client) HardwareAvailability(diskGB int) (*HardwareAvailability, error) {
+	var out HardwareAvailability
+	q := url.Values{}
+	q.Set("diskGb", itoa(diskGB))
+	path := "/jobs/hardware-availability?" + q.Encode()
+	if err := c.getJSON(path, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
