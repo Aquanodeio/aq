@@ -52,10 +52,41 @@ func job(args []string) error {
 // jobCreateOptions configures runJobCreate. jobCreate() fills
 // in the real environment; tests run runJobCreate directly.
 type jobCreateOptions struct {
-	cred         *config.Credential
-	setupTarget  string // setup id (uuid) or name
-	version      int    // the per-lineage version NUMBER to make callable
-	name         string // job name (defaults to the setup's own name)
+	cred *config.Credential
+	// Exactly one source: (setupTarget, version) for a version-source create,
+	// or image for an image-source one. jobCreate refuses before this is ever
+	// built if both or neither were given, so runJobCreate branches on
+	// image == "" and trusts the XOR already holds.
+	setupTarget string // setup id (uuid) or name
+	version     int    // the per-lineage version NUMBER to make callable
+	image       string // --image ref; "" means version-source
+	// registrySecret names a `type: registry` team secret to pull a private
+	// --image with (`aq secret set --type registry`). Only meaningful with
+	// image set; jobCreate refuses it locally otherwise.
+	registrySecret string
+	// argv is the "command" entrypoint's argv, taken verbatim from everything
+	// after a bare `--` (splitRemoteCommand): nil means "derive it from the
+	// version's recipe" on a version-source create (job.service.ts
+	// deriveDefaultEntrypoint), and is REQUIRED on an image-source create,
+	// which has no recipe to derive from. A non-nil argv applies to EITHER
+	// source and skips derivation entirely, which is the only way a template
+	// with no derivable entrypoint at all (e.g. Torch+Jupyter, which the
+	// backend cannot derive a command from) can create a Job from the CLI.
+	argv []string
+	// outputPath pairs with argv; ignored when argv is nil.
+	outputPath string
+	// gpuModels/anyGPU/gpuOrder/diskGB are the image-source Job's hardware
+	// constraint. Never applied to a version-source create: the backend seeds
+	// that job's hardware from its recipe instead (job.service.ts
+	// seedHardwareFromRecipe), and the CLI does not override it.
+	gpuModels []string
+	anyGPU    bool
+	// gpuOrder is "" (cheapest, the default, never written to the wire),
+	// "ordered", or "cheapest" (written as "" too, matching what an absent
+	// key already means).
+	gpuOrder     string
+	diskGB       int
+	name         string // job name (defaults to the source's own name)
 	maxInstances int
 	// The MONTHLY budget, in cents, and optional. Not the old per-job
 	// `spendCapCents`, which the backend deleted: a dollar ceiling could not be
@@ -79,8 +110,9 @@ type jobCreateOptions struct {
 	out     io.Writer
 }
 
-// jobCreate parses `aq job create <setup> <version>` and wires the
-// real environment into runJobCreate.
+// jobCreate parses `aq job create <setup> <version>` (a version-source
+// create) or `aq job create --image <ref> ...` (an image-source one) and
+// wires the real environment into runJobCreate.
 //
 // --max-instances is required: a job hands out a GPU budget and never defaults
 // to unbounded.
@@ -97,33 +129,61 @@ type jobCreateOptions struct {
 // the worst case for one run. On top of that, --monthly-cap-cents is an
 // OPTIONAL budget over billed time for the calendar month.
 func jobCreate(args []string) error {
+	// Everything after a bare `--` is the entrypoint's argv, verbatim. No
+	// quoting gymnastics, and never re-parsed as our own flags (which a plain
+	// loop over fs.Parse would do, breaking on a user argv token that itself
+	// looks like a flag, e.g. `-- python train.py --epochs 3`).
+	head, argv := splitRemoteCommand(args)
+
 	fs := flag.NewFlagSet("job create", flag.ContinueOnError)
-	name := fs.String("name", "", "job name (default: the pod's own name)")
+	name := fs.String("name", "", "job name (default: the source's own name)")
 	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this job may run (required)")
 	monthlyCapCents := fs.Int64("monthly-cap-cents", -1, "optional monthly budget in cents; new runs stop once the month's spend reaches it")
 	on := fs.String("on", "", "run this job on a host you already attached with `aq attach`, instead of renting hardware")
+	image := fs.String("image", "", "a public or private image ref (source, instead of the <pod> <version> positionals)")
+	registrySecret := fs.String("registry-secret", "", "name of a `type: registry` team secret (`aq secret set --type registry`) to pull a private --image with")
+	var gpuModels stringList
+	fs.Var(&gpuModels, "gpu-model", "exact marketplace GPU model name (see `aq gpus`) an --image job may run on (repeatable; required for --image unless --any-gpu)")
+	anyGPU := fs.Bool("any-gpu", false, "explicit opt-in: let an --image job run on any GPU model the market currently offers, instead of naming one")
+	gpuOrder := fs.String("gpu-order", "", "with two or more --gpu-model, prefer them in the order given (\"ordered\") or cheapest-first (\"cheapest\", the default)")
+	diskGB := fs.Int("disk-gb", 100, "disk size in GB for an --image job")
+	outputPath := fs.String("output-path", "/outputs", "absolute path inside the box the command writes results into (used whenever a command is given after `--`)")
 	var secrets stringList
 	fs.Var(&secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Runs (repeatable)")
 
-	positional, err := parseInterspersed(fs, args)
+	positional, err := parseInterspersed(fs, head)
 	if err != nil {
 		return err
-	}
-	if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
-		return errors.New("usage: aq job create <pod> <version> --max-instances <n> [--monthly-cap-cents <n>] [--on <alias>]")
-	}
-	setupTarget := positional[0]
-	version, err := strconv.Atoi(positional[1])
-	if err != nil || version <= 0 {
-		return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq pods` (e.g. 3 for v3)", positional[1])
 	}
 	if *maxInstances <= 0 {
 		return errors.New("--max-instances is required and must be a positive number: a job hands out a GPU budget, so it never defaults to unbounded")
 	}
 
+	imageRef := strings.TrimSpace(*image)
+	registrySecretName := strings.TrimSpace(*registrySecret)
+	hasPositionalSource := len(positional) > 0
+
+	// SOURCE XOR, refused locally by name before any request is built:
+	// mirrors job.service.ts's own refusal (createJob:618-632), just earlier.
+	if imageRef != "" && hasPositionalSource {
+		return errors.New("aq job create takes exactly one source: --image, or <pod> <version> positionals, never both")
+	}
+	if registrySecretName != "" && imageRef == "" {
+		return errors.New("--registry-secret only applies to an --image job")
+	}
+	if imageRef == "" && !hasPositionalSource {
+		return errors.New("usage: aq job create <pod> <version> --max-instances <n> [...]  OR  aq job create --image <ref> --gpu-model <name> --max-instances <n> -- <argv...>")
+	}
+
 	onAlias := strings.TrimSpace(*on)
 	var pinnedDeploymentID int
 	if onAlias != "" {
+		if imageRef != "" {
+			// Mirrors job.service.ts's own PinnedBoxError: a pinned box
+			// already carries a saved version, so it has nothing an
+			// image-source job could match against.
+			return errors.New("--on pins a box that already carries a saved version, so it cannot serve an --image job")
+		}
 		h, err := lookupHost(onAlias)
 		if err != nil {
 			return err
@@ -141,6 +201,39 @@ func jobCreate(args []string) error {
 		pinnedDeploymentID = h.DeploymentID
 	}
 
+	var setupTarget string
+	var version int
+	if imageRef == "" {
+		if len(positional) < 2 || positional[0] == "" || positional[1] == "" {
+			return errors.New("usage: aq job create <pod> <version> --max-instances <n> [--monthly-cap-cents <n>] [--on <alias>]")
+		}
+		setupTarget = positional[0]
+		version, err = strconv.Atoi(positional[1])
+		if err != nil || version <= 0 {
+			return fmt.Errorf("invalid version %q; pass the version number shown by `aq save` or `aq pods` (e.g. 3 for v3)", positional[1])
+		}
+	} else {
+		// Entrypoint is REQUIRED for an image job, never invented: the
+		// backend refuses a missing one by name (job.service.ts:680-684,
+		// "there is no recipe to derive one from") because a null entrypoint
+		// fails later at dispatch, on a box the owner is already paying for.
+		if len(argv) == 0 {
+			return errors.New("an image-source job must state its entrypoint: pass the command to run after `--`, e.g. `aq job create --image ... -- python train.py`")
+		}
+		if len(gpuModels) == 0 && !*anyGPU {
+			return errors.New("--gpu-model is required for an image-source job (see `aq gpus` for exact names), or pass --any-gpu to allow any model the market currently offers")
+		}
+		if len(gpuModels) > 0 && *anyGPU {
+			return errors.New("--gpu-model and --any-gpu are mutually exclusive: name the models you want, or allow any of them, not both")
+		}
+		if *gpuOrder != "" && *gpuOrder != "ordered" && *gpuOrder != "cheapest" {
+			return fmt.Errorf("--gpu-order must be \"ordered\" or \"cheapest\", got %q", *gpuOrder)
+		}
+		if *diskGB < 10 || *diskGB > 10_000 {
+			return fmt.Errorf("--disk-gb must be between 10 and 10000, got %d", *diskGB)
+		}
+	}
+
 	// No required-cap check any more. The wall-clock bound is structural and
 	// always applies; the monthly budget is genuinely optional, and -1 means the
 	// key is left OFF THE WIRE entirely rather than sent as a 0 that would read
@@ -155,6 +248,14 @@ func jobCreate(args []string) error {
 		cred:               cred,
 		setupTarget:        setupTarget,
 		version:            version,
+		image:              imageRef,
+		registrySecret:     registrySecretName,
+		argv:               argv,
+		outputPath:         *outputPath,
+		gpuModels:          []string(gpuModels),
+		anyGPU:             *anyGPU,
+		gpuOrder:           *gpuOrder,
+		diskGB:             *diskGB,
 		name:               *name,
 		maxInstances:       *maxInstances,
 		monthlyCapCents:    *monthlyCapCents,
@@ -165,8 +266,29 @@ func jobCreate(args []string) error {
 	})
 }
 
-// runJobCreate resolves the (setup, version-number) pair to a version
-// row id (same resolution `aq share` uses) and makes it callable.
+// imageDerivedName mirrors console/app/jobs/new/page.tsx's own `derivedName`
+// for an image source: the last path segment of the ref, tag stripped,
+// "new-job" when that yields nothing usable.
+func imageDerivedName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "new-job"
+	}
+	last := ref
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		last = ref[i+1:]
+	}
+	if i := strings.Index(last, ":"); i >= 0 {
+		last = last[:i]
+	}
+	if last == "" {
+		return "new-job"
+	}
+	return last
+}
+
+// runJobCreate resolves the source (a (setup, version-number) pair, or an
+// image ref) and makes it callable.
 func runJobCreate(opts jobCreateOptions) error {
 	out := opts.out
 	if out == nil {
@@ -182,27 +304,82 @@ func runJobCreate(opts jobCreateOptions) error {
 	}
 
 	client := newControlClient(opts.cred)
-	setupID, err := resolveSetupID(client, opts.setupTarget)
-	if err != nil {
-		return err
-	}
-	versionRowID, err := resolveSetupVersionRowID(client, setupID, opts.version)
-	if err != nil {
-		return err
-	}
-
-	name := opts.name
-	if name == "" {
-		name = setupDisplayName(client, setupID)
-	}
 
 	req := api.CreateJobRequest{
-		Name:               name,
-		VersionID:          versionRowID,
 		MaxInstances:       opts.maxInstances,
 		PinnedDeploymentID: opts.pinnedDeploymentID,
 		Secrets:            opts.secrets,
 	}
+
+	var name string
+	if opts.image != "" {
+		name = opts.name
+		if name == "" {
+			name = imageDerivedName(opts.image)
+		}
+		req.Image = &api.ImageSource{Ref: opts.image, RegistrySecret: opts.registrySecret}
+
+		gpuModels := opts.gpuModels
+		if opts.anyGPU {
+			// The EXPLICIT opt-in to the console's "no card picked means any
+			// card" default (page.tsx:510-516): fetch the model universe and
+			// send all of it, rather than leaving gpuModels empty, which
+			// placement refuses outright (no_gpu_models, job.service.ts:467).
+			avail, err := client.HardwareAvailability(opts.diskGB)
+			if err != nil {
+				return fmt.Errorf("could not fetch the marketplace model universe for --any-gpu: %w", err)
+			}
+			gpuModels = make([]string, 0, len(avail.Models))
+			for _, m := range avail.Models {
+				gpuModels = append(gpuModels, m.GPUModel)
+			}
+			if len(gpuModels) == 0 {
+				return errors.New("--any-gpu found no GPU model on the market right now; try again, or pass --gpu-model explicitly")
+			}
+		}
+		req.Hardware = &api.Hardware{
+			GPUModels: gpuModels,
+			GPUCount:  1,
+			DiskGB:    opts.diskGB,
+		}
+		// Placement is always sent for an image job, exactly as the console
+		// does (buildParams() never gates the key itself); an empty object
+		// and an absent key mean the same thing to PlacementSchema, but this
+		// keeps the wire shape byte-identical to what the console sends.
+		placement := &api.JobPlacement{}
+		if opts.gpuOrder == "ordered" && len(gpuModels) > 1 {
+			placement.GPUOrder = "ordered"
+		}
+		req.Placement = placement
+	} else {
+		setupID, err := resolveSetupID(client, opts.setupTarget)
+		if err != nil {
+			return err
+		}
+		versionRowID, err := resolveSetupVersionRowID(client, setupID, opts.version)
+		if err != nil {
+			return err
+		}
+		name = opts.name
+		if name == "" {
+			name = setupDisplayName(client, setupID)
+		}
+		req.VersionID = versionRowID
+	}
+	req.Name = name
+
+	// argv applies to EITHER source: supplying an entrypoint skips the
+	// backend's recipe-derivation entirely (job.service.ts:678), which is the
+	// only way a non-ComfyUI template (no derivable entrypoint at all) can
+	// create a Job from the CLI.
+	if len(opts.argv) > 0 {
+		req.Entrypoint = &api.Entrypoint{
+			Kind:       "command",
+			Argv:       opts.argv,
+			OutputPath: opts.outputPath,
+		}
+	}
+
 	// OMITTED unless set. The backend's schema is optional, and optional means
 	// the key is ABSENT -- sending 0 would read as "a budget of nothing", which
 	// would refuse every run.
@@ -223,10 +400,19 @@ func runJobCreate(opts jobCreateOptions) error {
 		return fmt.Errorf("could not create job %q: %w", name, err)
 	}
 
-	if opts.pinnedDeploymentID != 0 {
+	switch {
+	case opts.pinnedDeploymentID != 0:
 		fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), pinned to %s, bills nothing)\n",
 			ep.Name, opts.version, opts.maxInstances, opts.onAlias)
-	} else {
+	case opts.image != "":
+		if opts.monthlyCapCents >= 0 {
+			fmt.Fprintf(out, "✓ Created job %q → image %s (max %d instance(s), monthly budget %s)\n",
+				ep.Name, opts.image, opts.maxInstances, formatCents(opts.monthlyCapCents))
+		} else {
+			fmt.Fprintf(out, "✓ Created job %q → image %s (max %d instance(s), bounded by its run time limit)\n",
+				ep.Name, opts.image, opts.maxInstances)
+		}
+	default:
 		if opts.monthlyCapCents >= 0 {
 			fmt.Fprintf(out, "✓ Created job %q → v%d (max %d instance(s), monthly budget %s)\n",
 				ep.Name, opts.version, opts.maxInstances, formatCents(opts.monthlyCapCents))
