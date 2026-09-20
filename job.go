@@ -22,11 +22,11 @@ import (
 // same string, so there is no argument shape that could disambiguate them.
 func job(args []string) error {
 	if len(args) == 0 {
-		// Every subcommand, not three of seven. This line listed only
+		// Every subcommand, not three of eight. This line listed only
 		// create/point/rm while the unknown-subcommand error below listed all
-		// seven, so `aq job` with no args hid run, runs, logs and cancel from
-		// the exact user who was asking what the verbs are.
-		return errors.New("usage: aq job <create|point|rm|run|runs|logs|cancel> ...")
+		// eight, so `aq job` with no args hid run, runs, logs, cancel and pull
+		// from the exact user who was asking what the verbs are.
+		return errors.New("usage: aq job <create|point|rm|run|runs|logs|cancel|pull> ...")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -44,8 +44,10 @@ func job(args []string) error {
 		return jobLogs(rest)
 	case "cancel":
 		return jobCancel(rest)
+	case "pull":
+		return jobPull(rest)
 	default:
-		return fmt.Errorf("aq job: unknown subcommand %q, expected one of create, point, rm, run, runs, logs, cancel", sub)
+		return fmt.Errorf("aq job: unknown subcommand %q, expected one of create, point, rm, run, runs, logs, cancel, pull", sub)
 	}
 }
 
@@ -115,7 +117,15 @@ type jobCreateOptions struct {
 	// refusal names what is missing.
 	checkpointPaths   []string
 	checkpointExclude []string
-	out               io.Writer
+	// installRequirements opts argv into the shared requirements.txt wrapper
+	// (training-jobs DX DELTA section 2.6, the same literal contract the
+	// console's "Install requirements.txt before running" toggle composes):
+	// copy whatever landed in ogre's fixed /inputs dir into /workspace, pip
+	// install -q -r requirements.txt, then exec the user's own command. Only
+	// meaningful with argv given (there is nothing else to wrap), and refused
+	// locally otherwise.
+	installRequirements bool
+	out                 io.Writer
 }
 
 // jobCreateFlags is every flag `aq job create` accepts, registered in one
@@ -124,20 +134,21 @@ type jobCreateOptions struct {
 // The help block drifted before: it listed three of fourteen flags, so an
 // image-source job was undocumented at the only place a user looks first.
 type jobCreateFlags struct {
-	name              *string
-	maxInstances      *int
-	monthlyCapCents   *int64
-	on                *string
-	image             *string
-	registrySecret    *string
-	gpuModels         *stringList
-	anyGPU            *bool
-	gpuOrder          *string
-	diskGB            *int
-	outputPath        *string
-	secrets           *stringList
-	checkpointPaths   *stringList
-	checkpointExclude *stringList
+	name                *string
+	maxInstances        *int
+	monthlyCapCents     *int64
+	on                  *string
+	image               *string
+	registrySecret      *string
+	gpuModels           *stringList
+	anyGPU              *bool
+	gpuOrder            *string
+	diskGB              *int
+	outputPath          *string
+	secrets             *stringList
+	checkpointPaths     *stringList
+	checkpointExclude   *stringList
+	installRequirements *bool
 }
 
 func registerJobCreateFlags(fs *flag.FlagSet) *jobCreateFlags {
@@ -161,6 +172,7 @@ func registerJobCreateFlags(fs *flag.FlagSet) *jobCreateFlags {
 	fs.Var(f.secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Runs (repeatable)")
 	fs.Var(f.checkpointPaths, "checkpoint-path", "path ogre snapshots so a reclaimed or price-hopped run can resume (repeatable); optional, but the server refuses a job with none named")
 	fs.Var(f.checkpointExclude, "checkpoint-exclude", "path excluded from the checkpoint snapshot, e.g. a venv or cache dir (repeatable)")
+	f.installRequirements = fs.Bool("install-requirements", false, "wrap the command (after --) to install a declared requirements.txt before running it: copies /inputs into /workspace, pip installs -q -r requirements.txt, then execs the command (shared wire contract with the console's same toggle)")
 	return f
 }
 
@@ -281,6 +293,10 @@ func jobCreate(args []string) error {
 		}
 	}
 
+	if *f.installRequirements && len(argv) == 0 {
+		return errors.New("--install-requirements has no command to wrap: pass one after `--`, e.g. `aq job create ... --install-requirements -- python train.py`")
+	}
+
 	// No required-cap check any more. The wall-clock bound is structural and
 	// always applies; the monthly budget is genuinely optional, and -1 means the
 	// key is left OFF THE WIRE entirely rather than sent as a 0 that would read
@@ -292,26 +308,27 @@ func jobCreate(args []string) error {
 	}
 
 	return runJobCreate(jobCreateOptions{
-		cred:               cred,
-		setupTarget:        setupTarget,
-		version:            version,
-		image:              imageRef,
-		registrySecret:     registrySecretName,
-		argv:               argv,
-		outputPath:         *outputPath,
-		gpuModels:          []string(gpuModels),
-		anyGPU:             *anyGPU,
-		gpuOrder:           *gpuOrder,
-		diskGB:             *diskGB,
-		name:               *name,
-		maxInstances:       *maxInstances,
-		monthlyCapCents:    *monthlyCapCents,
-		onAlias:            onAlias,
-		pinnedDeploymentID: pinnedDeploymentID,
-		secrets:            []string(secrets),
-		checkpointPaths:    []string(checkpointPaths),
-		checkpointExclude:  []string(checkpointExclude),
-		out:                os.Stdout,
+		cred:                cred,
+		setupTarget:         setupTarget,
+		version:             version,
+		image:               imageRef,
+		registrySecret:      registrySecretName,
+		argv:                argv,
+		outputPath:          *outputPath,
+		gpuModels:           []string(gpuModels),
+		anyGPU:              *anyGPU,
+		gpuOrder:            *gpuOrder,
+		diskGB:              *diskGB,
+		name:                *name,
+		maxInstances:        *maxInstances,
+		monthlyCapCents:     *monthlyCapCents,
+		onAlias:             onAlias,
+		pinnedDeploymentID:  pinnedDeploymentID,
+		secrets:             []string(secrets),
+		checkpointPaths:     []string(checkpointPaths),
+		checkpointExclude:   []string(checkpointExclude),
+		installRequirements: *f.installRequirements,
+		out:                 os.Stdout,
 	})
 }
 
@@ -422,9 +439,13 @@ func runJobCreate(opts jobCreateOptions) error {
 	// only way a non-ComfyUI template (no derivable entrypoint at all) can
 	// create a Job from the CLI.
 	if len(opts.argv) > 0 {
+		argv := opts.argv
+		if opts.installRequirements {
+			argv = wrapWithRequirementsInstall(argv)
+		}
 		req.Entrypoint = &api.Entrypoint{
 			Kind:       "command",
-			Argv:       opts.argv,
+			Argv:       argv,
 			OutputPath: opts.outputPath,
 		}
 	}
@@ -628,6 +649,37 @@ func runJobRemove(opts jobRemoveOptions) error {
 
 	fmt.Fprintf(out, "✓ Removed job %q\n", ep.Name)
 	return nil
+}
+
+// requirementsInstallScript is the FIXED LITERAL both aq and console must
+// emit identically, with nothing ever substituted into it. An earlier form
+// interpolated the command into this string (`... && exec <RAW_COMMAND>`,
+// built here via `strings.Join(argv, " ")`), which is unsafe for a builder
+// holding TOKENS rather than the user's original typed string: a token
+// containing a space, `;`, `|` or `$(...)` reassembles into something
+// `bash -lc` re-splits or executes, silently producing a WRONG run rather
+// than an error. `exec "$@"` has no interpolation and therefore no quoting
+// hazard at all -- see wrapWithRequirementsInstall for how $0/$@ get filled.
+const requirementsInstallScript = `cp -r /inputs/. /workspace/ && pip install -q -r requirements.txt && exec "$@"`
+
+// wrapWithRequirementsInstall composes the shared wire contract both aq and
+// console build for the "install requirements.txt before running" opt-in
+// (training-jobs DX DELTA section 2.6, revised 2026-09-20): copy whatever
+// ogre already staged in its fixed /inputs dir into the checkpointed
+// /workspace, pip install a declared requirements.txt, then exec the user's
+// own command via `"$@"`. This is the literal both builders must emit
+// verbatim -- the placement test asserts the WIRE argv, never this helper.
+//
+// argv is passed through UNTOUCHED, one element each, after two fixed
+// entries: the script string, then a literal "bash" that fills $0 (`bash
+// -lc` assigns its first operand to $0, not $1 -- omitting it would silently
+// eat the user's first argument). aq already holds argv as separate tokens
+// from its own `-- <argv>` parsing (never shell-parsed), so unlike console's
+// client-side tokenizer there is nothing left to tokenize here.
+func wrapWithRequirementsInstall(argv []string) []string {
+	wrapped := make([]string, 0, 4+len(argv))
+	wrapped = append(wrapped, "bash", "-lc", requirementsInstallScript, "bash")
+	return append(wrapped, argv...)
 }
 
 // formatCents renders a cent amount as a dollar figure, e.g. 150 -> "$1.50".

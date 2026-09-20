@@ -388,5 +388,70 @@ func (c *Client) CancelRun(jobID, runID string) (*Run, error) {
 	return &out, nil
 }
 
+// RunArtifact is one entry of a run's landed artifacts: its log object, and
+// every declared output. Key is a relative name, never the underlying S3 key
+// or bucket layout -- mjolnir owns that (run-artifacts.ts), the orchestrator
+// never hands it to a caller.
+type RunArtifact struct {
+	Key          string `json:"key"`
+	SizeBytes    int64  `json:"sizeBytes"`
+	LastModified string `json:"lastModified"`
+}
+
+// RunArtifactsList is GET /jobs/:id/runs/:runId/artifacts's response.
+//
+// Source is FOUR-state, deliberately mirroring GetRunLogs's own Source field:
+// "no_attempt_yet" (the run has never had a box), "no_box" (this attempt's
+// box was never assigned), "ok" (mjolnir answered -- which may still carry
+// zero Artifacts, a legitimate answer for a run still executing), and
+// "unreachable" (we could not ask). Collapsing "unreachable" into an empty
+// "ok" list would tell a caller "no outputs" when the true answer is "we
+// don't know yet" -- never do that locally either.
+type RunArtifactsList struct {
+	Source         string        `json:"source"`
+	AttemptOrdinal *int          `json:"attemptOrdinal"`
+	Artifacts      []RunArtifact `json:"artifacts"`
+	Truncated      bool          `json:"truncated"`
+}
+
+// ListRunArtifacts lists one run's landed artifacts (the latest attempt,
+// server-selected -- this client never sends its own ?attempt=, there is no
+// CLI surface that picks one). Always inspect Source before trusting
+// Artifacts; see RunArtifactsList's doc.
+func (c *Client) ListRunArtifacts(jobID, runID string) (*RunArtifactsList, error) {
+	var out RunArtifactsList
+	path := "/jobs/" + url.PathEscape(jobID) + "/runs/" + url.PathEscape(runID) + "/artifacts"
+	if err := c.getJSON(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RunArtifactDownload is GET .../artifacts/download?key=...'s response: a
+// fresh, short-lived download URL for one artifact key named by a prior
+// ListRunArtifacts response. Never stored anywhere -- it is a bearer
+// credential, minted per request.
+type RunArtifactDownload struct {
+	URL            string `json:"url"`
+	ExpiresAt      string `json:"expiresAt"`
+	AttemptOrdinal int    `json:"attemptOrdinal"`
+}
+
+// DownloadRunArtifactURL mints a download URL for one artifact key. A key
+// that no longer resolves (the run moved on, the box is gone) surfaces as an
+// *APIError -- 404 for "no attempt"/"no box", 503 for "could not reach the
+// box" (RunArtifactUnreachableError, orchestrator jobs.controller.ts) --
+// which the caller must not treat as an empty artifact.
+func (c *Client) DownloadRunArtifactURL(jobID, runID, key string) (*RunArtifactDownload, error) {
+	var out RunArtifactDownload
+	q := url.Values{}
+	q.Set("key", key)
+	path := "/jobs/" + url.PathEscape(jobID) + "/runs/" + url.PathEscape(runID) + "/artifacts/download?" + q.Encode()
+	if err := c.getJSON(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func itoa(i int) string     { return strconv.Itoa(i) }
 func itoa64(i int64) string { return strconv.FormatInt(i, 10) }

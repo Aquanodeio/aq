@@ -480,6 +480,169 @@ func TestCreateJobCheckpointAcceptedByTheRealOrchestrator(t *testing.T) {
 	}
 }
 
+// TestCreateJobArgvElementWithSpacesSurvivesVerbatim: argv is taken straight
+// from everything after a bare `--` and posted as a JSON array element by
+// element, never shell-joined and re-split anywhere in between. An argv
+// element that itself contains a space (a quoted shell token, e.g.
+// `-- python train.py --name "my run"`) must reach the wire as ONE array
+// element carrying that space, not two.
+func TestCreateJobArgvElementWithSpacesSurvivesVerbatim(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.argv = []string{"python", "train.py", "--name", "my run"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if decoded.Entrypoint == nil || !reflect.DeepEqual(decoded.Entrypoint.Argv, opts.argv) {
+		t.Fatalf("entrypoint.argv = %+v, want %v verbatim (raw body: %s)", decoded.Entrypoint, opts.argv, body)
+	}
+}
+
+// TestCreateJobInstallRequirementsWrapsArgvVerbatim asserts the shared
+// requirements.txt wrapper (training-jobs DX DELTA section 2.6, revised
+// 2026-09-20 to `exec "$@"`) against the WIRE argv, never against
+// wrapWithRequirementsInstall's own return value: the literal is a contract
+// with console, and the placement test has to be on the body a server
+// would actually receive.
+func TestCreateJobInstallRequirementsWrapsArgvVerbatim(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.argv = []string{"python", "train.py", "--epochs", "3"}
+	opts.installRequirements = true
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	wantArgv := []string{
+		"bash", "-lc",
+		`cp -r /inputs/. /workspace/ && pip install -q -r requirements.txt && exec "$@"`,
+		"bash", "python", "train.py", "--epochs", "3",
+	}
+	if decoded.Entrypoint == nil || !reflect.DeepEqual(decoded.Entrypoint.Argv, wantArgv) {
+		t.Fatalf("entrypoint.argv = %+v, want the literal wrapper %v (raw body: %s)", decoded.Entrypoint, wantArgv, body)
+	}
+}
+
+// TestCreateJobInstallRequirementsPreservesHazardousTokensVerbatim is the
+// regression the earlier `strings.Join`-based wrapper could not pass: a
+// token containing a space and a token containing a shell metacharacter
+// must both arrive on the wire as their OWN single argv elements, byte for
+// byte, never rejoined into one string and never re-split or interpreted by
+// a shell along the way. The old `exec <RAW_COMMAND>` form would have
+// reassembled `--run-name "my run"` into two arguments and handed
+// `$(whoami)` straight to bash for execution; this asserts neither happens.
+func TestCreateJobInstallRequirementsPreservesHazardousTokensVerbatim(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	hazardous := []string{"python", "train.py", "--run-name", "my run", "--tag", "$(whoami)"}
+	opts := baseImageCreateOpts(srv.URL)
+	opts.argv = hazardous
+	opts.installRequirements = true
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	wantArgv := append([]string{
+		"bash", "-lc",
+		`cp -r /inputs/. /workspace/ && pip install -q -r requirements.txt && exec "$@"`,
+		"bash",
+	}, hazardous...)
+	if decoded.Entrypoint == nil || !reflect.DeepEqual(decoded.Entrypoint.Argv, wantArgv) {
+		t.Fatalf("entrypoint.argv = %+v, want each hazardous token intact as %v (raw body: %s)", decoded.Entrypoint, wantArgv, body)
+	}
+	// The two hazardous tokens must each be their own element -- not
+	// merged with a neighbor, not split apart.
+	got := decoded.Entrypoint.Argv
+	if len(got) != len(wantArgv) {
+		t.Fatalf("argv has %d elements, want %d (a rejoin/re-split changed the count): %v", len(got), len(wantArgv), got)
+	}
+	if idx := indexOf(got, "my run"); idx < 0 {
+		t.Fatalf(`"my run" must survive as a single argv element, got: %v`, got)
+	}
+	if idx := indexOf(got, "$(whoami)"); idx < 0 {
+		t.Fatalf(`"$(whoami)" must survive as a single, unexecuted argv element, got: %v`, got)
+	}
+}
+
+// TestWrapWithRequirementsInstallPlacesBashAtDollarZero is the off-box-0
+// regression the DELTA's revision called out by name: `bash -lc <script>
+// <$0> <argv...>` assigns its FIRST operand after the script to $0, not
+// $1, so the literal "bash" placeholder is required or the wrapper would
+// silently eat the user's actual first argument as if it were $0.
+func TestWrapWithRequirementsInstallPlacesBashAtDollarZero(t *testing.T) {
+	argv := []string{"python", "train.py"}
+	got := wrapWithRequirementsInstall(argv)
+
+	if len(got) < 4 {
+		t.Fatalf("want at least 4 elements (bash, -lc, script, $0), got %v", got)
+	}
+	if got[0] != "bash" || got[1] != "-lc" {
+		t.Fatalf("want [bash -lc ...], got %v", got)
+	}
+	if got[3] != "bash" {
+		t.Fatalf(`element 3 (the $0 placeholder bash -lc consumes before $1) must be the literal "bash", got %q -- omitting it eats the user's first real argument`, got[3])
+	}
+	// Everything from index 4 on must be the user's own argv, untouched and
+	// in order -- this is what $1.. actually binds to.
+	if !reflect.DeepEqual(got[4:], argv) {
+		t.Fatalf("argv passed to $@ = %v, want the user's own tokens %v untouched", got[4:], argv)
+	}
+}
+
+// indexOf returns the index of needle in haystack, or -1.
+func indexOf(haystack []string, needle string) int {
+	for i, s := range haystack {
+		if s == needle {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestJobCreateInstallRequirementsWithNoCommandRefusesLocally: the flag has
+// nothing to wrap without a command after `--`, and the server has no
+// recipe-derived argv this could attach to either.
+func TestJobCreateInstallRequirementsWithNoCommandRefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--install-requirements"})
+	if err == nil {
+		t.Fatal("want an error when --install-requirements is given with no command after --")
+	}
+	if !strings.Contains(err.Error(), "--install-requirements") {
+		t.Fatalf("want the error to name the flag, got: %v", err)
+	}
+}
+
 // TestCreateJobImageSourceOmitsVersionIdFromTheWire: the SOURCE XOR is
 // enforced on the WIRE, not just on the parsed Go struct: versionId must be
 // ABSENT, never present as 0, or the backend's both-or-neither check

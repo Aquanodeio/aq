@@ -444,6 +444,13 @@ push / run:
   --detach           Start it and return. The run keeps going after you
                      disconnect; read it back with "aq logs". Prints the run
                      id on stdout so you can capture it.
+  --then-pause <duration>
+                     Valid only with --detach. After the run launches, arm
+                     idle auto-pause on its deployment for this act-after
+                     window (e.g. 1h): it pauses once this command has
+                     finished AND the GPU has stayed idle that long, not the
+                     instant the process exits. Off unless you ask for it —
+                     each run that wants it opts in for itself.
 
   A .aqignore file in the directory you send adds exclude patterns, one per
   line, "#" for comments.
@@ -514,6 +521,11 @@ job:
   --output-path <path>      Absolute path inside the box the command writes its
                             results into (default: /outputs). Used whenever a
                             command is given after "--"
+  --install-requirements    Wrap the command (after "--") to install a
+                            declared requirements.txt before running it: copy
+                            /inputs into /workspace, "pip install -q -r
+                            requirements.txt", then exec the command. Same
+                            wire contract the console's own toggle composes
 
   Image-source jobs only:
   --image <ref>             A public or private image ref, used instead of the
@@ -554,6 +566,16 @@ job:
   aq job cancel <job> <run-id>
                               Stop a run. Billing stops when the machine is
                               released.
+  aq job pull <job> [--run <runId>] [dest]
+                              Download a finished run's landed artifacts (its
+                              log object and every declared output) into dest
+                              (default: "./<job>-<runId>/"), one file per
+                              artifact key. Re-running skips a file already
+                              downloaded at the same size, so an interrupted
+                              pull picks up where it left off.
+
+  --run <runId>              Pull this run instead of the latest one that
+                            actually reached a box (default)
 
 secret:
   Team secrets: env vars and private-registry credentials a job can reference
