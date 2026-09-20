@@ -167,6 +167,7 @@ func doJobRun(opts jobRunOptions) error {
 		}
 		if res.OutputRef != "" {
 			fmt.Fprintf(out, "  output: %s\n", res.OutputRef)
+			fmt.Fprintf(out, "  fetch with: aq job pull %s --run %s\n", opts.target, res.ID)
 		}
 		return nil
 	}

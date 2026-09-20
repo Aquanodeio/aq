@@ -31,6 +31,7 @@ func TestTopLevelHelpDocumentsEveryJobFlag(t *testing.T) {
 	}{
 		{"aq job create", func(fs *flag.FlagSet) { registerJobCreateFlags(fs) }},
 		{"aq job run", func(fs *flag.FlagSet) { registerJobRunFlags(fs) }},
+		{"aq job pull", func(fs *flag.FlagSet) { registerJobPullFlags(fs) }},
 	} {
 		fs := flag.NewFlagSet(c.command, flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
