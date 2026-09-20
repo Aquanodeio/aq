@@ -107,7 +107,15 @@ type jobCreateOptions struct {
 	// means none; CreateJobRequest.Secrets carries `omitempty` for exactly
 	// that, the same convention every optional field on the request follows.
 	secrets []string
-	out     io.Writer
+	// checkpointPaths/checkpointExclude map to api.Checkpoint{Paths,Exclude}.
+	// Applies to EITHER source, since the server's checkpointRequired check
+	// (job.service.ts:578) runs unconditionally before any source branch.
+	// Optional at this CLI, deliberately: neither is locally required, so
+	// giving neither sends no checkpoint key at all and the server's own
+	// refusal names what is missing.
+	checkpointPaths   []string
+	checkpointExclude []string
+	out               io.Writer
 }
 
 // jobCreate parses `aq job create <setup> <version>` (a version-source
@@ -150,6 +158,10 @@ func jobCreate(args []string) error {
 	outputPath := fs.String("output-path", "/outputs", "absolute path inside the box the command writes results into (used whenever a command is given after `--`)")
 	var secrets stringList
 	fs.Var(&secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Runs (repeatable)")
+	var checkpointPaths stringList
+	fs.Var(&checkpointPaths, "checkpoint-path", "path ogre snapshots so a reclaimed or price-hopped run can resume (repeatable); optional, but the server refuses a job with none named")
+	var checkpointExclude stringList
+	fs.Var(&checkpointExclude, "checkpoint-exclude", "path excluded from the checkpoint snapshot, e.g. a venv or cache dir (repeatable)")
 
 	positional, err := parseInterspersed(fs, head)
 	if err != nil {
@@ -262,6 +274,8 @@ func jobCreate(args []string) error {
 		onAlias:            onAlias,
 		pinnedDeploymentID: pinnedDeploymentID,
 		secrets:            []string(secrets),
+		checkpointPaths:    []string(checkpointPaths),
+		checkpointExclude:  []string(checkpointExclude),
 		out:                os.Stdout,
 	})
 }
@@ -385,6 +399,16 @@ func runJobCreate(opts jobCreateOptions) error {
 	// would refuse every run.
 	if opts.monthlyCapCents >= 0 {
 		req.MonthlySpendCapCents = &opts.monthlyCapCents
+	}
+
+	// Applies to EITHER source: checkpointRequired runs unconditionally
+	// before any source branch. Neither flag is locally required, so giving
+	// neither leaves the key off the wire and the server's own refusal fires.
+	if len(opts.checkpointPaths) > 0 || len(opts.checkpointExclude) > 0 {
+		req.Checkpoint = &api.Checkpoint{
+			Paths:   opts.checkpointPaths,
+			Exclude: opts.checkpointExclude,
+		}
 	}
 	ep, err := client.CreateJob(req)
 	if err != nil {

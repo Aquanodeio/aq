@@ -78,6 +78,28 @@ type CreateJobRequest struct {
 	// field on this request already follows; never sent as an empty array.
 	// A name with no matching live secret on the team is refused (400).
 	Secrets []string `json:"secrets,omitempty"`
+	// Checkpoint names the paths ogre snapshots so a reclaimed or
+	// price-hopped run can resume (job.service.ts's checkpointRequired,
+	// hardware.ts:99). Pointer + omitempty: the key is ABSENT on the wire
+	// when the caller passes neither --checkpoint-path nor
+	// --checkpoint-exclude, and the server's own refusal fires with its own
+	// message. Deliberately no local required-check here: the server owns
+	// this rule and is moving it to a defaulted value, so a local mirror
+	// would be a second copy of a rule already scheduled for deletion.
+	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`
+}
+
+// Checkpoint is the `{ paths, exclude? }` shape job.service.ts stores
+// verbatim (the field is typed `unknown` server-side; only Paths is ever
+// read, by hasCheckpointPaths). Paths carries no `omitempty`: once
+// Checkpoint itself is present, the key must still read as present so the
+// server's own "checkpoint.paths is required" refusal fires on an empty
+// list, never silently on an absent key. Exclude keeps `omitempty` since
+// most jobs need no exclusions and the console sends none when that field
+// is blank.
+type Checkpoint struct {
+	Paths   []string `json:"paths"`
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 // ImageSource is the `{ ref, registrySecret? }` shape

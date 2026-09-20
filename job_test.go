@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -303,12 +304,21 @@ func decodeWireBody(t *testing.T, body []byte) map[string]any {
 // own code. Mocking the component whose contract is at risk would let a
 // field-name break agree with itself).
 //
-// `wantJSON` deliberately excludes maxRuntimeSeconds, outputs, checkpoint,
-// schedule, webhookUrl, secrets and the placement-target patch: buildParams()
+// `checkpoint` is the one field in `wantJSON` NOT read off console's
+// buildParams(): console's draft carries `{paths, intervalSeconds}`, a
+// shape a console-literal transcription would get wrong for this field.
+// The CLI's `checkpoint{paths,exclude}` is instead the shape the
+// orchestrator's own `hasCheckpointPaths`/`checkpointRequired`
+// (hardware.ts:67-105) actually validates, the field it runs against, not a
+// sibling client's guess at it. TestCreateJobCheckpointAcceptedByTheRealOrchestrator
+// below is what checks this against the live server itself.
+//
+// `wantJSON` deliberately excludes maxRuntimeSeconds, outputs, schedule,
+// webhookUrl, secrets and the placement-target patch: buildParams()
 // always/conditionally sends those too, but the ticket's own scope boundary
-// says not to add --max-runtime-seconds/--schedule/--webhook-url/--checkpoint/
-// --outputs/--monthly-cap-cents beyond what already exists, so this CLI path
-// never sends them and a full-body comparison would fail on an intentional,
+// says not to add --max-runtime-seconds/--schedule/--webhook-url/--outputs/
+// --monthly-cap-cents beyond what already exists, so this CLI path never
+// sends them and a full-body comparison would fail on an intentional,
 // pre-existing gap rather than on this change.
 func TestCreateJobImageSourceMatchesConsoleBuildParams(t *testing.T) {
 	var body []byte
@@ -322,6 +332,8 @@ func TestCreateJobImageSourceMatchesConsoleBuildParams(t *testing.T) {
 	opts.registrySecret = "docker-hub"
 	opts.gpuOrder = "ordered" // 2 models given, so console WOULD send this
 	opts.argv = []string{"python", "train.py", "--epochs", "3"}
+	opts.checkpointPaths = []string{"/workspace/checkpoints"}
+	opts.checkpointExclude = []string{"/workspace/.venv"}
 	if err := runJobCreate(opts); err != nil {
 		t.Fatalf("runJobCreate: %v", err)
 	}
@@ -332,12 +344,139 @@ func TestCreateJobImageSourceMatchesConsoleBuildParams(t *testing.T) {
 		"maxInstances": 2,
 		"hardware": {"gpuModels": ["H100", "A100"], "gpuCount": 1, "diskGb": 200},
 		"placement": {"gpuOrder": "ordered"},
-		"entrypoint": {"kind": "command", "argv": ["python", "train.py", "--epochs", "3"], "outputPath": "/outputs"}
+		"entrypoint": {"kind": "command", "argv": ["python", "train.py", "--epochs", "3"], "outputPath": "/outputs"},
+		"checkpoint": {"paths": ["/workspace/checkpoints"], "exclude": ["/workspace/.venv"]}
 	}`
 	got := decodeWireBody(t, body)
 	want := decodeWireBody(t, []byte(wantJSON))
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("wire body does not match console buildParams() shape:\n got:  %s\nwant:  %s", body, wantJSON)
+	}
+}
+
+// TestCreateJobCheckpointAbsentFromWireWhenNoFlagsGiven: neither
+// --checkpoint-path nor --checkpoint-exclude was passed, so the `checkpoint`
+// key must be ABSENT from the wire body entirely -- not `null`, not `{}` --
+// letting the server's own checkpointRequired refusal name what is missing,
+// rather than the CLI sending a present-but-empty key that reads differently.
+func TestCreateJobCheckpointAbsentFromWireWhenNoFlagsGiven(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.argv = []string{"python", "train.py"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+	if strings.Contains(string(body), "checkpoint") {
+		t.Fatalf("checkpoint must be absent from the wire when neither flag is given, got: %s", body)
+	}
+}
+
+// TestCreateJobCheckpointPresentOnWireWhenFlagsGiven asserts the wire carries
+// exactly the given paths (and exclude list) once either flag is passed, on
+// a VERSION-source create -- the ticket's fix applies to BOTH sources, since
+// checkpointRequired runs unconditionally before any source branch.
+func TestCreateJobCheckpointPresentOnWireWhenFlagsGiven(t *testing.T) {
+	var body []byte
+	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
+	})
+	defer srv.Close()
+
+	opts := baseCreateOpts(srv.URL)
+	opts.checkpointPaths = []string{"/workspace", "/data/out"}
+	opts.checkpointExclude = []string{"/workspace/.venv", "/workspace/node_modules"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if decoded.Checkpoint == nil {
+		t.Fatalf("checkpoint must be present on the wire once a flag is given, got: %s", body)
+	}
+	if !reflect.DeepEqual(decoded.Checkpoint.Paths, opts.checkpointPaths) {
+		t.Errorf("checkpoint.paths = %v, want %v", decoded.Checkpoint.Paths, opts.checkpointPaths)
+	}
+	if !reflect.DeepEqual(decoded.Checkpoint.Exclude, opts.checkpointExclude) {
+		t.Errorf("checkpoint.exclude = %v, want %v", decoded.Checkpoint.Exclude, opts.checkpointExclude)
+	}
+}
+
+// TestCreateJobCheckpointAcceptedByTheRealOrchestrator is the ticket's
+// "exercise the REAL create endpoint" clause. Every other test in this file
+// asserts our own code against itself or against a literal an author typed
+// -- exactly the shape of the bug being fixed here: aq#89's parity test
+// agreed with a literal transcribed from reading console source while the
+// real server required a field neither side carried. This test instead
+// posts a real checkpoint-bearing create to a real orchestrator and asserts
+// the SERVER accepts it.
+//
+// Gated behind AQ_LIVE_CREATE_TOKEN/AQ_LIVE_CREATE_TEAM_ID, deliberately not
+// `config.Load()`: TestMain (main_test.go) sandboxes HOME/AQ_CONFIG_DIR for
+// this whole package on every run, on purpose, so a test that forgot to
+// isolate credentials or ssh config can never touch a developer's real
+// setup -- config.Load() can therefore never see a real credential inside
+// this package's tests no matter what env var toggles this test, and must
+// not be routed around that. Reading two explicit env vars keeps `go test
+// ./...` credential-free and prod-free by default (aq/CLAUDE.md's own
+// standing gotcha is that `aq` reaches production by doing nothing), while
+// still letting this test genuinely hit the real endpoint when asked. This
+// never runs a Run and never rents a box (only a Run does), and it deletes
+// the job it created in cleanup.
+func TestCreateJobCheckpointAcceptedByTheRealOrchestrator(t *testing.T) {
+	token := os.Getenv("AQ_LIVE_CREATE_TOKEN")
+	teamID := os.Getenv("AQ_LIVE_CREATE_TEAM_ID")
+	if token == "" || teamID == "" {
+		t.Skip("set AQ_LIVE_CREATE_TOKEN and AQ_LIVE_CREATE_TEAM_ID to exercise the real orchestrator; skipped by default so go test ./... never touches prod")
+	}
+	apiURL := os.Getenv("AQ_LIVE_CREATE_API_URL")
+	if apiURL == "" {
+		apiURL = config.DefaultAPIURL
+	}
+	cred := &config.Credential{Token: token, TeamID: teamID, APIURL: apiURL}
+	client := newControlClient(cred)
+
+	avail, err := client.HardwareAvailability(20)
+	if err != nil || len(avail.Models) == 0 {
+		t.Fatalf("could not fetch a live GPU model to create against: %v", err)
+	}
+
+	name := fmt.Sprintf("aq-checkpoint-livecheck-%d", time.Now().UnixNano())
+	opts := jobCreateOptions{
+		cred:            cred,
+		image:           "docker.io/library/alpine:3.20",
+		gpuModels:       []string{avail.Models[0].GPUModel},
+		diskGB:          20,
+		maxInstances:    1,
+		monthlyCapCents: -1,
+		name:            name,
+		argv:            []string{"/bin/sh", "-c", "echo hi > /outputs/r.txt"},
+		outputPath:      "/outputs",
+		checkpointPaths: []string{"/outputs"},
+		out:             &bytes.Buffer{},
+	}
+	t.Cleanup(func() {
+		jobs, err := client.ListJobs()
+		if err != nil {
+			return
+		}
+		for _, j := range jobs {
+			if j.Name == name {
+				_ = client.DeleteJob(j.ID)
+			}
+		}
+	})
+
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("the real orchestrator refused a checkpoint-bearing create: %v", err)
 	}
 }
 
