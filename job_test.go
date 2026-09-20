@@ -480,6 +480,79 @@ func TestCreateJobCheckpointAcceptedByTheRealOrchestrator(t *testing.T) {
 	}
 }
 
+// TestCreateJobArgvElementWithSpacesSurvivesVerbatim: argv is taken straight
+// from everything after a bare `--` and posted as a JSON array element by
+// element, never shell-joined and re-split anywhere in between. An argv
+// element that itself contains a space (a quoted shell token, e.g.
+// `-- python train.py --name "my run"`) must reach the wire as ONE array
+// element carrying that space, not two.
+func TestCreateJobArgvElementWithSpacesSurvivesVerbatim(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.argv = []string{"python", "train.py", "--name", "my run"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if decoded.Entrypoint == nil || !reflect.DeepEqual(decoded.Entrypoint.Argv, opts.argv) {
+		t.Fatalf("entrypoint.argv = %+v, want %v verbatim (raw body: %s)", decoded.Entrypoint, opts.argv, body)
+	}
+}
+
+// TestCreateJobInstallRequirementsWrapsArgvVerbatim asserts the shared
+// requirements.txt wrapper (training-jobs DX DELTA section 2.6) against the
+// WIRE argv, never against wrapWithRequirementsInstall's own return value:
+// the literal is a contract with console, and the placement test has to be
+// on the body a server would actually receive.
+func TestCreateJobInstallRequirementsWrapsArgvVerbatim(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.argv = []string{"python", "train.py", "--epochs", "3"}
+	opts.installRequirements = true
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	wantArgv := []string{"bash", "-lc", "cp -r /inputs/. /workspace/ && pip install -q -r requirements.txt && exec python train.py --epochs 3"}
+	if decoded.Entrypoint == nil || !reflect.DeepEqual(decoded.Entrypoint.Argv, wantArgv) {
+		t.Fatalf("entrypoint.argv = %+v, want the literal wrapper %v (raw body: %s)", decoded.Entrypoint, wantArgv, body)
+	}
+}
+
+// TestJobCreateInstallRequirementsWithNoCommandRefusesLocally: the flag has
+// nothing to wrap without a command after `--`, and the server has no
+// recipe-derived argv this could attach to either.
+func TestJobCreateInstallRequirementsWithNoCommandRefusesLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--install-requirements"})
+	if err == nil {
+		t.Fatal("want an error when --install-requirements is given with no command after --")
+	}
+	if !strings.Contains(err.Error(), "--install-requirements") {
+		t.Fatalf("want the error to name the flag, got: %v", err)
+	}
+}
+
 // TestCreateJobImageSourceOmitsVersionIdFromTheWire: the SOURCE XOR is
 // enforced on the WIRE, not just on the parsed Go struct: versionId must be
 // ABSENT, never present as 0, or the backend's both-or-neither check

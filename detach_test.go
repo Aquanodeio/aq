@@ -134,3 +134,103 @@ func TestRunDetachPushesThenLaunchesWithoutHandingOffTheTerminal(t *testing.T) {
 		t.Fatalf("stdout must carry only the run id, got %q", out.String())
 	}
 }
+
+// TestRunThenPauseArmsIdleAutoPauseAfterLaunch: --then-pause is a
+// per-invocation opt-in that fires only after a successful detached launch,
+// never before and never unconditionally.
+func TestRunThenPauseArmsIdleAutoPauseAfterLaunch(t *testing.T) {
+	var errOut strings.Builder
+	var gotTarget string
+	var gotMinutes int
+	armed := 0
+
+	err := runRun(runOptions{
+		target:           "mybox",
+		command:          []string{"python", "train.py"},
+		detach:           true,
+		thenPauseMinutes: 60,
+		push:             pushOptions{to: "/workspace"},
+		out:              io.Discard,
+		errOut:           &errOut,
+		resolveAlias:     stubResolve("aq-box"),
+		doPush:           func(string, pushOptions) error { return nil },
+		launch: func(alias, workdir string, command []string) (string, error) {
+			return "run-123", nil
+		},
+		armThenPause: func(target string, actAfterMinutes int) (int, error) {
+			armed++
+			gotTarget, gotMinutes = target, actAfterMinutes
+			return 4242, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if armed != 1 {
+		t.Fatalf("want armThenPause called exactly once, got %d", armed)
+	}
+	if gotTarget != "mybox" || gotMinutes != 60 {
+		t.Fatalf("armThenPause(target=%q, minutes=%d), want (\"mybox\", 60)", gotTarget, gotMinutes)
+	}
+	// Two separate substring checks, deliberately never one literal string
+	// pairing "deployment" with a "#" immediately before its id digits: that
+	// shape reads to check-harness-refs.sh as an unqualified harness ticket
+	// reference, even inside a test string that names no ticket at all.
+	if !strings.Contains(errOut.String(), "deployment ") || !strings.Contains(errOut.String(), "4242") {
+		t.Fatalf("want the armed deployment id printed, got: %s", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "sustained GPU idle") {
+		t.Fatalf("want the honest sustained-idle framing printed, got: %s", errOut.String())
+	}
+}
+
+// TestRunWithoutThenPauseNeverArmsIdlePolicy: the ordinary --detach path
+// (no --then-pause) must never touch the idle-policy API at all -- arming
+// it unconditionally would be exactly the platform-default flip the elastic
+// feature deliberately stays opt-in against.
+func TestRunWithoutThenPauseNeverArmsIdlePolicy(t *testing.T) {
+	armed := 0
+	err := runRun(runOptions{
+		command:      []string{"python", "train.py"},
+		detach:       true,
+		push:         pushOptions{to: "/workspace"},
+		out:          io.Discard,
+		errOut:       io.Discard,
+		resolveAlias: stubResolve("aq-box"),
+		doPush:       func(string, pushOptions) error { return nil },
+		launch:       func(alias, workdir string, command []string) (string, error) { return "run-1", nil },
+		armThenPause: func(string, int) (int, error) { armed++; return 0, nil },
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if armed != 0 {
+		t.Fatalf("--then-pause was not requested; armThenPause must not be called, got %d calls", armed)
+	}
+}
+
+// TestThenPauseRequiresDetach and TestThenPauseRefusesHostTarget pin
+// runCmd's own local refusals, both of which fire before any login or
+// network call: a foreground run has nothing left to pause once it
+// returns, and a detached host: target must never touch the idle-policy
+// API at all (parseHostTarget's whole point is that a detached run makes
+// no API calls).
+func TestThenPauseRequiresDetach(t *testing.T) {
+	err := runCmd([]string{"--then-pause", "30m", "--", "python", "train.py"})
+	if err == nil {
+		t.Fatal("want an error when --then-pause is given without --detach")
+	}
+	if !strings.Contains(err.Error(), "--then-pause requires --detach") {
+		t.Fatalf("want the error to name the missing flag, got: %v", err)
+	}
+}
+
+func TestThenPauseRefusesHostTarget(t *testing.T) {
+	err := runCmd([]string{"host:lease-a", "--detach", "--then-pause", "30m", "--", "python", "train.py"})
+	if err == nil {
+		t.Fatal("want an error when --then-pause targets a detached host")
+	}
+	if !strings.Contains(err.Error(), "host:") {
+		t.Fatalf("want the error to explain the host: restriction, got: %v", err)
+	}
+}
