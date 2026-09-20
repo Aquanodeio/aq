@@ -484,15 +484,48 @@ job:
   and "aq run myjob" are the same string, so nothing could tell them apart.
 
   aq job create <pod> <version>
-                              Make a pod version runnable as a job.
-                              Requires --max-instances: a job hands out a GPU
-                              budget, so it never defaults to unbounded.
-                              (--name <name>, default: the pod's own name)
-                              --on <alias>  Pin it to a box you already
-                              attached (aq attach <alias>) instead of
-                              renting hardware; that box bills nothing.
-                              --secret <name>  Inject a "aq secret set --type
-                              env" secret into the job's Runs (repeatable).
+  aq job create --image <ref> -- <argv...>
+                              Make something runnable as a job: either a pod
+                              version you saved, or a container image you
+                              already have. An image-source job states its
+                              entrypoint after a bare "--".
+
+  --name <name>             Job name (default: the source's own name)
+  --max-instances <n>       Maximum concurrent instances this job may run.
+                            Required: a job hands out a GPU budget, so it
+                            never defaults to unbounded
+  --monthly-cap-cents <n>   Monthly budget in cents; new runs stop once the
+                            month's spend reaches it
+  --on <alias>              Pin it to a box you already attached (aq attach
+                            <alias>) instead of renting hardware; that box
+                            bills nothing
+  --secret <name>           Inject an "aq secret set --type env" secret into
+                            the job's Runs (repeatable)
+  --checkpoint-path <path>  Path ogre snapshots so a reclaimed or price-hopped
+                            run can resume (repeatable). Optional here, but the
+                            server refuses a job that names none
+  --checkpoint-exclude <path>
+                            Path left out of the checkpoint snapshot, e.g. a
+                            venv or a cache dir (repeatable)
+  --output-path <path>      Absolute path inside the box the command writes its
+                            results into (default: /outputs). Used whenever a
+                            command is given after "--"
+
+  Image-source jobs only:
+  --image <ref>             A public or private image ref, used instead of the
+                            <pod> <version> positionals
+  --registry-secret <name>  Name of an "aq secret set --type registry" secret
+                            to pull a private --image with
+  --gpu-model <name>        Exact marketplace GPU model name (see "aq gpus")
+                            the job may run on (repeatable; required unless
+                            --any-gpu)
+  --any-gpu                 Explicit opt-in: run on any GPU model the market
+                            currently offers, instead of naming one
+  --gpu-order <mode>        With two or more --gpu-model, prefer them in the
+                            order given ("ordered") or cheapest-first
+                            ("cheapest", the default)
+  --disk-gb <n>             Disk size in GB for an --image job (default: 100)
+
   aq job point <name> <version>
                               Repoint a job at a different version in its
                               lineage (also how you roll back).

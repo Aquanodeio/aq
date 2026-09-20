@@ -118,6 +118,52 @@ type jobCreateOptions struct {
 	out               io.Writer
 }
 
+// jobCreateFlags is every flag `aq job create` accepts, registered in one
+// place so the top-level `aq --help` block can be checked against the real
+// flag set rather than against a second copy someone remembered to update.
+// The help block drifted before: it listed three of fourteen flags, so an
+// image-source job was undocumented at the only place a user looks first.
+type jobCreateFlags struct {
+	name              *string
+	maxInstances      *int
+	monthlyCapCents   *int64
+	on                *string
+	image             *string
+	registrySecret    *string
+	gpuModels         *stringList
+	anyGPU            *bool
+	gpuOrder          *string
+	diskGB            *int
+	outputPath        *string
+	secrets           *stringList
+	checkpointPaths   *stringList
+	checkpointExclude *stringList
+}
+
+func registerJobCreateFlags(fs *flag.FlagSet) *jobCreateFlags {
+	f := &jobCreateFlags{
+		gpuModels:         &stringList{},
+		secrets:           &stringList{},
+		checkpointPaths:   &stringList{},
+		checkpointExclude: &stringList{},
+	}
+	f.name = fs.String("name", "", "job name (default: the source's own name)")
+	f.maxInstances = fs.Int("max-instances", 0, "maximum concurrent instances this job may run (required)")
+	f.monthlyCapCents = fs.Int64("monthly-cap-cents", -1, "optional monthly budget in cents; new runs stop once the month's spend reaches it")
+	f.on = fs.String("on", "", "run this job on a host you already attached with `aq attach`, instead of renting hardware")
+	f.image = fs.String("image", "", "a public or private image ref (source, instead of the <pod> <version> positionals)")
+	f.registrySecret = fs.String("registry-secret", "", "name of a `type: registry` team secret (`aq secret set --type registry`) to pull a private --image with")
+	fs.Var(f.gpuModels, "gpu-model", "exact marketplace GPU model name (see `aq gpus`) an --image job may run on (repeatable; required for --image unless --any-gpu)")
+	f.anyGPU = fs.Bool("any-gpu", false, "explicit opt-in: let an --image job run on any GPU model the market currently offers, instead of naming one")
+	f.gpuOrder = fs.String("gpu-order", "", "with two or more --gpu-model, prefer them in the order given (\"ordered\") or cheapest-first (\"cheapest\", the default)")
+	f.diskGB = fs.Int("disk-gb", 100, "disk size in GB for an --image job")
+	f.outputPath = fs.String("output-path", "/outputs", "absolute path inside the box the command writes results into (used whenever a command is given after `--`)")
+	fs.Var(f.secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Runs (repeatable)")
+	fs.Var(f.checkpointPaths, "checkpoint-path", "path ogre snapshots so a reclaimed or price-hopped run can resume (repeatable); optional, but the server refuses a job with none named")
+	fs.Var(f.checkpointExclude, "checkpoint-exclude", "path excluded from the checkpoint snapshot, e.g. a venv or cache dir (repeatable)")
+	return f
+}
+
 // jobCreate parses `aq job create <setup> <version>` (a version-source
 // create) or `aq job create --image <ref> ...` (an image-source one) and
 // wires the real environment into runJobCreate.
@@ -144,29 +190,18 @@ func jobCreate(args []string) error {
 	head, argv := splitRemoteCommand(args)
 
 	fs := flag.NewFlagSet("job create", flag.ContinueOnError)
-	name := fs.String("name", "", "job name (default: the source's own name)")
-	maxInstances := fs.Int("max-instances", 0, "maximum concurrent instances this job may run (required)")
-	monthlyCapCents := fs.Int64("monthly-cap-cents", -1, "optional monthly budget in cents; new runs stop once the month's spend reaches it")
-	on := fs.String("on", "", "run this job on a host you already attached with `aq attach`, instead of renting hardware")
-	image := fs.String("image", "", "a public or private image ref (source, instead of the <pod> <version> positionals)")
-	registrySecret := fs.String("registry-secret", "", "name of a `type: registry` team secret (`aq secret set --type registry`) to pull a private --image with")
-	var gpuModels stringList
-	fs.Var(&gpuModels, "gpu-model", "exact marketplace GPU model name (see `aq gpus`) an --image job may run on (repeatable; required for --image unless --any-gpu)")
-	anyGPU := fs.Bool("any-gpu", false, "explicit opt-in: let an --image job run on any GPU model the market currently offers, instead of naming one")
-	gpuOrder := fs.String("gpu-order", "", "with two or more --gpu-model, prefer them in the order given (\"ordered\") or cheapest-first (\"cheapest\", the default)")
-	diskGB := fs.Int("disk-gb", 100, "disk size in GB for an --image job")
-	outputPath := fs.String("output-path", "/outputs", "absolute path inside the box the command writes results into (used whenever a command is given after `--`)")
-	var secrets stringList
-	fs.Var(&secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Runs (repeatable)")
-	var checkpointPaths stringList
-	fs.Var(&checkpointPaths, "checkpoint-path", "path ogre snapshots so a reclaimed or price-hopped run can resume (repeatable); optional, but the server refuses a job with none named")
-	var checkpointExclude stringList
-	fs.Var(&checkpointExclude, "checkpoint-exclude", "path excluded from the checkpoint snapshot, e.g. a venv or cache dir (repeatable)")
+	f := registerJobCreateFlags(fs)
+	name, maxInstances, monthlyCapCents := f.name, f.maxInstances, f.monthlyCapCents
+	on, image, registrySecret := f.on, f.image, f.registrySecret
+	anyGPU, gpuOrder, diskGB, outputPath := f.anyGPU, f.gpuOrder, f.diskGB, f.outputPath
 
 	positional, err := parseInterspersed(fs, head)
 	if err != nil {
 		return err
 	}
+	// Repeatable flags are read only after Parse has filled them in.
+	gpuModels, secrets := *f.gpuModels, *f.secrets
+	checkpointPaths, checkpointExclude := *f.checkpointPaths, *f.checkpointExclude
 	if *maxInstances <= 0 {
 		return errors.New("--max-instances is required and must be a positive number: a job hands out a GPU budget, so it never defaults to unbounded")
 	}
