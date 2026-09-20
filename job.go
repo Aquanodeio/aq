@@ -651,22 +651,35 @@ func runJobRemove(opts jobRemoveOptions) error {
 	return nil
 }
 
+// requirementsInstallScript is the FIXED LITERAL both aq and console must
+// emit identically, with nothing ever substituted into it. An earlier form
+// interpolated the command into this string (`... && exec <RAW_COMMAND>`,
+// built here via `strings.Join(argv, " ")`), which is unsafe for a builder
+// holding TOKENS rather than the user's original typed string: a token
+// containing a space, `;`, `|` or `$(...)` reassembles into something
+// `bash -lc` re-splits or executes, silently producing a WRONG run rather
+// than an error. `exec "$@"` has no interpolation and therefore no quoting
+// hazard at all -- see wrapWithRequirementsInstall for how $0/$@ get filled.
+const requirementsInstallScript = `cp -r /inputs/. /workspace/ && pip install -q -r requirements.txt && exec "$@"`
+
 // wrapWithRequirementsInstall composes the shared wire contract both aq and
 // console build for the "install requirements.txt before running" opt-in
-// (training-jobs DX DELTA section 2.6): copy whatever ogre already staged in
-// its fixed /inputs dir into the checkpointed /workspace, pip install a
-// declared requirements.txt, then exec the user's own command. This is the
-// literal both builders must emit verbatim -- the placement test asserts the
-// WIRE argv, never this helper.
+// (training-jobs DX DELTA section 2.6, revised 2026-09-20): copy whatever
+// ogre already staged in its fixed /inputs dir into the checkpointed
+// /workspace, pip install a declared requirements.txt, then exec the user's
+// own command via `"$@"`. This is the literal both builders must emit
+// verbatim -- the placement test asserts the WIRE argv, never this helper.
 //
-// The raw command text is argv joined with a single space, the same
-// no-quoting join remoteCommand (run.go) already does to hand a command to a
-// remote login shell: aq never shell-parses `-- <argv>` in the first place,
-// so there is no original pre-tokenization string to recover, only the
-// tokens themselves rejoined.
+// argv is passed through UNTOUCHED, one element each, after two fixed
+// entries: the script string, then a literal "bash" that fills $0 (`bash
+// -lc` assigns its first operand to $0, not $1 -- omitting it would silently
+// eat the user's first argument). aq already holds argv as separate tokens
+// from its own `-- <argv>` parsing (never shell-parsed), so unlike console's
+// client-side tokenizer there is nothing left to tokenize here.
 func wrapWithRequirementsInstall(argv []string) []string {
-	raw := strings.Join(argv, " ")
-	return []string{"bash", "-lc", "cp -r /inputs/. /workspace/ && pip install -q -r requirements.txt && exec " + raw}
+	wrapped := make([]string, 0, 4+len(argv))
+	wrapped = append(wrapped, "bash", "-lc", requirementsInstallScript, "bash")
+	return append(wrapped, argv...)
 }
 
 // formatCents renders a cent amount as a dollar figure, e.g. 150 -> "$1.50".
