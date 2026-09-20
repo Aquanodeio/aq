@@ -28,15 +28,37 @@ type jobRunOptions struct {
 	errOut io.Writer
 }
 
+// jobRunFlags is every flag `aq job run` accepts, registered in one place so
+// the top-level `aq --help` block can be checked against the real flag set.
+// See jobCreateFlags for why: the help is a second copy, and second copies
+// drift. --wait, --wait-seconds and --follow were documented in the docs repo
+// and absent from the CLI's own help, which is the same failure in the other
+// direction.
+type jobRunFlags struct {
+	inputPath   *string
+	wait        *bool
+	waitSeconds *int
+	follow      *bool
+	followLong  *bool
+}
+
+func registerJobRunFlags(fs *flag.FlagSet) *jobRunFlags {
+	f := &jobRunFlags{}
+	f.inputPath = fs.String("input", "", "path to a JSON file of the declared params (default: no inputs)")
+	f.wait = fs.Bool("wait", false, "wait for the run to complete (up to --wait-seconds, default 30)")
+	f.waitSeconds = fs.Int("wait-seconds", 30, "maximum seconds to wait for completion (only meaningful with --wait, capped at 120)")
+	f.follow = fs.Bool("f", false, "after starting the run, stream its log until it ends")
+	f.followLong = fs.Bool("follow", false, "after starting the run, stream its log until it ends")
+	return f
+}
+
 // run parses `aq run <job> [--input file] [--wait [--wait-seconds <n>]] [--follow]`
 // and wires the real environment into runRun.
 func jobRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	inputPath := fs.String("input", "", "path to a JSON file of the declared params (default: no inputs)")
-	wait := fs.Bool("wait", false, "wait for the run to complete (up to --wait-seconds, default 30)")
-	waitSeconds := fs.Int("wait-seconds", 30, "maximum seconds to wait for completion (only meaningful with --wait, capped at 120)")
-	follow := fs.Bool("f", false, "after starting the run, stream its log until it ends")
-	followLong := fs.Bool("follow", false, "after starting the run, stream its log until it ends")
+	f := registerJobRunFlags(fs)
+	inputPath, wait, waitSeconds := f.inputPath, f.wait, f.waitSeconds
+	follow, followLong := f.follow, f.followLong
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err

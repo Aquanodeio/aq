@@ -259,6 +259,8 @@ gpus:
   --json              Print the filtered offers as JSON instead of a table
 
 up flags:
+  --name <name>      Set the deployment's display name (default: an
+                     auto-generated one)
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --gpus <n>         How many GPUs the box should have (default 1, max 8).
                      Only offers with at least this many are considered.
@@ -275,6 +277,8 @@ up flags:
   --jupyter          Also install Torch + Jupyter instead
 
 deploy flags:
+  --name <name>      Set the deployment's display name (default: an
+                     auto-generated one)
   --snapshot <id>    Save to deploy (id from aq / the console, e.g. ext-42)
   --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
   --gpus <n>         How many GPUs the box should have (default 1, max 8).
@@ -533,6 +537,9 @@ job:
   aq job run <job> [--input file]
                               Start a run and print its run id. --input is a
                               JSON file of the declared params.
+                              --wait  Block until the run finishes, up to
+                              --wait-seconds (default 30, capped at 120).
+                              --follow, -f  Stream the run's log until it ends.
   aq job runs <job>           List a job's recent runs: id, status, phase and
                               reason. "unservable" means Aquanode could not
                               get the run a machine at all — it does NOT mean
