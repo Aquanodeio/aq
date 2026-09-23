@@ -148,6 +148,8 @@ func main() {
 	// `aq run mybox` and `aq run myjob` are the same string.
 	case "job":
 		run(job(args))
+	case "endpoint":
+		run(endpoint(args))
 	case "secret":
 		run(secret(args))
 	case "down":
@@ -235,6 +237,7 @@ Commands:
   pods          List the pods you own
   idle          View or change a DEPLOYMENT's idle-auto-pause thresholds
   job           Create, run, inspect and cancel GPU jobs
+  endpoint      Create, list and inspect callable HTTP endpoints
   secret        Manage team secrets: env vars and registry credentials a job
                 can reference by name, never sent to the CLI as plaintext
   down          Tear down a pod (stop the rented GPU box)
@@ -526,6 +529,8 @@ job:
                             /inputs into /workspace, "pip install -q -r
                             requirements.txt", then exec the command. Same
                             wire contract the console's own toggle composes
+  --port <n>                Refused: a job that serves HTTP is an endpoint,
+                            create it with "aq endpoint create --port" instead
 
   Image-source jobs only:
   --image <ref>             A public or private image ref, used instead of the
@@ -576,6 +581,37 @@ job:
 
   --run <runId>              Pull this run instead of the latest one that
                             actually reached a box (default)
+
+endpoint:
+  The service-shaped half of the Jobs vocabulary: an image with a port,
+  callable over HTTP, instead of a batch command run. A SEPARATE top-level
+  group from "aq job" — "aq job create" has no way to publish a port at all,
+  it refuses --port by name.
+
+  aq endpoint create --image <ref> --port <p> [--path /] --gpu-model <name>
+                              Make an image callable over HTTP. Entrypoint on
+                              the wire is always
+                              {kind:"http", port, path, method:"POST", resultMode:"inline"}.
+
+  --name <name>              Endpoint name (default: derived from the image ref)
+  --image <ref>              A public or private image ref (required)
+  --port <n>                 Port inside the box the image's own server
+                            listens on (required)
+  --path <path>              Path this endpoint's caller POSTs to (default: /)
+  --gpu-model <name>         Exact marketplace GPU model name (see "aq gpus")
+                            this endpoint may run on (repeatable; required)
+  --disk-gb <n>              Disk size in GB (default: 100, matching the
+                            console's Endpoints form)
+  --max-instances <n>        Maximum concurrent instances this endpoint may
+                            run (required)
+  --keep-warm                Keep one instance running between calls instead
+                            of scaling to zero (sends minInstances: 1)
+
+  aq endpoint list            List your endpoints: id, name, status, and how
+                              many instances are running out of the max.
+  aq endpoint url <name|id>   Print the endpoint's callable URL verbatim
+                              (POST to it with an "x-job-token", see
+                              "aq job run" for how a token holder calls it).
 
 secret:
   Team secrets: env vars and private-registry credentials a job can reference

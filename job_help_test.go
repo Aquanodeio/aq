@@ -51,6 +51,29 @@ func TestTopLevelHelpDocumentsEveryJobFlag(t *testing.T) {
 	}
 }
 
+// TestTopLevelHelpDocumentsEveryEndpointFlag is aq#91's guard again, applied
+// to the endpoint: section (ticket 1225): `aq endpoint create`'s flags must
+// all be named under "endpoint:", the same rule that already covers "job:".
+func TestTopLevelHelpDocumentsEveryEndpointFlag(t *testing.T) {
+	endpointSection := helpSection(t, "endpoint:")
+
+	fs := flag.NewFlagSet("aq endpoint create", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerEndpointCreateFlags(fs)
+
+	var missing []string
+	fs.VisitAll(func(fl *flag.Flag) {
+		if !documentsFlag(endpointSection, fl.Name) {
+			missing = append(missing, "--"+fl.Name)
+		}
+	})
+	if len(missing) > 0 {
+		t.Errorf("aq endpoint create accepts flags the top-level help's endpoint: section never names: %s\n"+
+			"Add them to usageText in main.go (reuse the flag's own usage string), or, if a flag was "+
+			"removed, delete it from the flag set rather than from this guard.", strings.Join(missing, " "))
+	}
+}
+
 // documentsFlag reports whether the help names exactly this flag. A plain
 // substring test is not enough, and this is not hypothetical: it is how the
 // first version of this guard passed its own negative control. "--disk-gb" is
