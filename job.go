@@ -149,6 +149,14 @@ type jobCreateFlags struct {
 	checkpointPaths     *stringList
 	checkpointExclude   *stringList
 	installRequirements *bool
+	// port exists ONLY to be refused. `aq job create` has no HTTP-serving
+	// shape at all (a command entrypoint has no server to publish a port
+	// for — entrypoint.ts's own parser refuses `port` on a command kind by
+	// name, see internal/api/jobs.go's Entrypoint doc), so registering the
+	// flag and refusing it explicitly gives a typo'd `--port` a named fix
+	// ("use `aq endpoint create`") instead of Go's generic "flag provided
+	// but not defined" error, which points nowhere.
+	port *int
 }
 
 func registerJobCreateFlags(fs *flag.FlagSet) *jobCreateFlags {
@@ -173,6 +181,7 @@ func registerJobCreateFlags(fs *flag.FlagSet) *jobCreateFlags {
 	fs.Var(f.checkpointPaths, "checkpoint-path", "path ogre snapshots so a reclaimed or price-hopped run can resume (repeatable); optional, but the server refuses a job with none named")
 	fs.Var(f.checkpointExclude, "checkpoint-exclude", "path excluded from the checkpoint snapshot, e.g. a venv or cache dir (repeatable)")
 	f.installRequirements = fs.Bool("install-requirements", false, "wrap the command (after --) to install a declared requirements.txt before running it: copies /inputs into /workspace, pip installs -q -r requirements.txt, then execs the command (shared wire contract with the console's same toggle)")
+	f.port = fs.Int("port", 0, "refused: a job with a port is an endpoint, use `aq endpoint create --port` instead")
 	return f
 }
 
@@ -210,6 +219,11 @@ func jobCreate(args []string) error {
 	positional, err := parseInterspersed(fs, head)
 	if err != nil {
 		return err
+	}
+	// Named refusal, checked before anything else: a job with a port is an
+	// endpoint, and the fix is a different command, not a different flag.
+	if *f.port != 0 {
+		return fmt.Errorf("aq job create has no --port flag: a job that serves HTTP is an endpoint, create it with `aq endpoint create --image <ref> --port %d ...`", *f.port)
 	}
 	// Repeatable flags are read only after Parse has filled them in.
 	gpuModels, secrets := *f.gpuModels, *f.secrets

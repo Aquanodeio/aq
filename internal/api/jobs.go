@@ -27,13 +27,40 @@ type Job struct {
 	SpentCents           int64  `json:"spentCents"`
 	MonthlySpendCapCents *int64 `json:"monthlySpendCapCents"`
 	RunningInstances     int    `json:"runningInstances"`
+	MaxInstances         int    `json:"maxInstances"`
 	RunsThisPeriod       int    `json:"runsThisPeriod"`
+	// Shape is DERIVED server-side from entrypoint.kind, never stored
+	// (job.service.ts jobShapeFor): "batch" for a command entrypoint,
+	// "service" for http/comfyui. It is what `?shape=` filters on and what
+	// `aq endpoint` vs `aq job` mean by the split.
+	Shape string `json:"shape"`
+	// RunURL is this orchestrator's own `/api/v1/run/:jobId` route (still
+	// gated by an `x-job-token`), never the box's own address. Null when
+	// the server has no public base configured (job.service.ts runUrlFor) —
+	// three-state, not "" — so `aq endpoint url` can tell "not configured"
+	// from a row that genuinely has no id.
+	RunURL *string `json:"runUrl"`
 }
 
-// ListJobs returns every job the caller owns.
+// ListJobs returns every job the caller owns, of every shape.
 func (c *Client) ListJobs() ([]Job, error) {
 	var out []Job
 	if err := c.getJSON("/jobs", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListJobsByShape returns only the caller's jobs of one shape ("batch" or
+// "service") — GET /jobs?shape=. Used by `aq endpoint list`, which must
+// never show a batch job: the two read as unrelated concepts to a caller
+// (a job you run vs. a URL you call), and mixing them on one page is the
+// exact confusion the shape split exists to avoid.
+func (c *Client) ListJobsByShape(shape string) ([]Job, error) {
+	var out []Job
+	q := url.Values{}
+	q.Set("shape", shape)
+	if err := c.getJSON("/jobs?"+q.Encode(), &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -151,6 +178,56 @@ type JobPlacement struct {
 // CreateJob makes a setup version callable, returning the created
 // job row.
 func (c *Client) CreateJob(req CreateJobRequest) (*Job, error) {
+	var out Job
+	if err := c.postJSON("/jobs", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// HttpEntrypoint is a `kind: "http"` entrypoint — a generic HTTP app, called
+// by POSTing a rendered body to a port inside the box (orchestrator
+// entrypoint.ts's HttpEntrypoint). `aq endpoint create` only ever emits
+// Method "POST" and ResultMode "inline": the other combinations (GET/PUT,
+// resultMode "poll" + resultFrom, bodyTemplate) exist on the wire but have
+// no CLI-typeable shape yet, mirroring why Entrypoint above only ever emits
+// `kind: "command"` — there is no console-parity flag set for them either.
+type HttpEntrypoint struct {
+	Kind       string `json:"kind"`
+	Port       int    `json:"port"`
+	Path       string `json:"path"`
+	Method     string `json:"method"`
+	ResultMode string `json:"resultMode"`
+}
+
+// CreateEndpointRequest is the body of POST /jobs for `aq endpoint create` —
+// the service-shaped sibling of CreateJobRequest. A deliberately separate
+// type rather than reusing CreateJobRequest's `Entrypoint *Entrypoint`
+// field: that field's concrete type only ever carries a command entrypoint
+// (argv, outputPath — neither means anything on an http entrypoint), so
+// widening it to an interface would turn every existing command-create
+// caller's `.Entrypoint.Argv` access into a type assertion for no benefit,
+// since job and endpoint creates never share a request body in practice
+// (mirrors the console's own separate /jobs/new and /endpoints/new pages
+// and separate CreateJobParams-shaped bodies).
+//
+// MinInstances carries `omitempty`: absent means "scales to zero between
+// calls" (today's default), and `aq endpoint create` only ever sends it as
+// the literal 1, iff --keep-warm — never a bare 0, which would be
+// indistinguishable from "not set" on the wire and is why this is a plain
+// int rather than a pointer.
+type CreateEndpointRequest struct {
+	Name         string          `json:"name"`
+	Image        *ImageSource    `json:"image,omitempty"`
+	Entrypoint   *HttpEntrypoint `json:"entrypoint,omitempty"`
+	Hardware     *Hardware       `json:"hardware,omitempty"`
+	MaxInstances int             `json:"maxInstances"`
+	MinInstances int             `json:"minInstances,omitempty"`
+}
+
+// CreateEndpoint makes an image callable over HTTP, returning the created
+// job row (shape "service").
+func (c *Client) CreateEndpoint(req CreateEndpointRequest) (*Job, error) {
 	var out Job
 	if err := c.postJSON("/jobs", req, &out); err != nil {
 		return nil, err
