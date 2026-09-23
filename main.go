@@ -600,6 +600,8 @@ endpoint:
   --path <path>              Path this endpoint's caller POSTs to (default: /)
   --gpu-model <name>         Exact marketplace GPU model name (see "aq gpus")
                             this endpoint may run on (repeatable; required)
+  --disk-gb <n>              Disk size in GB (default: 100, matching the
+                            console's Endpoints form)
   --max-instances <n>        Maximum concurrent instances this endpoint may
                             run (required)
   --keep-warm                Keep one instance running between calls instead

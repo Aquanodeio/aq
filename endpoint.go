@@ -45,6 +45,7 @@ type endpointCreateOptions struct {
 	port         int
 	path         string
 	gpuModels    []string
+	diskGB       int
 	maxInstances int
 	keepWarm     bool
 	name         string
@@ -61,6 +62,7 @@ type endpointCreateFlags struct {
 	port         *int
 	path         *string
 	gpuModels    *stringList
+	diskGB       *int
 	maxInstances *int
 	keepWarm     *bool
 }
@@ -72,6 +74,7 @@ func registerEndpointCreateFlags(fs *flag.FlagSet) *endpointCreateFlags {
 	f.port = fs.Int("port", 0, "port inside the box the image's own server listens on (required)")
 	f.path = fs.String("path", "/", "path this endpoint's caller POSTs to")
 	fs.Var(f.gpuModels, "gpu-model", "exact marketplace GPU model name (see `aq gpus`) this endpoint may run on (repeatable; required)")
+	f.diskGB = fs.Int("disk-gb", 100, "disk size in GB (default: 100, matching the console's Endpoints form)")
 	f.maxInstances = fs.Int("max-instances", 0, "maximum concurrent instances this endpoint may run (required)")
 	f.keepWarm = fs.Bool("keep-warm", false, "keep one instance running between calls instead of scaling to zero (sends minInstances: 1)")
 	return f
@@ -107,6 +110,12 @@ func endpointCreate(args []string) error {
 	if len(gpuModels) == 0 {
 		return errors.New("--gpu-model is required (see `aq gpus` for exact names); repeat the flag to allow more than one")
 	}
+	// Same bound as `aq job create --disk-gb` (job.go): matches the
+	// console's own <Input type="number" min={10}> on the Endpoints form's
+	// Advanced panel, with the same upper bound job create already enforces.
+	if *f.diskGB < 10 || *f.diskGB > 10_000 {
+		return fmt.Errorf("--disk-gb must be between 10 and 10000, got %d", *f.diskGB)
+	}
 	if *f.maxInstances <= 0 {
 		return errors.New("--max-instances is required and must be a positive number: an endpoint hands out a GPU budget, so it never defaults to unbounded")
 	}
@@ -122,6 +131,7 @@ func endpointCreate(args []string) error {
 		port:         *f.port,
 		path:         path,
 		gpuModels:    gpuModels,
+		diskGB:       *f.diskGB,
 		maxInstances: *f.maxInstances,
 		keepWarm:     *f.keepWarm,
 		name:         *f.name,
@@ -185,7 +195,7 @@ func runEndpointCreate(opts endpointCreateOptions) error {
 		Hardware: &api.Hardware{
 			GPUModels: opts.gpuModels,
 			GPUCount:  1,
-			DiskGB:    100,
+			DiskGB:    opts.diskGB,
 		},
 		MaxInstances: opts.maxInstances,
 	}

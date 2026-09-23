@@ -18,6 +18,7 @@ func baseEndpointCreateOpts(serverURL string) endpointCreateOptions {
 		port:         8080,
 		path:         "/",
 		gpuModels:    []string{"H100"},
+		diskGB:       100,
 		maxInstances: 2,
 		out:          &bytes.Buffer{},
 	}
@@ -62,11 +63,64 @@ func TestEndpointCreateSendsHttpEntrypointOnWire(t *testing.T) {
 	if len(gpuModels) != 1 || gpuModels[0] != "H100" {
 		t.Errorf("hardware.gpuModels = %v, want [H100] (raw body: %s)", gpuModels, body)
 	}
+	if hardware["diskGb"] != float64(100) {
+		t.Errorf("hardware.diskGb = %v, want 100 (the default, matching the console's Endpoints form) (raw body: %s)", hardware["diskGb"], body)
+	}
 	if got["image"].(map[string]any)["ref"] != opts.image {
 		t.Errorf("image.ref = %v, want %q (raw body: %s)", got["image"], opts.image, body)
 	}
 	if got["maxInstances"] != float64(2) {
 		t.Errorf("maxInstances = %v, want 2 (raw body: %s)", got["maxInstances"], body)
+	}
+}
+
+// TestEndpointCreateSendsCustomDiskGBOnWire: --disk-gb must reach
+// hardware.diskGb verbatim, not silently stay at the 100 default.
+func TestEndpointCreateSendsCustomDiskGBOnWire(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "ep-1", "name": "serve"})
+	}))
+	defer srv.Close()
+
+	opts := baseEndpointCreateOpts(srv.URL)
+	opts.diskGB = 250
+	if err := runEndpointCreate(opts); err != nil {
+		t.Fatalf("runEndpointCreate: %v", err)
+	}
+
+	got := decodeWireBody(t, body)
+	hardware, _ := got["hardware"].(map[string]any)
+	if hardware["diskGb"] != float64(250) {
+		t.Fatalf("hardware.diskGb = %v, want 250 (raw body: %s)", hardware["diskGb"], body)
+	}
+}
+
+// endpointCreate (the flag-parsing entry point) must refuse an out-of-range
+// --disk-gb locally, before any network call — no server started.
+func TestEndpointCreateRejectsDiskGBOutOfRangeLocally(t *testing.T) {
+	detachedSandbox(t)
+	err := endpointCreate([]string{"--image", "acme/serve", "--port", "8080", "--gpu-model", "H100", "--max-instances", "1", "--disk-gb", "5"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "--disk-gb") {
+		t.Fatalf("error should name --disk-gb, got: %v", err)
+	}
+}
+
+// The default (no --disk-gb passed) must reach the login check, proving
+// nothing local refused it first — same pattern job_test.go's
+// TestJobCreateNeedsNoCapFlag uses.
+func TestEndpointCreateDiskGBDefaultsWithoutFlag(t *testing.T) {
+	detachedSandbox(t)
+	err := endpointCreate([]string{"--image", "acme/serve", "--port", "8080", "--gpu-model", "H100", "--max-instances", "1"})
+	if err == nil {
+		t.Fatal("expected an error (no stored credential in the sandbox)")
+	}
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("expected to reach the login check with no --disk-gb flag, got: %v", err)
 	}
 }
 
