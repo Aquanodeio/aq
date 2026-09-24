@@ -150,6 +150,15 @@ func jobCancel(args []string) error {
 	if err != nil {
 		return fmt.Errorf("aq job cancel: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "cancelling %s — billing stops when the machine is released\n", run.ID)
+	// This used to promise "billing stops when the machine is released" --
+	// not true for a Run cancelled before it ever got an attempt bound (still
+	// `queued`, or a job-scaler box rented ahead of it): the box is a JOB-level
+	// resource, not a Run-level one, so this call alone does not release it.
+	// The orchestrator's surplus-unready sweep (aquanode-backend#1209)
+	// is what actually tears down a machine started only for this run; a warm
+	// one kept for other demand or the job's `minInstances` floor is untouched
+	// by a cancel at all and comes down on its own idle timeout, same as it
+	// always has.
+	fmt.Fprintf(os.Stdout, "cancelling %s; a machine started only for it is released, a warm one stays up until the job's idle timeout\n", run.ID)
 	return nil
 }
