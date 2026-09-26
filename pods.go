@@ -86,6 +86,24 @@ func printPods(out io.Writer, list []api.Setup, latest map[string]int) {
 	}
 }
 
+// printPodStorageSummary renders a pod's Environment/Volume state after
+// Start/Stop/Move, matching the console pod-detail line: environment name,
+// volume name, size, and its three-state save status. Volume is nil for a
+// pod running with no volume attached (D4: a bare pod is allowed) — printed
+// as nothing, never a blank/zeroed row.
+func printPodStorageSummary(out io.Writer, s api.Setup) {
+	fmt.Fprintf(out, "  Environment: %s\n", orDash(s.Environment.Name))
+	if s.Volume == nil {
+		return
+	}
+	v := *s.Volume
+	state := v.SaveState
+	if state == "" {
+		state = "unknown"
+	}
+	fmt.Fprintf(out, "  Volume: %s (%s, %s)\n", orDash(v.Name), formatPodSize(v.SizeBytes), state)
+}
+
 // formatPodSize renders a byte count in the largest whole binary unit that
 // keeps it readable, at GiB precision — matching how held-snapshot storage
 // is billed (see heldStorageRateLabel in pricing.go).

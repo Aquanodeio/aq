@@ -35,26 +35,15 @@ import (
 //     the one exception being SizeBytes, whose wire type is also not a plain
 //     number — see its doc comment below.
 
-// CreateSetupSnapshotRequest is the body of POST /setups/:id/snapshot. Name
-// only matters on a setup's first save — it names the lineage every later
-// save lands in. Callers past the first save must leave it empty: resending
-// a name once a lineage already exists is not a rename, it's just ignored
-// noise the CLI has no reason to send.
-//
-// WorkspaceDir is the directory captured. It keeps the wire name the
-// ogre-facing path already uses end to end — `aq snapshot`'s --path flag
-// maps onto it, but the flag rename is CLI-surface only, not a second name
-// for the same value on the wire.
-type CreateSetupSnapshotRequest struct {
-	Name         string `json:"name,omitempty"`
-	WorkspaceDir string `json:"workspace_dir"`
-}
-
 // SetupVersion mirrors one row of the setup_versions table, as returned by
-// POST /setups/:id/snapshot (the newly created version) and GET
-// /setups/versions[?name=...]. There is no "latest version" field nested on
-// Setup itself — see ListAllSetupVersions for how `aq setups`/`aq share`
-// recover a setup's latest/named version instead.
+// GET /setups/versions[?name=...]. Pods stop WRITING this table under the
+// pod/environment/volume model (D11: `aq save` and its route are gone, saves
+// mint EnvironmentVersion/VolumePoint rows now) — it survives read-only,
+// because Jobs still reference a SnapshotVersion as a source
+// (`aq job create <pod> <version>`, job.go) and existing rows must stay
+// resolvable. There is no "latest version" field nested on Setup itself —
+// see ListAllSetupVersions for how `aq share`/`aq job create` recover a
+// setup's latest/named version instead.
 //
 // SetupID is a string for the same reason Setup.ID is — see the package doc.
 // The version row's own ID is left an int: unlike Setup, nothing in the
@@ -78,19 +67,6 @@ type SetupVersion struct {
 	Pinned          bool   `json:"pinned"`
 	SetupID         string `json:"setup_id"`
 	DeploymentCount int    `json:"deployment_count"`
-}
-
-// CreateSetupSnapshot saves a setup's current state into its named lineage,
-// returning the newly created version row. The very first call for a setup
-// creates the lineage (from req.Name, or the setup's own name if that's
-// empty too); every call after silently reuses it and increments Version.
-func (c *Client) CreateSetupSnapshot(setupID string, req CreateSetupSnapshotRequest) (*SetupVersion, error) {
-	var out SetupVersion
-	path := "/setups/" + url.PathEscape(setupID) + "/snapshot"
-	if err := c.postJSON(path, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }
 
 // ListSetupVersions returns every version row named `name` — GET
@@ -345,104 +321,6 @@ func (c *Client) ForkSetup(req ForkSetupRequest) (*Setup, error) {
 	return &out, nil
 }
 
-// SetupAutopauseRequest is the body of PUT /setups/:id/autopause.
-type SetupAutopauseRequest struct {
-	Enabled bool `json:"enabled"`
-}
-
-// SetSetupAutopause sets a setup's per-setup autopause PREFERENCE explicitly
-// (on or off), returning the updated Setup row.
-//
-// This is NOT the same mechanism as `aq idle`: idle policy is a
-// PER-DEPLOYMENT threshold config (warn/pause-after minutes, GPU idle %) that
-// always outranks whatever this sets (see idlePolicyFor in the
-// orchestrator's idle.config.ts, which layers Setup.autopauseEnabled in
-// underneath it). Autopause carries no thresholds of its own — it only says
-// "auto-pause this setup's box when it goes idle, using the platform's
-// default thresholds." There is also no verb to clear it back to "unset" —
-// a setup that never calls this route simply follows the platform default
-// (DEFAULT_IDLE_POLICY.autoPauseEnabled, currently off).
-func (c *Client) SetSetupAutopause(setupID string, enabled bool) (*Setup, error) {
-	var out Setup
-	path := "/setups/" + url.PathEscape(setupID) + "/autopause"
-	if err := c.putJSON(path, SetupAutopauseRequest{Enabled: enabled}, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// SetupForceDetachResult is the data returned by POST
-// /setups/:id/force-detach.
-type SetupForceDetachResult struct {
-	WasSyncing bool `json:"wasSyncing"`
-}
-
-// ForceDetachSetup breaks a setup's lease even mid-sync, discarding any work
-// written since the last COMPLETED sync. acknowledgeDataLoss:true is sent
-// unconditionally — the orchestrator refuses the call without it
-// (forceDetachSetupSchema), and callers of this method (aq's `force-detach`
-// command) are expected to have gotten the user's explicit --yes first;
-// there is no silent/partial form of this call.
-func (c *Client) ForceDetachSetup(setupID string) (*SetupForceDetachResult, error) {
-	var out SetupForceDetachResult
-	path := "/setups/" + url.PathEscape(setupID) + "/force-detach"
-	body := map[string]bool{"acknowledgeDataLoss": true}
-	if err := c.postJSON(path, body, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// SetupSyncResult is the data returned by POST /setups/:id/sync. Unlike the
-// Setup DTO above, this really is ogre's own snake_case wire shape
-// (SetupSyncResponse in the orchestrator's types/setup.types.ts), passed
-// through unmodified — not the hand-written serializeSetup object literal.
-type SetupSyncResult struct {
-	SnapshotID      string `json:"snapshot_id"`
-	FilesNew        int    `json:"files_new,omitempty"`
-	FilesChanged    int    `json:"files_changed,omitempty"`
-	DataAddedPacked int64  `json:"data_added_packed,omitempty"`
-}
-
-// SyncSetupNow forces a sync tick right now, outside the setup's own
-// scheduled interval. The setup must currently be attached to a running
-// deployment — the orchestrator 400s otherwise with a message naming that.
-func (c *Client) SyncSetupNow(setupID string) (*SetupSyncResult, error) {
-	var out SetupSyncResult
-	path := "/setups/" + url.PathEscape(setupID) + "/sync"
-	if err := c.postJSON(path, struct{}{}, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// UpdateSnapshotVersionRequest is the body of PATCH /setups/versions/:id
-// (updateSnapshotVersionSchema, `.strict()` — only these three fields are
-// accepted). Label/Description are nil-omitted pointers so an unset flag
-// never overwrites the existing value; there is currently no way to send an
-// explicit `null` to CLEAR one back to empty (the schema allows it, but
-// distinguishing "not touched" from "clear to null" needs more than a plain
-// omitempty pointer, since both render as an absent key — deliberately left
-// unsupported rather than guessed at).
-// Visibility is a plain non-nullable enum string when set.
-type UpdateSnapshotVersionRequest struct {
-	Label       *string `json:"label,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Visibility  string  `json:"visibility,omitempty"`
-}
-
-// UpdateSnapshotVersion edits a saved version's label, description, and/or
-// visibility (private/team/public) — the same three fields the console's
-// version settings sheet edits.
-func (c *Client) UpdateSnapshotVersion(versionRowID int, req UpdateSnapshotVersionRequest) (*SetupVersion, error) {
-	var out SetupVersion
-	path := "/setups/versions/" + strconv.Itoa(versionRowID)
-	if err := c.patchJSON(path, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // setupSizeBytes decodes GET /setups' `sizeBytes` field. serializeSetup
 // sends it as a decimal STRING (`ws.sizeBytes.toString()`), or JSON `null`
 // for a setup with no measured size yet — never a bare number: BigInt
@@ -466,6 +344,44 @@ func (n *setupSizeBytes) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// SetupEnvironmentSummary mirrors the `environment` object the
+// pod/environment/volume plan's wire contract (section 2) nests on GET
+// /setups and GET /setups/:id. It is always present (never null) — every pod
+// has a working environment even before anything is ever Kept or Shared out
+// of it. Version is nullable on the wire (int|null): the working environment
+// has no minted EnvironmentVersion until the pod's environment is Kept or
+// Shared for the first time.
+type SetupEnvironmentSummary struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version *int   `json:"version"`
+	Kind    string `json:"kind"`
+}
+
+// SetupVolumeSummary mirrors the `volume` object nested on GET /setups, GET
+// /setups/:id. SaveState is three-state on the wire
+// ("saved"|"failing"|"unknown") and must never collapse "unknown" (the agent
+// could not be reached) into "saved" — see the workspace's three-state
+// signal rule. LastSaveError is nil except while SaveState is "failing".
+type SetupVolumeSummary struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	SizeBytes     int64   `json:"sizeBytes"`
+	HeadSavedAt   string  `json:"headSavedAt"`
+	SaveState     string  `json:"saveState"`
+	LastSaveError *string `json:"lastSaveError"`
+}
+
+// SetupRestoreProgress mirrors the `restore` object nested on GET /setups,
+// GET /setups/:id while a Start is restoring the pod's environment/volume
+// onto its box. Nil once the pod reaches Running (`ready_at`) or if it was
+// never restoring.
+type SetupRestoreProgress struct {
+	Phase      string `json:"phase"`
+	BytesDone  int64  `json:"bytesDone"`
+	BytesTotal int64  `json:"bytesTotal"`
+}
+
 // Setup mirrors one row of GET /setups: what the caller owns, independent of
 // whether the underlying compute is currently rented.
 //
@@ -482,16 +398,26 @@ func (n *setupSizeBytes) UnmarshalJSON(b []byte) error {
 // the top of this file for why this struct's convention differs from
 // SetupVersion's.
 type Setup struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	MountPath string `json:"mountPath"`
-	// AutopauseEnabled is three-state on the wire: nil = never explicitly
-	// chosen (the setup follows the platform default), non-nil = explicitly
+	ID          string                  `json:"id"`
+	Name        string                  `json:"name"`
+	Status      string                  `json:"status"`
+	MountPath   string                  `json:"mountPath"`
+	Environment SetupEnvironmentSummary `json:"environment"`
+	// Volume is nil for a pod running with no volume attached (D4 of the
+	// pod/environment/volume plan: a bare pod is allowed, and the New pod
+	// flow warns about it). Never render a nil Volume as an empty one.
+	Volume *SetupVolumeSummary `json:"volume"`
+	// Restore is non-nil only while Start is restoring this pod's
+	// environment/volume onto its box.
+	Restore *SetupRestoreProgress `json:"restore"`
+	// AutostopEnabled is three-state on the wire: nil = never explicitly
+	// chosen (the pod follows the platform default), non-nil = explicitly
 	// set true/false. NEVER collapse nil into false when rendering this —
 	// see setups.controller.ts's comment on why (it's the whole point of the
-	// column).
-	AutopauseEnabled  *bool          `json:"autopauseEnabled"`
+	// column). Renamed from AutopauseEnabled/autopauseEnabled per the
+	// pod/environment/volume plan's vocabulary sweep (PUT
+	// /setups/:id/autostop replaces PUT /setups/:id/autopause; no alias).
+	AutostopEnabled   *bool          `json:"autostopEnabled"`
 	SizeBytes         setupSizeBytes `json:"sizeBytes"`
 	LastSyncAt        string         `json:"lastSyncAt"`
 	LeaseDeploymentID *int           `json:"leaseDeploymentId"`

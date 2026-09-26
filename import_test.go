@@ -16,10 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
@@ -363,7 +361,7 @@ func TestRunOgreCapturePassesCredentialsViaEnvNotArgv(t *testing.T) {
 	}
 }
 
-// importServer is a minimal fake of the /setups/import/* orchestrator routes.
+// importServer is a minimal fake of the /volumes/import/* orchestrator routes.
 type importServer struct {
 	startCalls       int
 	completeCalls    int
@@ -380,10 +378,10 @@ type importServer struct {
 
 func (s *importServer) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/setups/import/start", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/volumes/import/start", func(w http.ResponseWriter, r *http.Request) {
 		s.startCalls++
 		body := map[string]any{
-			"setup_id":        "setup-1",
+			"volume_id":       "volume-1",
 			"storage_prefix":  "team-1/ws-abc",
 			"restic_password": "resticpw",
 			"import_token":    "tok-1",
@@ -401,16 +399,15 @@ func (s *importServer) handler() http.Handler {
 		}
 		writeData(w, body)
 	})
-	// /setups/import/credentials returns EVERYTHING --resume needs
-	// (setup-import.service.ts's ImportCredentialsResult, landed 960c487) —
+	// /volumes/import/credentials returns EVERYTHING --resume needs —
 	// storage_prefix/restic_backup_id/restic_password alongside a FRESH
 	// import_token, so aq keeps no local copy of any of it. The token here
 	// deliberately differs from /start's "tok-1" so tests can catch aq
 	// sending the wrong one to /complete.
-	mux.HandleFunc("/setups/import/credentials", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/volumes/import/credentials", func(w http.ResponseWriter, r *http.Request) {
 		s.credentialsCalls++
 		writeData(w, map[string]any{
-			"setup_id":         "setup-1",
+			"volume_id":        "volume-1",
 			"storage_prefix":   "team-1/ws-abc",
 			"restic_backup_id": "repo",
 			"restic_password":  "resticpw",
@@ -425,7 +422,7 @@ func (s *importServer) handler() http.Handler {
 			},
 		})
 	})
-	mux.HandleFunc("/setups/import/complete", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/volumes/import/complete", func(w http.ResponseWriter, r *http.Request) {
 		s.completeCalls++
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -433,10 +430,8 @@ func (s *importServer) handler() http.Handler {
 			s.lastCompleteImportToken = tok
 		}
 		writeData(w, map[string]any{
-			"setup_id":   "setup-1",
-			"version_id": 7,
-			"recipe":     map[string]any{},
-			"warnings":   s.warnings,
+			"volume_id": "volume-1",
+			"warnings":  s.warnings,
 		})
 	})
 	return mux
@@ -453,7 +448,7 @@ func testImportOptions(cred *config.Credential, ogrePath string, out, errOut *by
 }
 
 // TestRunImportDryRunMakesNoStartCall checks --dry-run never calls
-// /setups/import/start — nothing is captured or uploaded.
+// /volumes/import/start — nothing is captured or uploaded.
 func TestRunImportDryRunMakesNoStartCall(t *testing.T) {
 	obs := sampleObservation()
 	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
@@ -473,7 +468,7 @@ func TestRunImportDryRunMakesNoStartCall(t *testing.T) {
 		t.Fatalf("runImport --dry-run: %v", err)
 	}
 	if server.startCalls != 0 {
-		t.Fatal("--dry-run called /setups/import/start — it must capture and upload nothing")
+		t.Fatal("--dry-run called /volumes/import/start — it must capture and upload nothing")
 	}
 	if !strings.Contains(out.String(), "dry-run") {
 		t.Errorf("expected a dry-run notice; got:\n%s", out.String())
@@ -505,20 +500,20 @@ func TestRunImportNonInteractiveWithoutYesRefuses(t *testing.T) {
 		t.Fatalf("expected a non-interactive refusal, got: %v", err)
 	}
 	if server.startCalls != 0 {
-		t.Fatal("import proceeded to /setups/import/start without confirmation")
+		t.Fatal("import proceeded to /volumes/import/start without confirmation")
 	}
 }
 
-// TestRunImportHappyPathRegistersSetupAndPrintsWarnings drives the full flow
+// TestRunImportHappyPathRegistersVolumeAndPrintsWarnings drives the full flow
 // (survey -> confirm via --yes -> start -> capture -> complete) against a fake
 // orchestrator and stub ogre, and checks the returned warnings are printed.
-func TestRunImportHappyPathRegistersSetupAndPrintsWarnings(t *testing.T) {
+func TestRunImportHappyPathRegistersVolumeAndPrintsWarnings(t *testing.T) {
 	obs := sampleObservation()
 	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
 	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
 	ogrePath, argsFile, _ := writeStubOgre(t, surveyJSON, captureJSON)
 
-	server := &importServer{warnings: []string{"template is null — DetectApp found nothing, this setup restores data-only"}}
+	server := &importServer{warnings: []string{"the source box's peak VRAM could not be measured"}}
 	srv := httptest.NewServer(server.handler())
 	defer srv.Close()
 
@@ -532,15 +527,15 @@ func TestRunImportHappyPathRegistersSetupAndPrintsWarnings(t *testing.T) {
 	if server.startCalls == 0 || server.completeCalls == 0 {
 		t.Fatalf("expected both start and complete to be called: startCalls=%d completeCalls=%d", server.startCalls, server.completeCalls)
 	}
-	if !strings.Contains(out.String(), "setup-1") || !strings.Contains(out.String(), strconv.Itoa(7)) {
-		t.Errorf("expected the new setup id and version printed; got:\n%s", out.String())
+	if !strings.Contains(out.String(), "volume-1") {
+		t.Errorf("expected the new volume id printed; got:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "DetectApp found nothing") {
+	if !strings.Contains(out.String(), "peak VRAM could not be measured") {
 		t.Errorf("expected the import warning printed; got:\n%s", out.String())
 	}
 
 	// CONTRACT.md section G: the backup_id ogre receives must be exactly
-	// whatever /setups/import/start returned ("repo" here), never a value aq
+	// whatever /volumes/import/start returned ("repo" here), never a value aq
 	// picked itself — an earlier version used the setup's own uuid, which
 	// silently orphaned the upload.
 	argsRaw, err := os.ReadFile(argsFile)
@@ -549,106 +544,6 @@ func TestRunImportHappyPathRegistersSetupAndPrintsWarnings(t *testing.T) {
 	}
 	if !strings.Contains(string(argsRaw), "--backup-id\nrepo") {
 		t.Errorf("capture args missing the server-provided backup id; got: %q", string(argsRaw))
-	}
-}
-
-// TestRunImportWithLaunchInstallsPollsAndRuns drives the F2 --launch path end
-// to end against a fake orchestrator: install-preview -> install -> poll the
-// deployment to active -> run. This is the real launch primitive
-// (setups.controller.ts's install/run pair), not a guessed
-// DeployRequest.SnapshotSource call.
-func TestRunImportWithLaunchInstallsPollsAndRuns(t *testing.T) {
-	writeFakePubKey(t, "ssh-ed25519 AAAA laptop@thismachine")
-
-	obs := sampleObservation()
-	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
-	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
-	ogrePath, _, _ := writeStubOgre(t, surveyJSON, captureJSON)
-
-	server := &importServer{}
-	mux := server.handler().(*http.ServeMux)
-
-	var installCalled, runCalled bool
-	var installBody map[string]any
-	var runBody map[string]any
-	statusPolls := 0
-
-	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			writeData(w, []map[string]any{{"id": "key-existing", "name": "laptop", "public_key": "ssh-ed25519 AAAA laptop"}})
-			return
-		}
-		writeData(w, map[string]any{"id": "key-new"})
-	})
-	mux.HandleFunc("/setups/versions/7/install-preview", func(w http.ResponseWriter, r *http.Request) {
-		gpu := true
-		gpuName := "NVIDIA H100 80GB HBM3"
-		hasRecipe := true
-		writeData(w, map[string]any{
-			"id": 7, "name": "imported-box", "version": 1, "provenance": "user",
-			"hasRecipe": hasRecipe, "template": nil, "image": nil, "ports": []int{},
-			"hasAppUrl": false, "hasSecureUrl": false,
-			"startupScript":     map[string]any{"willRun": false, "source": nil},
-			"suggestedHardware": map[string]any{"gpu": gpuName, "gpuCount": 1, "cpu": nil, "memory": nil, "storage": nil},
-			"peakVram":          nil,
-			"warnings":          []string{},
-		})
-		_ = gpu
-	})
-	mux.HandleFunc("/setups/versions/7/install", func(w http.ResponseWriter, r *http.Request) {
-		installCalled = true
-		_ = json.NewDecoder(r.Body).Decode(&installBody)
-		writeData(w, map[string]any{"deployment_id": 555, "project_id": "proj-1"})
-	})
-	mux.HandleFunc("/deployments/555/status", func(w http.ResponseWriter, r *http.Request) {
-		statusPolls++
-		status := "PROVISIONING"
-		if statusPolls >= 2 {
-			status = "ACTIVE"
-		}
-		writeData(w, map[string]any{"deploymentId": 555, "status": status, "deployment": map[string]any{"id": 555, "status": status}})
-	})
-	mux.HandleFunc("/setups/versions/7/run", func(w http.ResponseWriter, r *http.Request) {
-		runCalled = true
-		_ = json.NewDecoder(r.Body).Decode(&runBody)
-		writeData(w, map[string]any{
-			"message":       "restored",
-			"compatibility": map[string]any{"warnings": []string{"driver CUDA 12.4 on the box vs 12.1 the snapshot expects"}},
-		})
-	})
-
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
-	var out, errOut bytes.Buffer
-	opts := testImportOptions(cred, ogrePath, &out, &errOut)
-	opts.launch = true
-	opts.launchPollInterval = time.Millisecond
-
-	if err := runImport(opts); err != nil {
-		t.Fatalf("runImport --launch: %v", err)
-	}
-	if !installCalled {
-		t.Fatal("expected POST /setups/versions/7/install to be called")
-	}
-	if !runCalled {
-		t.Fatal("expected POST /setups/versions/7/run to be called")
-	}
-	if installBody["gpu_model"] != "NVIDIA H100 80GB HBM3" {
-		t.Errorf("install body gpu_model = %v, want the observed GPU defaulted in", installBody["gpu_model"])
-	}
-	if id, ok := runBody["target_deployment_id"].(float64); !ok || int(id) != 555 {
-		t.Errorf("run body target_deployment_id = %#v, want 555", runBody["target_deployment_id"])
-	}
-	if statusPolls < 2 {
-		t.Errorf("expected the deployment to be polled until active, got %d polls", statusPolls)
-	}
-	if !strings.Contains(out.String(), "install preview") {
-		t.Errorf("expected the install-preview verdict printed before renting; got:\n%s", out.String())
-	}
-	if !strings.Contains(out.String(), "driver CUDA 12.4") {
-		t.Errorf("expected the run's compatibility warning printed; got:\n%s", out.String())
 	}
 }
 
@@ -680,9 +575,9 @@ func TestRunImportRefusesWhenBackupIDMissing(t *testing.T) {
 }
 
 // TestRunImportResumeReusesStoragePrefixAndBackupID drives a failed capture
-// followed by `aq import --resume <setup-id>`, and checks the resumed
+// followed by `aq import --resume <volume-id>`, and checks the resumed
 // capture targets the SAME storage_prefix/backup_id the first attempt used —
-// but sourced ENTIRELY from the /setups/import/credentials response, never
+// but sourced ENTIRELY from the /volumes/import/credentials response, never
 // from anything aq remembered locally (960c487 made that response return
 // everything --resume needs specifically so aq keeps no local secret file on
 // a box it doesn't control). Also checks the FRESH import_token from that
@@ -703,7 +598,7 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 	opts := testImportOptions(cred, failingOgre, &out, &errOut)
 
 	err := runImport(opts)
-	if err == nil || !strings.Contains(err.Error(), "--resume setup-1") {
+	if err == nil || !strings.Contains(err.Error(), "--resume volume-1") {
 		t.Fatalf("expected the first attempt to fail and point at --resume, got: %v", err)
 	}
 	if server.completeCalls != 0 {
@@ -711,24 +606,24 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 	}
 
 	// The resumed run's --resume flag is the ONLY input identifying the
-	// setup — no file from the failed attempt above is read.
+	// volume — no file from the failed attempt above is read.
 	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
 	okOgre, argsFile, _ := writeStubOgre(t, surveyJSON, captureJSON)
 
 	resumeOpts := testImportOptions(cred, okOgre, &out, &errOut)
-	resumeOpts.resumeSetupID = "setup-1"
+	resumeOpts.resumeVolumeID = "volume-1"
 
 	if err := runImport(resumeOpts); err != nil {
 		t.Fatalf("runImport --resume: %v", err)
 	}
 	if server.credentialsCalls == 0 {
-		t.Fatal("expected /setups/import/credentials to be called to re-mint everything needed")
+		t.Fatal("expected /volumes/import/credentials to be called to re-mint everything needed")
 	}
 	if server.completeCalls == 0 {
 		t.Fatal("expected complete to be called after a successful resume capture")
 	}
 	if server.startCalls != 1 {
-		t.Fatalf("resume must not call /setups/import/start again; startCalls=%d", server.startCalls)
+		t.Fatalf("resume must not call /volumes/import/start again; startCalls=%d", server.startCalls)
 	}
 	if server.lastCompleteImportToken != "tok-fresh" {
 		t.Errorf("complete used import_token %q, want the fresh one from /credentials (\"tok-fresh\"), not the original /start token", server.lastCompleteImportToken)

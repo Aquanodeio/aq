@@ -37,16 +37,21 @@ import (
 // it against main's dispatch will not tell you that, so this comment is the
 // contract: if it can cause a box to be leased, it goes here.
 //
-// Only these three reach a lease. `up` and `deploy` do it unconditionally
-// (api.Client.Up / api.Client.Deploy). `import` does it on the path that
-// installs and runs the captured setup on a fresh box. Everything else in the
-// dispatch either reads, edits metadata, or de-provisions — `down` and `pause`
-// stop spend rather than start it, so guarding them would be backwards: it
-// would make the safe action harder than the expensive one.
+// `up` and `deploy` do it unconditionally (api.Client.Up / api.Client.Deploy).
+// `start` and `move` do it under the pod/environment/volume model: Start
+// brings a Stopped pod up on the cheapest matching offer, and Move stops the
+// pod then starts it again on a new one. `import` used to reach a lease on
+// its --launch path; that flag is gone (a bare Volume import carries no
+// recipe to launch from, see import.go), so import never rents hardware now
+// and does NOT belong here. Everything else in the dispatch either reads,
+// edits metadata, or de-provisions — `down` and `stop` stop spend rather than
+// start it, so guarding them would be backwards: it would make the safe
+// action harder than the expensive one.
 var billableCommands = map[string]string{
 	"up":     "rent a GPU box",
 	"deploy": "rent a GPU box to restore a save onto",
-	"import": "launch the imported pod onto a rented box",
+	"start":  "start a pod on a rented GPU box",
+	"move":   "stop a pod and start it again on a new rented GPU box",
 }
 
 // nonMutatingCommands are the verbs that change nothing on the account, so

@@ -124,16 +124,20 @@ func main() {
 		run(share(args))
 	case "fork":
 		run(fork(args))
-	case "edit-version":
-		run(editVersion(args))
-	case "pause":
-		run(pause(args))
-	case "autopause":
-		run(autopause(args))
-	case "force-detach":
-		run(forceDetach(args))
 	case "sync-now":
 		run(syncNow(args))
+	case "start":
+		run(start(args))
+	case "stop":
+		run(stop(args))
+	case "move":
+		run(move(args))
+	case "autostop":
+		run(autostop(args))
+	case "env":
+		run(env(args))
+	case "volume":
+		run(volume(args))
 	case "pods":
 		run(pods(args))
 	case "idle":
@@ -216,7 +220,7 @@ Commands:
   login         Pair this CLI to your Aquanode account (device login)
   up            Rent the cheapest matching GPU and bring up a working pod
   deploy        Restore a save onto a freshly-rented Aquanode GPU box
-  import        Capture a box you rent elsewhere into a new Aquanode pod
+  import        Capture a box you rent elsewhere into a new Aquanode volume
   host          Register a box you own or lease, and drive it with no account
   attach        Adopt a registered box into your Aquanode control plane
   release       Hand an attached box back. The box keeps running
@@ -226,21 +230,23 @@ Commands:
   logs          Read a detached run's output
   ls            List your deployments: what is running and what it costs
   status        Show a pod's status, HTTPS URL, and credentials
-  save          Save a pod's current state into its named lineage
-  share         Get a link to one saved version of a pod
+  save          Detached only: capture a BYO-bucket box into its own remote
+  share         Get a link to one saved version of a pod (legacy lineages)
   fork          Turn a share link into a new pod in your own library
-  edit-version  Edit a saved version's label, description, or visibility
-  pause         Save a pod, then release its machine (resume later with up)
-  autopause     Turn a pod's auto-pause-when-idle preference on or off
-  force-detach  Break a pod's lease even mid-sync (can lose unsynced work)
-  sync-now      Force a pod's sync tick right now
+  sync-now      Detached only: force a BYO-bucket box's sync tick right now
+  start         Start a Stopped pod on the cheapest matching GPU
+  stop          Save a pod's environment and volume, then release its machine
+  move          Stop a pod, then start it again on a different GPU
+  autostop      Turn a pod's stop-when-idle preference on or off
+  env           Manage a pod's Environment: keep it, share it, list, delete
+  volume        Manage a pod's Volume: list, duplicate, restore a point, delete
   pods          List the pods you own
   idle          View or change a DEPLOYMENT's idle-auto-pause thresholds
   job           Create, run, inspect and cancel GPU jobs
   endpoint      Create, list and inspect callable HTTP endpoints
   secret        Manage team secrets: env vars and registry credentials a job
                 can reference by name, never sent to the CLI as plaintext
-  down          Tear down a pod (stop the rented GPU box)
+  down          Tear down a deployment outright, nothing saved
   logout        Remove the stored CLI credential
   whoami        Show the current login state
   version       Print the aq version
@@ -298,30 +304,26 @@ deploy flags:
 
 import:
   Run ON a box you already rent somewhere else (RunPod, Vast, your own
-  hardware). Captures its environment into a new Aquanode pod, so it can
-  be launched on any provider we support. Survey-first: aq shows exactly what
-  it will and won't capture, and asks before anything is uploaded.
+  hardware). Captures its /workspace-equivalent data into a new Aquanode
+  Volume. Survey-first: aq shows exactly what it will and won't capture, and
+  asks before anything is uploaded. This never rents anything itself — attach
+  the resulting volume to a pod (any built-in environment) from the console
+  to bring it online.
 
-  aq import                 Survey, confirm, capture, and register the pod
+  aq import                 Survey, confirm, capture, and register the volume
   aq import --dry-run       Survey and print the plan; capture/upload nothing
   aq import --include <path>  Add a path to capture (repeatable)
   aq import --exclude <path>  Drop a detected path from capture (repeatable)
-  aq import --name <name>   Name the resulting pod (default: from hostname)
+  aq import --name <name>   Name the resulting volume (default: from hostname)
   aq import --yes           Skip the interactive confirmation
-  aq import --launch [--gpu <model>] [--max-price <n>] [--provider <name>]
-                             After import, rent a GPU and restore onto it
-                             (billable). Prints the install-preview verdict:
-                             template, suggested hardware, compatibility
-                             warnings, before anything is rented. Defaults
-                             the GPU to the one observed on the source box.
-  aq import --resume <pod-id>
+  aq import --resume <volume-id>
                              Resume an import that started but didn't finish
                              (e.g. the upload credentials expired mid-capture).
                              Re-mints write credentials and re-runs the
                              capture into the exact same storage location:
                              restic dedups what already landed, so this never
                              restarts from zero and never bills a second,
-                             parallel pod for the same box.
+                             parallel volume for the same box.
 
 host / attach / release (boxes we never provisioned):
   Two modes for a machine you already own or lease, sharing one artifact format.
@@ -479,8 +481,8 @@ ls / logs:
 
 idle:
   A PER-DEPLOYMENT idle-auto-pause policy (warn/pause thresholds, GPU idle %).
-  It always outranks a pod's own "aq autopause" preference below, see
-  "autopause" for how the two differ.
+  It always outranks a pod's own "aq autostop" preference above, see
+  "autostop" for how the two differ.
 
   aq idle status <name|id>   Show the deployment's idle-auto-pause policy and
                               its current live verdict (ACTIVE / IDLE / UNKNOWN)
@@ -638,75 +640,115 @@ secret:
   aq secret rm <name|id>      Delete a secret. A job still referencing it
                               starts failing that reference at its next run.
 
-status / save / share / fork / edit-version / pause / autopause /
-force-detach / sync-now / pods / down:
+status / save / share / fork / sync-now / start / stop / move / autostop /
+pods / down:
+  A pod is a GPU plus its config (name, GPU choice, ports, which Environment,
+  which Volume). It has no versions of its own: Start / Stop / Move / Delete
+  are the only pod-level verbs. Rolling back what you installed is an older
+  Environment version ("aq env"); rolling back your data is an older Volume
+  point ("aq volume"). Neither touches the other.
+
   aq status <name|id>        Re-check a provisioning or running pod
                              (add --show-secrets to print the password)
-  aq save <name|id>          Save the pod's current state into its named
-                             save lineage. The first save on a
-                             pod asks for a lineage name once (Enter
-                             accepts the default, which is the pod's own
-                             name; a non-interactive shell just uses the
-                             default). Every later save reuses that lineage
-                             silently and increments its version (v1, v2,
-                             v3, ...). (--name <lineage>, --path <dir>)
-  aq share <name|id> <ver>   Print a link to ONE immutable saved version
-                             (e.g. "aq share comfyui 3"). The link always
-                             points at that exact version, never at
-                             whatever the lineage's head becomes later.
+  aq save host:<alias>       Detached only: capture a BYO-bucket box into its
+                             own configured remote (ogre's own snapshot verb).
+                             A managed pod saves its environment and volume
+                             automatically on every "aq stop" instead — there
+                             is no save button or lineage for one any more.
+  aq share <name|id> <ver>   Print a link to ONE immutable legacy saved
+                             version from before this pod's environment/volume
+                             split (e.g. "aq share comfyui 3"). New sharing
+                             goes through "aq env share" instead.
   aq fork <token|link>       Turn a link from "aq share" (someone else's,
                              or your own team's own share of a team you've
                              since left) into a brand new pod in your own
                              library. Registers ownership only. It does
                              not itself boot any hardware.
                              (--name <name>, default: derived from the source)
-  aq edit-version <name|id> <ver> [flags]
-                             Edit a saved version's label, description,
-                             and/or visibility. Only the flags you pass
-                             change; there is currently no way to clear
-                             a label/description back to empty.
-                             (--label <text>, --description <text>,
-                             --visibility private|team|public)
-  aq pause <name|id>         Save the pod, then release its machine.
-                             Pick it back up with "aq deploy --snapshot <id>"
-                             (the paused deployment's id, which pause prints).
-  aq autopause <name|id> on|off
-                             Turn this POD's auto-pause-when-idle
-                             preference on or off, using the platform's
-                             default idle thresholds. This is NOT "aq idle"
-                             above: idle policy is a per-DEPLOYMENT threshold
-                             config that always outranks this, and this
-                             carries no thresholds of its own: use "aq idle
-                             set" to change WHEN idle counts as idle, and
-                             this to turn auto-pause on pods on/off at all.
-  aq force-detach <name|id> --yes
-                             Break the pod's lease even mid-sync, for
-                             when a deployment died holding it and it needs
-                             freeing before anything else can attach.
-                             --yes acknowledges work since the last
-                             completed sync may be lost; there is no
-                             silent form of this command.
-  aq sync-now <name|id>      Force a sync tick right now instead of waiting
-                             for the pod's own schedule, e.g. right
-                             before "aq share"/"aq fork" so the link
-                             reflects your latest work. Requires the pod
-                             to be attached to a running deployment.
+  aq sync-now host:<alias>   Detached only: force a BYO-bucket box's sync tick
+                             right now instead of waiting for its own
+                             schedule; it runs no scheduler of its own. A
+                             managed pod's volume ticks itself on a
+                             leader-elected schedule with no button to force.
+  aq start <name|id>         Start a Stopped pod, on any matching GPU (not
+                             necessarily the one it last ran on).
+                             (--gpu <model>, --max-price <n>, --provider
+                             <name>, --gpus <n>; no flags = cheapest anywhere)
+  aq stop <name|id>          Save the pod's environment and volume (both
+                             confirmed), then release its machine. The pod
+                             keeps its config and history; bring it back with
+                             "aq start". Never closes before both saves land.
+  aq move <name|id> [flags]  Stop the pod, then start it again on a different
+                             GPU. A failed Start after the Stop leaves the pod
+                             Stopped with its data intact, never mid-air.
+                             (same flags as "aq start")
+  aq autostop <name|id> on|off
+                             Turn this POD's stop-when-idle preference on or
+                             off, using the platform's default idle
+                             thresholds. This is NOT "aq idle" above: idle
+                             policy is a per-DEPLOYMENT threshold config that
+                             always outranks this, and this carries no
+                             thresholds of its own: use "aq idle set" to
+                             change WHEN idle counts as idle, and this to
+                             turn auto-stop on pods on/off at all.
   aq pods                    List the pods you own: name, whether it's
-                             running, latest saved version, and size.
-  aq down <name|id>          Tear the pod down and stop billing
-                             (--save saves first; terminate is skipped
-                             if the save fails)
+                             running, and size.
+  aq down <name|id>          Tear a deployment down outright: nothing is
+                             saved and it cannot be resumed. This is the
+                             lower-level "kill this box" escape hatch;
+                             "aq stop" is the everyday, always-saved verb.
+
+env:
+  A pod's Environment is everything OUTSIDE /workspace: base image, installed
+  packages, startup script. It saves silently with the pod's config on every
+  Stop and never needs a click — it only becomes a visible, named thing when
+  you Keep or Share it.
+
+  aq env keep <name|id> <name>
+                             Name the pod's current environment so it lists
+                             under Yours in the New pod picker and survives
+                             pod deletion. Mints nothing by itself.
+  aq env share <name|id> [--version <id>]
+                             Share one version of an environment: mints the
+                             next version if the pod changed since the last
+                             one (a fresh capture first on a Running pod),
+                             then returns a link. Absent --version shares the
+                             latest. Refuses if the startup script contains a
+                             secret shape (hf_, sk-, AKIA, a PEM header, ...).
+  aq env ls                  List environments you can pick from: Built-in,
+                             Yours (kept or previously shared), and Shared
+                             with you.
+  aq env ls <name|id>        List one pod's or one environment's versions
+                             (id, version, created, what's included/left out).
+  aq env rm <id>             Delete a kept or shared environment. Breaks
+                             nothing running; existing share links stop
+                             working.
+
+volume:
+  A pod's Volume is /workspace: your code, checkpoints, datasets. It has
+  automatic history, one point per Stop, and no manual save button.
+
+  aq volume ls                List your volumes: name, size, attached pod.
+  aq volume ls <id>            One volume's detail and history (points, with
+                             what created each one: pod stopped, auto-stopped).
+  aq volume dup <id> <name>   Duplicate a volume: an honest fork, writes never
+                             merge back. Attach the copy to a different pod.
+  aq volume restore <id> <pointId>
+                             Roll the volume back to an earlier point. Refused
+                             while the volume is attached to a running pod.
+  aq volume rm <id>           Delete a volume and its whole history. Refused
+                             while attached.
 
 Environment:
   AQ_API_URL      Aquanode API base (default https://server.aquanode.io/api/v1)
-  AQ_CONSOLE_URL  Aquanode console base "aq share" links point at
-                  (default https://console.aquanode.io)
+  AQ_CONSOLE_URL  Aquanode console base "aq share"/"aq env share" links
+                  point at (default https://console.aquanode.io)
   AQ_CONFIG_DIR   Credential directory (default <user-config-dir>/aq)
   AQ_SSH_KEY      Private key to use for box access (default: your ~/.ssh key,
                   else aq's managed ~/.ssh/aquanode_ed25519)
   AQ_NO_BROWSER   Set to skip auto-opening the approval URL
-  AQ_ALLOW_PROD   Set to 1 to allow "aq up"/"aq deploy"/"aq import" to rent
-                  hardware on a non-local host from a script or other
+  AQ_ALLOW_PROD   Set to 1 to allow "aq up"/"aq deploy"/"aq start"/"aq move" to
+                  rent hardware on a non-local host from a script or other
                   non-interactive shell. Same effect as passing --prod.
                   Typing at a terminal needs neither.
 

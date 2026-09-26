@@ -1,45 +1,11 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
-
-// TestCreateSetupSnapshotPostsNameAndWorkspaceDir checks `aq snapshot`'s API
-// call: POST /setups/:id/snapshot with the lineage name and the captured
-// directory under its wire name workspace_dir (not a renamed "path" field —
-// --path is a CLI-surface rename only), and that the returned version row
-// decodes for the "✓ Saved <name> v<version>" print.
-func TestCreateSetupSnapshotPostsNameAndWorkspaceDir(t *testing.T) {
-	var gotPath string
-	var gotBody CreateSetupSnapshotRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"id":9,"name":"comfyui","version":3,"setup_id":"11111111-1111-1111-1111-111111111111","size_bytes":1073741824}}`)
-	}))
-	defer srv.Close()
-
-	got, err := NewAuthed(srv.URL, "tok", "t").CreateSetupSnapshot("11111111-1111-1111-1111-111111111111", CreateSetupSnapshotRequest{
-		Name: "comfyui", WorkspaceDir: "/workspace",
-	})
-	if err != nil {
-		t.Fatalf("CreateSetupSnapshot: %v", err)
-	}
-	if gotPath != "/setups/11111111-1111-1111-1111-111111111111/snapshot" {
-		t.Errorf("path = %q, want /setups/<uuid>/snapshot", gotPath)
-	}
-	if gotBody.Name != "comfyui" || gotBody.WorkspaceDir != "/workspace" {
-		t.Errorf("body = %+v", gotBody)
-	}
-	if got.Name != "comfyui" || got.Version != 3 {
-		t.Errorf("result = %+v, want name=comfyui version=3", got)
-	}
-}
 
 // TestListSetupVersionsQueriesByName checks GET /setups/versions?name=...
 // decodes id/version/setup_id — the three fields `aq share` needs to resolve

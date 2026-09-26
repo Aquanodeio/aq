@@ -3,14 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
@@ -103,82 +101,37 @@ func TestDownRequiresLogin(t *testing.T) {
 	}
 }
 
-// TestDownWithSnapshotAbortsTerminateWhenCheckpointFails is the safety property
-// --save exists for: a failed save must leave the box running, never
-// terminated unsaved.
-func TestDownWithSnapshotAbortsTerminateWhenCheckpointFails(t *testing.T) {
-	closed := false
-	err := downWithCheckpoint(
-		downOptions{snapshot: true, out: &bytes.Buffer{}},
-		func(snapshotOptions) (api.SetupVersion, error) {
-			return api.SetupVersion{}, errors.New("ogre agent unreachable")
-		},
-		func(downOptions) error { closed = true; return nil },
-	)
-	if err == nil {
-		t.Fatal("want error when checkpoint fails")
-	}
-	if closed {
-		t.Fatal("terminate ran after a failed checkpoint — the box would be destroyed unsaved")
-	}
-}
-
-func TestDownWithSnapshotTerminatesAfterSuccessfulCheckpoint(t *testing.T) {
-	closed := false
-	err := downWithCheckpoint(
-		downOptions{snapshot: true, out: &bytes.Buffer{}},
-		func(snapshotOptions) (api.SetupVersion, error) {
-			return api.SetupVersion{Name: "comfyui", Version: 3}, nil
-		},
-		func(downOptions) error { closed = true; return nil },
-	)
-	if err != nil || !closed {
-		t.Fatalf("err=%v closed=%v; want nil/true", err, closed)
-	}
-}
-
-func TestDownWithoutSnapshotSkipsCheckpoint(t *testing.T) {
-	checkpointed := false
-	_ = downWithCheckpoint(
-		downOptions{snapshot: false, out: &bytes.Buffer{}},
-		func(snapshotOptions) (api.SetupVersion, error) {
-			checkpointed = true
-			return api.SetupVersion{}, nil
-		},
-		func(downOptions) error { return nil },
-	)
-	if checkpointed {
-		t.Fatal("checkpoint ran without --save")
-	}
-}
-
 // A bare `aq down` calls the plain close route, which writes close_reason
 // USER_REQUEST — excluded from RESUMABLE_CLOSE_REASONS, i.e. gone for good.
-// This once printed only "termination requested", so the destructive path and
-// the saving one read identically. The disclosure must be
-// printed BEFORE the terminate call, because afterwards the box is already
-// gone, and it must name --save.
-func TestDownWithoutSnapshotDisclosesNothingIsSavedBeforeTerminating(t *testing.T) {
+// This once printed only "termination requested", so the destructive path
+// read no differently than a saved one. The disclosure must be printed
+// BEFORE the terminate call, because afterwards the box is already gone.
+// There is no more --save flag here (see stop.go: a pod's Stop is always
+// save-then-release under the pod/environment/volume model) — `aq down`
+// stays the lower-level, always-unsaved "kill this deployment id" verb.
+func TestRunDownDisclosesNothingIsSavedBeforeTerminating(t *testing.T) {
+	mux := http.NewServeMux()
+	stubDeploymentList(mux)
+	mux.HandleFunc("/deployments/close", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"status": "CLOSING"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
 	var out bytes.Buffer
-	printedBeforeTerminate := ""
-	if err := downWithCheckpoint(
-		downOptions{snapshot: false, target: "4242", out: &out},
-		func(snapshotOptions) (api.SetupVersion, error) {
-			t.Fatal("checkpoint ran without --save")
-			return api.SetupVersion{}, nil
-		},
-		func(downOptions) error {
-			printedBeforeTerminate = out.String()
-			return nil
-		},
-	); err != nil {
-		t.Fatalf("downWithCheckpoint: %v", err)
+	if err := runDown(downOptions{cred: cred, target: "4242", out: &out}); err != nil {
+		t.Fatalf("runDown: %v", err)
 	}
 
-	for _, want := range []string{"without saving", "cannot be resumed", "aq down --save 4242"} {
-		if !strings.Contains(printedBeforeTerminate, want) {
-			t.Errorf("output before terminate is missing %q; got:\n%s", want, printedBeforeTerminate)
-		}
+	got := out.String()
+	beforeIdx := strings.Index(got, "without saving")
+	terminateIdx := strings.Index(got, "Termination requested")
+	if beforeIdx == -1 || terminateIdx == -1 || beforeIdx > terminateIdx {
+		t.Errorf("expected the no-save disclosure BEFORE the termination line; got:\n%s", got)
+	}
+	if !strings.Contains(got, "cannot be resumed") {
+		t.Errorf("expected the disclosure to say the box cannot be resumed; got:\n%s", got)
 	}
 }
 

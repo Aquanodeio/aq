@@ -51,9 +51,11 @@ func TestGuardBillableAllowsALocalStack(t *testing.T) {
 // worktree resolves that worktree's own orchestrator, and this is the assertion
 // that such a target sails through the guard with no opt-in at all.
 func TestGuardBillableIsSilentForEveryVerbThatCannotRentHardware(t *testing.T) {
-	// down and pause STOP spend. Guarding them would make the cheap action
-	// harder than the expensive one, which is the wrong way round.
-	for _, cmd := range []string{"down", "pause", "ls", "status", "logs", "save", "share", "fork", "push", "run", "ssh", "whoami"} {
+	// down and stop STOP spend. Guarding them would make the cheap action
+	// harder than the expensive one, which is the wrong way round. import no
+	// longer bills either: its --launch path (the only one that rented
+	// hardware) is gone under the pod/environment/volume model.
+	for _, cmd := range []string{"down", "stop", "ls", "status", "logs", "share", "fork", "push", "run", "ssh", "whoami", "import", "env", "volume", "autostop"} {
 		if err := guardBillable(cmd, "https://server.aquanode.io/api/v1", nil, false, false); err != nil {
 			t.Errorf("aq %s rents nothing and must not be guarded: %v", cmd, err)
 		}
@@ -61,7 +63,7 @@ func TestGuardBillableIsSilentForEveryVerbThatCannotRentHardware(t *testing.T) {
 }
 
 func TestGuardBillableCoversEveryBillableVerb(t *testing.T) {
-	for _, cmd := range []string{"up", "deploy", "import"} {
+	for _, cmd := range []string{"up", "deploy", "start", "move"} {
 		if err := guardBillable(cmd, "https://server.aquanode.io/api/v1", nil, false, false); err == nil {
 			t.Errorf("aq %s can lease hardware and must be guarded", cmd)
 		}

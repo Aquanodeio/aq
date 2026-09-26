@@ -1,10 +1,15 @@
 package api
 
 // Import endpoints backing `aq import` — bringing a box running somewhere else
-// (RunPod, Vast, a bare-metal box, ...) into Aquanode as a real Setup. Every
-// type here mirrors the frozen wire contract in CONTRACT.md section C; do not
-// rename a field without checking that contract first, since ogre and the
-// orchestrator implement against it independently.
+// (RunPod, Vast, a bare-metal box, ...) into Aquanode as a real Volume. The
+// observation/survey types below mirror ogre's own wire contract (referenced
+// elsewhere as CONTRACT.md section C; do not rename one of those without
+// checking ogre and the orchestrator first, since both implement against it
+// independently). The Start/Credentials/Complete request+response shapes
+// were retargeted from /setups/import/* to /volumes/import/* per the
+// pod/environment/volume plan's D12 (POST /snapshots/external ->
+// POST /volumes/import): a captured box is now adopted as a Volume, not a
+// whole Setup with a synthesized recipe.
 
 import "net/url"
 
@@ -154,8 +159,8 @@ type ImportObservation struct {
 }
 
 // ImportCredentials are scoped, time-limited write credentials for the new
-// setup's storage prefix — minted by /setups/import/start and re-mintable via
-// /setups/import/credentials for an upload that outlives one minting.
+// volume's storage prefix — minted by /volumes/import/start and re-mintable
+// via /volumes/import/credentials for an upload that outlives one minting.
 type ImportCredentials struct {
 	Endpoint        string `json:"endpoint"`
 	Bucket          string `json:"bucket"`
@@ -164,28 +169,34 @@ type ImportCredentials struct {
 	Region          string `json:"region"`
 }
 
-// ImportStartRequest is the body of POST /setups/import/start. Both fields are
-// optional — the orchestrator names the setup and picks a mount path when
-// they're empty.
+// ImportStartRequest is the body of POST /volumes/import/start. Both fields
+// are optional — the orchestrator names the volume and picks a mount path
+// when they're empty.
 type ImportStartRequest struct {
 	Name      string `json:"name,omitempty"`
 	MountPath string `json:"mount_path,omitempty"`
 }
 
-// ImportStartResult is the data returned by POST /setups/import/start: a real
-// Setup already exists at this point, with a real (billed, visible, deletable)
-// storage prefix, before a single byte has been captured.
+// ImportStartResult is the data returned by POST /volumes/import/start: a
+// real Volume already exists at this point, with a real (billed, visible,
+// deletable) storage prefix, before a single byte has been captured. This is
+// the pod/environment/volume plan's D12: the route used to be
+// POST /snapshots/external and mint a whole Setup; a box captured from
+// outside Aquanode is now just its /workspace data, adopted as a Volume
+// (the setup-adopt.service.ts pattern) -- the Environment/recipe half of the
+// old flow is gone, since a bare import carries no installed-package
+// manifest to synthesize one from.
 //
 // ResticBackupID is the SERVER's own convention for the trailing path segment
 // of the restic repo (`setup.service.ts`'s resticRepositoryUrl: currently the
 // literal "repo" for every portable setup, since StoragePrefix already makes
 // the repo unique — see CONTRACT.md section G). aq passes it straight through
 // to `ogre capture` uninterpreted; it must NEVER be guessed or defaulted
-// client-side; a value like the setup's own uuid writes to a path nothing
+// client-side; a value like the volume's own uuid writes to a path nothing
 // ever reads, and the uploaded bytes then sit there billing forever with no
 // error anywhere.
 type ImportStartResult struct {
-	SetupID        string            `json:"setup_id"`
+	VolumeID       string            `json:"volume_id"`
 	StoragePrefix  string            `json:"storage_prefix"`
 	ResticPassword string            `json:"restic_password"`
 	ResticBackupID string            `json:"restic_backup_id"`
@@ -194,33 +205,33 @@ type ImportStartResult struct {
 	Credentials    ImportCredentials `json:"credentials"`
 }
 
-// StartImport creates the Setup that will receive the capture and mints
+// StartImport creates the Volume that will receive the capture and mints
 // scoped write credentials + a single-use completion token for it.
 func (c *Client) StartImport(req ImportStartRequest) (*ImportStartResult, error) {
 	var out ImportStartResult
-	if err := c.postJSON("/setups/import/start", req, &out); err != nil {
+	if err := c.postJSON("/volumes/import/start", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
 // ImportCredentialsRefreshRequest is the body of POST
-// /setups/import/credentials — re-mints EVERYTHING `aq import --resume`
-// needs for a still-pending import, keyed by setup id alone.
+// /volumes/import/credentials — re-mints EVERYTHING `aq import --resume`
+// needs for a still-pending import, keyed by volume id alone.
 type ImportCredentialsRefreshRequest struct {
-	SetupID string `json:"setup_id"`
+	VolumeID string `json:"volume_id"`
 }
 
 // ImportCredentialsRefreshResult is the data returned by POST
-// /setups/import/credentials (setup-import.service.ts's
-// ImportCredentialsResult). This is the WHOLE point of the route: it returns
-// everything --resume needs — StoragePrefix/ResticBackupID/ResticPassword
-// alongside a freshly-minted ImportToken and scoped write Credentials — so aq
-// never has to persist a single one of these locally. ImportToken here
-// SUPERSEDES any token from a prior /start or /credentials call for this
-// setup; using a remembered one for /complete will be refused.
+// /volumes/import/credentials. This is the WHOLE point of the route: it
+// returns everything --resume needs — StoragePrefix/ResticBackupID/
+// ResticPassword alongside a freshly-minted ImportToken and scoped write
+// Credentials — so aq never has to persist a single one of these locally.
+// ImportToken here SUPERSEDES any token from a prior /start or /credentials
+// call for this volume; using a remembered one for /complete will be
+// refused.
 type ImportCredentialsRefreshResult struct {
-	SetupID        string            `json:"setup_id"`
+	VolumeID       string            `json:"volume_id"`
 	StoragePrefix  string            `json:"storage_prefix"`
 	ResticBackupID string            `json:"restic_backup_id"`
 	ResticPassword string            `json:"restic_password"`
@@ -229,22 +240,22 @@ type ImportCredentialsRefreshResult struct {
 	Credentials    ImportCredentials `json:"credentials"`
 }
 
-// RefreshImportCredentials re-mints everything needed to resume setupID's
+// RefreshImportCredentials re-mints everything needed to resume volumeID's
 // still-pending import: scoped write credentials, the storage location, and a
 // fresh single-use completion token. This is `aq import --resume`'s ONLY
 // source of that state — aq keeps no local copy of any of it.
-func (c *Client) RefreshImportCredentials(setupID string) (*ImportCredentialsRefreshResult, error) {
+func (c *Client) RefreshImportCredentials(volumeID string) (*ImportCredentialsRefreshResult, error) {
 	var out ImportCredentialsRefreshResult
-	if err := c.postJSON("/setups/import/credentials", ImportCredentialsRefreshRequest{SetupID: setupID}, &out); err != nil {
+	if err := c.postJSON("/volumes/import/credentials", ImportCredentialsRefreshRequest{VolumeID: volumeID}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// ImportCompleteRequest is the body of POST /setups/import/complete. The
+// ImportCompleteRequest is the body of POST /volumes/import/complete. The
 // observation is forwarded exactly as `ogre capture` emitted it.
 type ImportCompleteRequest struct {
-	SetupID        string            `json:"setup_id"`
+	VolumeID       string            `json:"volume_id"`
 	ImportToken    string            `json:"import_token"`
 	OgreSnapshotID string            `json:"ogre_snapshot_id"`
 	Path           string            `json:"path"`
@@ -252,23 +263,23 @@ type ImportCompleteRequest struct {
 	Observation    ImportObservation `json:"observation"`
 }
 
-// ImportCompleteResult is the data returned by POST /setups/import/complete.
-// Recipe stays raw: it's the orchestrator's internal SetupRecipe shape, which
-// aq has no reason to decode — it only ever gets restored server-side.
+// ImportCompleteResult is the data returned by POST /volumes/import/complete.
+// There is no recipe/version here any more (that was the old Setup-shaped
+// flow's synthesized launch config) — a Volume carries /workspace data only,
+// nothing installable, so nothing is synthesized on completion.
 type ImportCompleteResult struct {
-	SetupID   string   `json:"setup_id"`
-	VersionID int      `json:"version_id"`
-	Recipe    any      `json:"recipe"`
-	Warnings  []string `json:"warnings"`
+	VolumeID string   `json:"volume_id"`
+	Warnings []string `json:"warnings"`
 }
 
-// CompleteImport registers the version, consuming the single-use import
-// token. The token is deleted server-side on read, so a retried call after a
-// transport error (rather than a genuine second import) will be refused —
-// that's a real gap in this v1 client, noted rather than papered over.
+// CompleteImport registers the capture as the volume's first history point,
+// consuming the single-use import token. The token is deleted server-side on
+// read, so a retried call after a transport error (rather than a genuine
+// second import) will be refused — that's a real gap in this v1 client,
+// noted rather than papered over.
 func (c *Client) CompleteImport(req ImportCompleteRequest) (*ImportCompleteResult, error) {
 	var out ImportCompleteResult
-	if err := c.postJSON("/setups/import/complete", req, &out); err != nil {
+	if err := c.postJSON("/volumes/import/complete", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -52,10 +52,12 @@ they mean the same thing for every provider, and `--max-price` filters on
 - **`aq login`** — pair the CLI to your Aquanode account via device-login
 - **`aq up`** — rent the cheapest matching GPU, provision it, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
 - **`aq deploy`** — restore a snapshot onto a freshly-rented Aquanode GPU box
-- **`aq import`** — run on a box you already rent elsewhere and capture its environment into a new Aquanode pod you can launch on any provider we support
+- **`aq import`** — run on a box you already rent elsewhere and capture its data into a new Aquanode volume, ready to attach to a pod
+- **`aq start` / `aq stop` / `aq move`** — bring a pod up on any matching GPU, save its environment and volume and release the box, or move a running pod to a different GPU
+- **`aq env` / `aq volume`** — keep or share an environment version; list, duplicate, restore, or delete a volume's history
 - **`aq ssh [name]`** — get a shell on a box: managed keypair, managed `~/.ssh/config` alias, zero setup
 - **`aq status <name|id>`** — check a deployment's status, provisioning state, HTTPS URL, and credentials
-- **`aq down <name|id>`** — tear down a deployment and stop billing
+- **`aq down <name|id>`** — tear down a deployment outright, nothing saved
 - **`aq logout` / `aq whoami`** — manage authentication state
 
 ## Install

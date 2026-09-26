@@ -17,28 +17,26 @@ import (
 // downOptions configures runDown. down() fills in the real environment; tests
 // inject a base URL and a buffer writer.
 type downOptions struct {
-	cred     *config.Credential
-	target   string // deployment id, name, or project id (resolved by runDown)
-	snapshot bool   // save the deployment before terminating it
-	setupID  string // the setup id (uuid) backing target, resolved when snapshot is true
-	out      io.Writer
-	errOut   io.Writer
+	cred   *config.Credential
+	target string // deployment id, name, or project id (resolved by runDown)
+	out    io.Writer
+	errOut io.Writer
 }
 
-// down parses flags/the deployment target and wires the real environment into
-// downWithCheckpoint.
+// down parses the deployment target and wires the real environment into
+// runDown.
 //
-// `aq down <deploymentId>` tears down an env brought up by `aq up` / `aq deploy`,
-// stopping the rented GPU box and its billing. `--save` saves it first —
-// terminate is skipped entirely if that save fails, so the flag can never
-// destroy an unsaved box. Named "--save", not "--snapshot": this flag names
-// an ACTION (do a save before stopping), and the action is "Save" everywhere
-// else in this rewrite — "snapshot" survives only as the noun for the saved
-// artifact itself, e.g. `aq deploy --snapshot <id>` below, which names WHICH
-// save to restore, not an action.
+// `aq down <deploymentId>` tears down a raw deployment (one brought up by
+// `aq up` / `aq deploy`, or one left over after a pod's Start), stopping the
+// rented GPU box and its billing for good — a bare close writes close_reason
+// USER_REQUEST, which the orchestrator excludes from RESUMABLE_CLOSE_REASONS,
+// so nothing on the box is kept. This used to take a `--save` flag that
+// checkpointed the setup first; that mechanism (`aq save`) is gone under the
+// pod/environment/volume model, where Stop is ALWAYS save-then-release (see
+// stop.go) — `aq down` stays only as the lower-level "kill this deployment
+// id outright" escape hatch, distinct from the Pod-level Stop.
 func down(args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
-	snap := fs.Bool("save", false, "save your pod before terminating")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -54,87 +52,20 @@ func down(args []string) error {
 		return err
 	}
 
-	opts := downOptions{
-		cred:     cred,
-		target:   target,
-		snapshot: *snap,
-		out:      os.Stdout,
-		errOut:   os.Stderr,
-	}
-
-	if opts.snapshot {
-		// Resolve to the numeric deployment id up front so the printed restore
-		// command (aq deploy --snapshot <id>) is always something `aq deploy`
-		// actually accepts, not a --name or a project UUID.
-		client := newControlClient(cred)
-		id, err := resolveDeploymentID(client, opts.target, "down")
-		if err != nil {
-			return err
-		}
-		opts.target = strconv.Itoa(id)
-
-		// The checkpoint save is a setup-scoped call (POST
-		// /setups/:id/snapshot), not a deployment-scoped one — map the
-		// resolved deployment to the setup whose lease it currently holds
-		// rather than ever passing the deployment id where a setup id
-		// belongs.
-		setupID, err := setupIDForDeployment(client, id)
-		if err != nil {
-			return err
-		}
-		opts.setupID = setupID
-	}
-
-	return downWithCheckpoint(opts, runSnapshot, runDown)
-}
-
-// downWithCheckpoint sequences an optional checkpoint before termination. A
-// failed checkpoint ABORTS the terminate: destroying a box whose save just
-// failed is the one outcome --save exists to prevent. checkpoint and
-// terminate are injected so this control flow is testable without a live box.
-func downWithCheckpoint(
-	opts downOptions,
-	checkpoint func(snapshotOptions) (api.SetupVersion, error),
-	terminate func(downOptions) error,
-) error {
-	out := opts.out
-	if out == nil {
-		out = os.Stdout
-	}
-
-	if opts.snapshot {
-		fmt.Fprintln(out, "Saving your pod before terminating…")
-		res, err := checkpoint(snapshotOptions{
-			cred:    opts.cred,
-			setupID: opts.setupID,
-			pathDir: "/workspace",
-		})
-		if err != nil {
-			return fmt.Errorf("save failed, so the deployment was NOT terminated (it is still running): %w", err)
-		}
-		fmt.Fprintf(out, "✓ Saved %s v%d\n", res.Name, res.Version)
-		defer func() {
-			fmt.Fprintf(out, "\nPick up where you left off with:\n  aq deploy --snapshot %s\n", opts.target)
-		}()
-	} else {
-		// Say plainly that nothing is kept, BEFORE the box is gone. A bare
-		// `aq down` closes with close_reason USER_REQUEST, which the
-		// orchestrator excludes from RESUMABLE_CLOSE_REASONS — the data is
-		// unrecoverable, not merely awkward to reach.
-		//
-		// This is disclosure, not a changed default. --save stays false
-		// because a save WRITES BYTES and bytes are billed, and storing
-		// something on the user's behalf is the user's call to make (see
-		// aquanode-backend orchestrator/src/configs/idle.config.ts). The
-		// defect this fixes was the silence, not the default.
-		fmt.Fprintln(out, "Terminating without saving: nothing on this box is kept, and it cannot be resumed.")
-		fmt.Fprintf(out, "To save your pod before stopping the box, use: aq down --save %s\n", opts.target)
-	}
-
-	return terminate(opts)
+	return runDown(downOptions{
+		cred:   cred,
+		target: target,
+		out:    os.Stdout,
+		errOut: os.Stderr,
+	})
 }
 
 // runDown requests termination of the deployment and reports the outcome.
+//
+// This is disclosure, not a warning to talk the user out of it: `aq down`
+// releases the box with nothing saved. A pod (see stop.go) always saves on
+// the way down; a raw deployment does not, and saying so before the box is
+// gone is the whole point — afterward there's nothing left to disclose.
 func runDown(opts downOptions) error {
 	if opts.out == nil {
 		opts.out = os.Stdout
@@ -142,6 +73,8 @@ func runDown(opts downOptions) error {
 	if opts.errOut == nil {
 		opts.errOut = os.Stderr
 	}
+
+	fmt.Fprintln(opts.out, "Terminating without saving: nothing on this box is kept, and it cannot be resumed.")
 
 	client := newControlClient(opts.cred)
 

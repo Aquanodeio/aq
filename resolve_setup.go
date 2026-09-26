@@ -66,19 +66,15 @@ func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 	return nil, fmt.Errorf("pod %q not found", setupID)
 }
 
-// setupIDForDeployment maps a deployment id to the setup whose lease it
-// currently holds. `aq down --save` uses this: the checkpoint save it
-// takes before terminating is a setup-scoped call, but the deployment being
-// torn down is the only identifier the user gave it.
-func setupIDForDeployment(client *api.Client, deploymentID int) (string, error) {
-	setups, err := client.ListSetups()
-	if err != nil {
-		return "", fmt.Errorf("could not list pods: %w", err)
+// setupDisplayName fetches a pod's own name (the wire route is still
+// GET /setups, and there is no single-pod endpoint). `aq job create` uses
+// this to default a job's name to its source pod's own name when none is
+// given. A failed lookup must never abort the caller — it falls back to a
+// generic label instead.
+func setupDisplayName(client *api.Client, setupID string) string {
+	setup, err := findSetup(client, setupID)
+	if err != nil || setup.Name == "" {
+		return fmt.Sprintf("pod-%s", setupID)
 	}
-	for _, s := range setups {
-		if s.LeaseDeploymentID != nil && *s.LeaseDeploymentID == deploymentID {
-			return s.ID, nil
-		}
-	}
-	return "", fmt.Errorf("no pod found holding deployment #%d's lease, cannot save before terminating", deploymentID)
+	return setup.Name
 }
