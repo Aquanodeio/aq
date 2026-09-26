@@ -1,30 +1,22 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
-
-	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// syncNowOptions configures runSyncNow. syncNow() fills in the real
-// environment; tests call runSyncNow directly.
-type syncNowOptions struct {
-	cred   *config.Credential
-	target string // setup id (uuid) or name
-	out    io.Writer
-}
-
-// syncNow parses `aq sync-now <setup>` and wires the real environment into
-// runSyncNow.
+// syncNow parses `aq sync-now host:<alias>` and dispatches to ogre's own push
+// verb on a detached box.
 //
-// Forces a sync tick right now, outside the setup's own scheduled interval —
-// useful right before `aq share`/`aq fork` so a link points at your latest
-// work instead of whatever the last scheduled tick happened to catch. The
-// setup must currently be attached to a running deployment.
+// This command used to also force a MANAGED pod's sync tick outside its own
+// schedule (POST /setups/:id/sync). That mechanism is gone under the
+// pod/environment/volume model: a running pod's volume saves itself on a
+// leader-elected periodic tick with no user-facing button (spec mechanism 9),
+// so there is nothing left for a managed target to force. `aq sync-now`
+// therefore survives ONLY for a detached (BYO-bucket, no Aquanode account)
+// box, which runs no scheduler at all: "force the tick now" is the only
+// form the verb has there, and the real one, not a stand-in.
 func syncNow(args []string) error {
 	fs := flag.NewFlagSet("sync-now", flag.ContinueOnError)
 	positional, err := parseInterspersed(fs, args)
@@ -32,42 +24,12 @@ func syncNow(args []string) error {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("a pod is required, usage: aq sync-now <pod>")
+		return fmt.Errorf("usage: aq sync-now host:<alias>")
 	}
 
-	// Detached: `ogre push` flushes the box's snapshots to its configured
-	// remote. A detached box runs no scheduler, so "force the tick now" is the
-	// only form the verb has there — and it is the real one, not a stand-in.
-	if alias, ok := parseHostTarget(positional[0]); ok {
-		return runDetached(detachedOptions{verb: "sync-now", alias: alias, out: os.Stdout, errOut: os.Stderr})
+	alias, ok := parseHostTarget(positional[0])
+	if !ok {
+		return fmt.Errorf("aq sync-now only takes a detached host target now (host:<alias>); a managed pod's volume saves itself on a periodic tick")
 	}
-
-	cred, err := requireLogin()
-	if err != nil {
-		return err
-	}
-
-	return runSyncNow(syncNowOptions{cred: cred, target: positional[0], out: os.Stdout})
-}
-
-// runSyncNow forces the sync tick and reports the resulting snapshot id.
-func runSyncNow(opts syncNowOptions) error {
-	out := opts.out
-	if out == nil {
-		out = os.Stdout
-	}
-
-	client := newControlClient(opts.cred)
-	setupID, err := resolveSetupID(client, opts.target)
-	if err != nil {
-		return err
-	}
-
-	res, err := client.SyncSetupNow(setupID)
-	if err != nil {
-		return fmt.Errorf("could not sync %q: %w", opts.target, err)
-	}
-
-	fmt.Fprintf(out, "✓ Sync complete (snapshot %s)\n", res.SnapshotID)
-	return nil
+	return runDetached(detachedOptions{verb: "sync-now", alias: alias, out: os.Stdout, errOut: os.Stderr})
 }

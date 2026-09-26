@@ -132,6 +132,35 @@ func printStatusReady(out io.Writer, dep api.Deployment) {
 	fmt.Fprintf(out, "\nManage it in the console or run `aq whoami` to confirm your login.\n")
 }
 
+// isInteractiveStdin reports whether a person is actually at the other end of
+// stdin. Overridable by tests. In a non-interactive context (piped/redirected
+// stdin, or a CI job) a confirmation prompt must never block, so the safe
+// default (refuse, or use a default value) is used silently instead.
+//
+// The character-device test alone is not enough, and the gap is not academic:
+// /dev/null IS a character device, so `aq <cmd> </dev/null` (the shape every
+// script, CI step and automated tool runs in) reported an interactive
+// terminal. Anything trusting that answer to decide whether a human could
+// object was asking a proxy, and getting the confident wrong answer rather
+// than the safe one. os.SameFile against os.DevNull closes it: the two stats
+// agree on device+inode, so the redirect is recognised for what it is.
+//
+// A pipe or a regular-file redirect was always reported correctly (neither is
+// a character device); /dev/null was the one hole.
+var isInteractiveStdin = func() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	if fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(fi, devNull) {
+		return false
+	}
+	return true
+}
+
 // requireLogin loads the stored credential, erroring if the CLI is not paired.
 func requireLogin() (*config.Credential, error) {
 	cred, err := config.Load()

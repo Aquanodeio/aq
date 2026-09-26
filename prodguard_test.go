@@ -51,9 +51,11 @@ func TestGuardBillableAllowsALocalStack(t *testing.T) {
 // worktree resolves that worktree's own orchestrator, and this is the assertion
 // that such a target sails through the guard with no opt-in at all.
 func TestGuardBillableIsSilentForEveryVerbThatCannotRentHardware(t *testing.T) {
-	// down and pause STOP spend. Guarding them would make the cheap action
-	// harder than the expensive one, which is the wrong way round.
-	for _, cmd := range []string{"down", "pause", "ls", "status", "logs", "save", "share", "fork", "push", "run", "ssh", "whoami"} {
+	// down and stop STOP spend. Guarding them would make the cheap action
+	// harder than the expensive one, which is the wrong way round. import no
+	// longer bills either: its --launch path (the only one that rented
+	// hardware) is gone under the pod/environment/volume model.
+	for _, cmd := range []string{"down", "stop", "ls", "status", "logs", "share", "fork", "push", "run", "ssh", "whoami", "import", "env", "volume", "autostop", "pods"} {
 		if err := guardBillable(cmd, "https://server.aquanode.io/api/v1", nil, false, false); err != nil {
 			t.Errorf("aq %s rents nothing and must not be guarded: %v", cmd, err)
 		}
@@ -61,9 +63,32 @@ func TestGuardBillableIsSilentForEveryVerbThatCannotRentHardware(t *testing.T) {
 }
 
 func TestGuardBillableCoversEveryBillableVerb(t *testing.T) {
-	for _, cmd := range []string{"up", "deploy", "import"} {
+	for _, cmd := range []string{"up", "deploy", "start", "move", "pods create"} {
 		if err := guardBillable(cmd, "https://server.aquanode.io/api/v1", nil, false, false); err == nil {
 			t.Errorf("aq %s can lease hardware and must be guarded", cmd)
+		}
+	}
+}
+
+// TestPodsGuardCmdDistinguishesCreateFromEveryOtherPodsForm pins the one
+// thing that would silently defeat rail 2 for `aq pods create`: a bare
+// `aq pods` (a read) and any OTHER pods subcommand must resolve to the
+// unguarded "pods" key, and ONLY "create" resolves to the billable one.
+func TestPodsGuardCmdDistinguishesCreateFromEveryOtherPodsForm(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		args []string
+		want string
+	}{
+		{"pods", nil, "pods"},
+		{"pods", []string{}, "pods"},
+		{"pods", []string{"create", "my-pod", "--env", "pytorch-dev"}, "pods create"},
+		{"pods", []string{"--help"}, "pods"},
+		{"up", []string{"create"}, "up"}, // "create" only means something under pods
+	}
+	for _, tc := range cases {
+		if got := podsGuardCmd(tc.cmd, tc.args); got != tc.want {
+			t.Errorf("podsGuardCmd(%q, %v) = %q, want %q", tc.cmd, tc.args, got, tc.want)
 		}
 	}
 }

@@ -461,7 +461,7 @@ func printAttachPlan(out io.Writer, h config.Host, pre attachPreflight, publicHo
 
 	fmt.Fprintln(out, "\nWould, in Aquanode:")
 	fmt.Fprintf(out, "  • create a deployment named %q at %s:%d\n", h.Alias, publicHost, ogrePort)
-	fmt.Fprintf(out, "  • workspace %s; idle auto-pause OFF (your lease is already paid for)\n", mountPath)
+	fmt.Fprintf(out, "  • workspace %s; idle auto-stop OFF (your lease is already paid for)\n", mountPath)
 	fmt.Fprintln(out, "  • bill nothing for the hardware: we did not rent it")
 	fmt.Fprintln(out, "  • probe the box from our infrastructure, and refuse to attach it if that fails")
 

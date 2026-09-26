@@ -611,15 +611,15 @@ func jobPoint(args []string) error {
 }
 
 // runJobPoint repoints a job at a different version NUMBER within
-// the same save lineage its current version already belongs to — the same
+// the same save lineage its current version already belongs to, the same
 // command rolls forward or back, it just depends which number is passed.
 //
 // The repoint API and the number a user types are both scoped to a version
-// NUMBER within one lineage (the same per-lineage counter `aq share` and
-// `aq job create` use), but an Job only carries its current
-// VersionID, not the owning setup/lineage name. So this first resolves
-// VersionID → (setup id, lineage name) via GetSetupVersion, then resolves
-// the typed number against THAT lineage via ListSetupVersions — the same
+// NUMBER within one lineage (the same per-lineage counter `aq job create`
+// uses), but an Job only carries its current VersionID, not the owning
+// setup/lineage name. So this first resolves VersionID -> (setup id, lineage
+// name) via GetSetupVersion, then resolves the typed number against THAT
+// lineage via ListSetupVersions, the same
 // two-step resolveSetupVersionRowID already does starting from a setup id
 // directly, just starting from the job's live version instead.
 func runJobPoint(opts jobPointOptions) error {

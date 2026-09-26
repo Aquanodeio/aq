@@ -147,6 +147,17 @@ func orDash(s string) string {
 	return s
 }
 
+// orDashPtr is orDash for a nullable string field (e.g. Volume.HeadSavedAt),
+// where nil means "never happened yet" rather than an empty string that
+// happened to come back blank. Both render as "-", the distinction a caller
+// needs is nil vs. non-nil, not empty vs. non-empty.
+func orDashPtr(s *string) string {
+	if s == nil {
+		return "-"
+	}
+	return orDash(*s)
+}
+
 // truncate keeps a cell inside its column. Orchestrator-generated names like
 // "Tough A30 from Us-central-1" run past 24 characters and would otherwise
 // shove every following column out of alignment on that row alone — which
