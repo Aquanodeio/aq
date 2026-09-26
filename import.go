@@ -205,8 +205,6 @@ func runImport(opts importOptions) error {
 		VolumeID:       start.VolumeID,
 		ImportToken:    start.ImportToken,
 		OgreSnapshotID: captured.OgreSnapshotID,
-		Path:           captured.Path,
-		Size:           captured.Size,
 		Observation:    captured.Observation,
 	})
 	if err != nil {
@@ -393,8 +391,6 @@ func runImportResume(client *api.Client, opts importOptions) error {
 		VolumeID:       refreshed.VolumeID,
 		ImportToken:    refreshed.ImportToken,
 		OgreSnapshotID: captured.OgreSnapshotID,
-		Path:           captured.Path,
-		Size:           captured.Size,
 		Observation:    captured.Observation,
 	})
 	if err != nil {

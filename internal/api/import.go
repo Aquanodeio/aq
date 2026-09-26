@@ -1,6 +1,6 @@
 package api
 
-// Import endpoints backing `aq import` — bringing a box running somewhere else
+// Import endpoints backing `aq import`, bringing a box running somewhere else
 // (RunPod, Vast, a bare-metal box, ...) into Aquanode as a real Volume. The
 // observation/survey types below mirror ogre's own wire contract (referenced
 // elsewhere as CONTRACT.md section C; do not rename one of those without
@@ -10,6 +10,13 @@ package api
 // pod/environment/volume plan's D12 (POST /snapshots/external ->
 // POST /volumes/import): a captured box is now adopted as a Volume, not a
 // whole Setup with a synthesized recipe.
+//
+// The observation aq decodes from `ogre capture`'s own stdout is re-encoded
+// through these Go structs before it's forwarded to the orchestrator (it is
+// NOT passed through as raw, untouched bytes), so a field's Go TYPE decides
+// what actually reaches the wire: a non-pointer field can never distinguish
+// "ogre didn't report this" from "ogre reported the zero value", and would
+// silently send a fabricated false answer either way.
 
 import "net/url"
 
@@ -19,26 +26,34 @@ import "net/url"
 const ImportObservationSchema = 1
 
 // ImportHost is the observed host's identity, as `ogre capture` reports it.
+// Every field is independently nullable on the wire (importObservationSchema,
+// orchestrator/src/schemas/volumes.schemas.ts:28-51, confirmed against
+// source, aquanode-backend#803): ogre can report some facts about a host
+// without all of them (hostname known, kernel version not, say), so each
+// field is a pointer with omitempty, never a bare string/int that would
+// decode a field ogre never sent as "" or 0 and then re-send that as if it
+// were a real answer.
 type ImportHost struct {
-	Hostname  string `json:"hostname"`
-	OS        string `json:"os"`
-	Kernel    string `json:"kernel"`
-	CPUCores  int    `json:"cpu_cores"`
-	MemoryGB  int    `json:"memory_gb"`
-	StorageGB int    `json:"storage_gb"`
+	Hostname  *string `json:"hostname,omitempty"`
+	OS        *string `json:"os,omitempty"`
+	Kernel    *string `json:"kernel,omitempty"`
+	CPUCores  *int    `json:"cpu_cores,omitempty"`
+	MemoryGB  *int    `json:"memory_gb,omitempty"`
+	StorageGB *int    `json:"storage_gb,omitempty"`
 }
 
 // ImportGPU is the observed GPU, if any. Skew is "unknown" (never "none")
-// when no GPU is visible — absence is not a match, per the contract.
+// when no GPU is visible, absence is not a match, per the contract. Every
+// field is independently nullable on the wire, same reasoning as ImportHost.
 type ImportGPU struct {
-	Vendor      string `json:"vendor"`
-	Name        string `json:"name"`
-	Count       int    `json:"count"`
-	DriverCUDA  string `json:"driver_cuda"`
-	ToolkitCUDA string `json:"toolkit_cuda"`
-	ROCmVersion string `json:"rocm_version"`
-	ComputeCap  string `json:"compute_cap"`
-	Skew        string `json:"skew"`
+	Vendor      *string `json:"vendor,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Count       *int    `json:"count,omitempty"`
+	DriverCUDA  *string `json:"driver_cuda,omitempty"`
+	ToolkitCUDA *string `json:"toolkit_cuda,omitempty"`
+	ROCmVersion *string `json:"rocm_version,omitempty"`
+	ComputeCap  *string `json:"compute_cap,omitempty"`
+	Skew        *string `json:"skew,omitempty"`
 }
 
 // ImportApp is the workload ogre's DetectApp found on the box. It is nil
@@ -144,10 +159,11 @@ type ImportManifest struct {
 }
 
 // ImportObservation is what `ogre capture` observed on the foreign box
-// (CONTRACT.md section A). aq decodes it only to render the survey and to
-// pull the observed GPU model for `--launch` — it is otherwise passed
-// VERBATIM to the orchestrator on completion, never re-encoded through a
-// narrower struct that could silently drop a field the orchestrator relies on.
+// (CONTRACT.md section A). aq decodes it to render the survey, then
+// re-encodes the SAME decoded value when forwarding it to the orchestrator
+// on completion, it is not raw passthrough bytes, so every field here has to
+// carry real nullability (see ImportHost/ImportGPU) or a fact ogre never
+// reported gets fabricated as a zero value on the way back out.
 type ImportObservation struct {
 	Schema   int            `json:"schema"`
 	Host     ImportHost     `json:"host"`
@@ -252,14 +268,18 @@ func (c *Client) RefreshImportCredentials(volumeID string) (*ImportCredentialsRe
 	return &out, nil
 }
 
-// ImportCompleteRequest is the body of POST /volumes/import/complete. The
-// observation is forwarded exactly as `ogre capture` emitted it.
+// ImportCompleteRequest is the body of POST /volumes/import/complete
+// (completeImportSchema, orchestrator/src/schemas/volumes.schemas.ts:103-108,
+// confirmed against source, aquanode-backend#803): exactly volume_id,
+// import_token, ogre_snapshot_id, and observation. `ogre capture` also
+// reports a path and a size on its own stdout (ogreCaptureOutput), but the
+// orchestrator's schema never defined those keys, so they are not sent here
+// at all, never a field that gets silently stripped server-side (rule 4,
+// delete never alias).
 type ImportCompleteRequest struct {
 	VolumeID       string            `json:"volume_id"`
 	ImportToken    string            `json:"import_token"`
 	OgreSnapshotID string            `json:"ogre_snapshot_id"`
-	Path           string            `json:"path"`
-	Size           int64             `json:"size"`
 	Observation    ImportObservation `json:"observation"`
 }
 

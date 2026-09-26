@@ -113,8 +113,8 @@ exit 1
 func sampleObservation() api.ImportObservation {
 	return api.ImportObservation{
 		Schema: api.ImportObservationSchema,
-		Host:   api.ImportHost{Hostname: "gpu-7f2a"},
-		GPU:    api.ImportGPU{Vendor: "nvidia", Name: "NVIDIA H100 80GB HBM3", Count: 1, Skew: "unknown"},
+		Host:   api.ImportHost{Hostname: strPtr("gpu-7f2a")},
+		GPU:    api.ImportGPU{Vendor: strPtr("nvidia"), Name: strPtr("NVIDIA H100 80GB HBM3"), Count: intPtr(1), Skew: strPtr("unknown")},
 		Capture: api.ImportCapture{
 			MountPath: "/workspace",
 			Paths:     []string{"/workspace"},
