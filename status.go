@@ -89,10 +89,10 @@ func runStatus(opts statusOptions) error {
 	if state == "" {
 		state = "UNKNOWN"
 	}
-	fmt.Fprintf(opts.out, "Deployment #%d: %s\n", deploymentID, state)
-	fmt.Fprintf(opts.out, "Last saved: %s\n", lastSavedLabel(client, deploymentID))
-
 	dep := withID(res.Deployment, deploymentID)
+
+	fmt.Fprintf(opts.out, "Deployment #%d: %s\n", deploymentID, state)
+	fmt.Fprintf(opts.out, "Last saved: %s\n", podSaveLabel(client, dep.SetupID, time.Now()))
 
 	creds := dep.ServiceCredentials
 	if creds != nil && creds.URL != "" {
@@ -173,43 +173,70 @@ func requireLogin() (*config.Credential, error) {
 	return cred, nil
 }
 
-// lastSavedLabel renders the deployment's true last-saved age for `aq status`.
-// A failed history lookup degrades to "unknown" rather than failing the whole
-// status command — the deployment's own status is still worth showing even if
-// snapshot history is temporarily unreachable.
-func lastSavedLabel(client *api.Client, deploymentID int) string {
-	items, err := client.SnapshotHistory()
+// podSaveLabel renders the true save status of the pod behind a deployment,
+// for `aq status`'s "Last saved" line. It reads the pod's Volume summary (GET
+// /setups/:id) rather than the retired GET /snapshots/history: under the
+// pod/environment/volume model, Stop writes a VolumePoint and moves
+// Volume.headSavedAt/saveState directly, it never mints the SnapshotVersion
+// row the old lookup depended on: that made this line print "never saved"
+// unconditionally, for every pod, no matter how many times it actually saved
+// (confirmed live against deployments 3807 and 3809, both with a real, recent
+// headSavedAt).
+//
+// A deployment with no SetupID, or a pod lookup that fails (the pod was since
+// deleted, a transient error), degrades to "unknown" rather than failing the
+// whole status command: the deployment's own status is still worth showing
+// even when the pod's save state can't be confirmed right now.
+func podSaveLabel(client *api.Client, setupID string, now time.Time) string {
+	if setupID == "" {
+		return "unknown"
+	}
+	pod, err := client.GetSetup(setupID)
 	if err != nil {
 		return "unknown"
 	}
-	return formatLastSaved(items, deploymentID, time.Now())
+	return formatPodSaveState(pod.Volume, now)
 }
 
-// formatLastSaved renders the true age of the most recent snapshot for a
-// deployment, or "never saved". It must never imply continuous protection:
-// automated snapshots are opt-in and nothing schedules them at deploy time.
-//
-// A history item's owning deployment lives under Backups.DeploymentID — the
-// top-level BackupID is the internal backup ROW id, not a deployment id, and an
-// external/CLI snapshot (Backups == nil) never matches any deployment.
-func formatLastSaved(items []api.SnapshotHistoryItem, deploymentID int, now time.Time) string {
-	var newest time.Time
-	for _, it := range items {
-		if it.Backups == nil || it.Backups.DeploymentID != deploymentID {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339, it.CreatedAt)
-		if err != nil {
-			continue
-		}
-		if t.After(newest) {
-			newest = t
-		}
+// formatPodSaveState renders a pod's Volume summary as the three-state save
+// status the console shows (saved / failing / unknown), never a blanket
+// "never saved" that erases the difference between "no volume attached",
+// "attached but nothing has landed yet", and "saving is actively failing".
+func formatPodSaveState(v *api.SetupVolumeSummary, now time.Time) string {
+	if v == nil {
+		return "no volume attached"
 	}
-	if newest.IsZero() {
+	if v.HeadSavedAt == nil {
+		// SaveState is "unknown" whenever nothing has ever synced (see
+		// SetupVolumeSummary's doc comment). HeadSavedAt nil is the honest
+		// signal here, not SaveState, since saveStateOf's wire encoding
+		// cannot tell "never saved" apart from "agent unreachable" on its
+		// own.
 		return "never saved"
 	}
-	d := now.Sub(newest).Round(time.Minute)
+	t, err := time.Parse(time.RFC3339, *v.HeadSavedAt)
+	if err != nil {
+		return "unknown"
+	}
+	age := formatSavedAge(t, now)
+	switch v.SaveState {
+	case "failing":
+		reason := "unknown reason"
+		if v.LastSaveError != nil && *v.LastSaveError != "" {
+			reason = *v.LastSaveError
+		}
+		return fmt.Sprintf("failed %s: %s", age, reason)
+	case "saved":
+		return age
+	default:
+		return "unknown"
+	}
+}
+
+// formatSavedAge renders how long ago t was, at the coarsest unit that keeps
+// it readable.
+func formatSavedAge(t, now time.Time) string {
+	d := now.Sub(t).Round(time.Minute)
 	switch {
 	case d < time.Hour:
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))

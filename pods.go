@@ -59,9 +59,11 @@ func printPods(out io.Writer, list []api.Setup) {
 		}
 		// A Setup carries no whole-pod size of its own any more (D8: the
 		// environment and the volume each have their own); show the
-		// volume's, the only size a pod row can honestly claim, and "-" for
-		// a bare pod (D4) or an unmeasured volume.
-		size := "-"
+		// volume's, the only size a pod row can honestly claim. A bare pod
+		// (D4, no volume attached) and an attached-but-unmeasured volume are
+		// two different facts, matching the console's own PodCard: "nothing
+		// held" vs "not measured yet", never the same dash for both.
+		size := "nothing held"
 		if s.Volume != nil {
 			size = formatPodSizePtr(s.Volume.SizeBytes)
 		}
@@ -73,7 +75,13 @@ func printPods(out io.Writer, list []api.Setup) {
 // bare "name" when it has no minted version yet: Version is nullable on the
 // wire and stays null until the pod's environment is Kept or Shared for the
 // first time (SetupEnvironmentSummary's doc comment in internal/api/setups.go).
-func formatPodEnvironment(e api.SetupEnvironmentSummary) string {
+// A nil environment is the rare case where the backend's environmentVersionId
+// didn't resolve (same doc comment): it renders as "unknown", never a bare
+// "-" indistinguishable from a normal, if plain, environment name.
+func formatPodEnvironment(e *api.SetupEnvironmentSummary) string {
+	if e == nil {
+		return "unknown"
+	}
 	if e.Version == nil {
 		return orDash(e.Name)
 	}
@@ -81,12 +89,13 @@ func formatPodEnvironment(e api.SetupEnvironmentSummary) string {
 }
 
 // printPodStorageSummary renders a pod's Environment/Volume state after
-// Start/Stop/Move, matching the console pod-detail line: environment name,
-// volume name, size, and its three-state save status. Volume is nil for a
-// pod running with no volume attached (D4: a bare pod is allowed), printed
-// as nothing, never a blank/zeroed row.
+// Start/Stop/Move, matching the console pod-detail line: environment name
+// (plus its version once one is minted, same "name vN" shape `aq pods`
+// uses), volume name, size, and its three-state save status. Volume is nil
+// for a pod running with no volume attached (D4: a bare pod is allowed),
+// printed as nothing, never a blank/zeroed row.
 func printPodStorageSummary(out io.Writer, s api.Setup) {
-	fmt.Fprintf(out, "  Environment: %s\n", orDash(s.Environment.Name))
+	fmt.Fprintf(out, "  Environment: %s\n", formatPodEnvironment(s.Environment))
 	if s.Volume == nil {
 		return
 	}
@@ -116,11 +125,13 @@ func formatPodSize(n int64) string {
 
 // formatPodSizePtr renders a nullable byte count (SetupVolumeSummary's and
 // Volume's SizeBytes are both null before storage metering has ever
-// measured that volume). A nil pointer renders as "-", never as "0 B": the
-// two mean different things (unmeasured vs. genuinely empty).
+// measured that volume). A nil pointer renders as "not measured yet",
+// matching the console's own wording (PodCard.tsx), never "0 B" or a bare
+// "-": all three mean different things (unmeasured, a real empty volume, and
+// no data at all).
 func formatPodSizePtr(n *int64) string {
 	if n == nil {
-		return "-"
+		return "not measured yet"
 	}
 	return formatPodSize(*n)
 }

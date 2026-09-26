@@ -178,7 +178,15 @@ type Deployment struct {
 	// raw untransformed row) — the pause route is project-scoped rather than
 	// deployment-scoped, so it's the one field that route needs beyond the
 	// deployment id itself.
-	ProjectID          string              `json:"project_id"`
+	ProjectID string `json:"project_id"`
+	// SetupID is the pod this deployment rents compute for
+	// (deployments.setup_id), present snake_case on both the raw GET
+	// /deployments/:id row and the nested `deployment` object GET
+	// /deployments/:id/status returns (confirmed against a live capture,
+	// 2026-09-27), unlike most of /status's other fields, which ARE camelCased. `aq status` uses this to recover the pod's real save
+	// state from GET /setups/:id, since the deployment itself carries no
+	// volume/save information. Empty for a deployment with no setup at all.
+	SetupID            string              `json:"setup_id"`
 	AppURL             string              `json:"app_url"`
 	ServiceCredentials *ServiceCredentials `json:"service_credentials"`
 	// ServiceURLs stays raw so a malformed or unexpectedly-shaped value (the
@@ -397,34 +405,12 @@ func (c *Client) CloseDeployment(deploymentID int) (*CloseResult, error) {
 	return &out, nil
 }
 
-// SnapshotHistoryBackup is the `backups` object nested on a history item,
-// carrying the source deployment this snapshot belongs to. It is nil for an
-// external/CLI snapshot (no Aquanode deployment).
-type SnapshotHistoryBackup struct {
-	DeploymentID int    `json:"deployment_id"`
-	Path         string `json:"path"`
-}
-
-// SnapshotHistoryItem mirrors one row of GET /snapshots/history. The top-level
-// BackupID is the internal backup ROW id — NOT a deployment id; a snapshot is
-// associated with its owning deployment via Backups.DeploymentID instead.
-type SnapshotHistoryItem struct {
-	ID        int                    `json:"id"`
-	BackupID  int                    `json:"backup_id"`
-	Path      string                 `json:"path"`
-	Status    string                 `json:"status"`
-	Size      int64                  `json:"size"`
-	Type      string                 `json:"type"`
-	CreatedAt string                 `json:"created_at"`
-	Backups   *SnapshotHistoryBackup `json:"backups"`
-}
-
-// SnapshotHistory lists every snapshot the account owns, including external/CLI
-// ones with no source deployment.
-func (c *Client) SnapshotHistory() ([]SnapshotHistoryItem, error) {
-	var out []SnapshotHistoryItem
-	if err := c.getJSON("/snapshots/history", &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
+// SnapshotHistory (GET /snapshots/history) and its DTOs were removed here:
+// `aq status`'s "Last saved" line was its only caller, and it was wrong
+// under the pod/environment/volume model (2026-09-26): Stop stopped writing
+// the SnapshotVersion rows that endpoint lists, so every pod's save landed on
+// Volume.headSavedAt/saveState instead (GET /setups/:id, see GetSetup in
+// setups.go) and this always answered "never saved" regardless of the truth
+// (confirmed live: deployments 3807 and 3809, both with a real, recent
+// headSavedAt, both printed "never saved" before this fix). Delete, never
+// alias: no other command in this repo ever called it.

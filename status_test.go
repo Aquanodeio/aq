@@ -232,37 +232,101 @@ func TestStatusRequiresLogin(t *testing.T) {
 	}
 }
 
-// TestFormatLastSavedNeverWhenNoSnapshots is the honesty constraint: no
-// snapshot data must never render as a reassuring blank.
-func TestFormatLastSavedNeverWhenNoSnapshots(t *testing.T) {
-	if got := formatLastSaved(nil, 2884, time.Now()); got != "never saved" {
+// TestFormatPodSaveStateNoVolume checks a bare pod (D4: no volume attached)
+// reads as its own distinct fact, never "never saved": that phrase implies a
+// volume that should have saved and didn't, which is not what "no volume"
+// means.
+func TestFormatPodSaveStateNoVolume(t *testing.T) {
+	if got := formatPodSaveState(nil, time.Now()); got != "no volume attached" {
+		t.Errorf("got %q, want %q", got, "no volume attached")
+	}
+}
+
+// TestFormatPodSaveStateNeverSavedWhenHeadSavedAtNil is the honesty
+// constraint the retired SnapshotHistory-based lookup used to get backwards:
+// a volume that genuinely has never landed a save reads "never saved" from
+// HeadSavedAt being nil, not from a wrong endpoint that could never see this
+// pod's saves at all.
+func TestFormatPodSaveStateNeverSavedWhenHeadSavedAtNil(t *testing.T) {
+	v := &api.SetupVolumeSummary{SaveState: "unknown", HeadSavedAt: nil}
+	if got := formatPodSaveState(v, time.Now()); got != "never saved" {
 		t.Errorf("got %q, want %q", got, "never saved")
 	}
 }
 
-// TestFormatLastSavedUsesMostRecentForThatDeployment checks the match key: a
-// history item's owning deployment lives under Backups.DeploymentID, not the
-// top-level BackupID (that's the internal backup row id, not a deployment id).
-func TestFormatLastSavedUsesMostRecentForThatDeployment(t *testing.T) {
-	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
-	items := []api.SnapshotHistoryItem{
-		{ID: 1, BackupID: 7, CreatedAt: "2026-08-07T09:00:00Z", Backups: &api.SnapshotHistoryBackup{DeploymentID: 2884}},
-		{ID: 2, BackupID: 7, CreatedAt: "2026-08-07T11:30:00Z", Backups: &api.SnapshotHistoryBackup{DeploymentID: 2884}},
-		{ID: 3, BackupID: 3, CreatedAt: "2026-08-07T11:59:00Z", Backups: &api.SnapshotHistoryBackup{DeploymentID: 9999}},
-	}
-	if got := formatLastSaved(items, 2884, now); got != "30m ago" {
+// TestFormatPodSaveStateSavedShowsAge is the actual regression: a volume with
+// a real, recent HeadSavedAt (confirmed live on deployments 3807 and 3809,
+// both of which `aq status` printed "never saved" for before this fix) must
+// show its true age, not a blanket "never saved".
+func TestFormatPodSaveStateSavedShowsAge(t *testing.T) {
+	now := time.Date(2026, 9, 26, 20, 36, 46, 0, time.UTC)
+	saved := "2026-09-26T20:06:46.999Z"
+	v := &api.SetupVolumeSummary{SaveState: "saved", HeadSavedAt: &saved}
+	if got := formatPodSaveState(v, now); got != "30m ago" {
 		t.Errorf("got %q, want %q", got, "30m ago")
 	}
 }
 
-// TestFormatLastSavedIgnoresExternalSnapshots checks an external/CLI snapshot
-// (Backups == nil, no source deployment) never matches any deployment id.
-func TestFormatLastSavedIgnoresExternalSnapshots(t *testing.T) {
-	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
-	items := []api.SnapshotHistoryItem{
-		{ID: 1, BackupID: 2884, CreatedAt: "2026-08-07T09:00:00Z", Backups: nil},
+// TestFormatPodSaveStateFailingShowsReason checks the failing branch reports
+// the age of the last GOOD save plus the reason it's currently failing,
+// never silently reading as "saved" (the three-state signal rule: "unknown"/
+// "failing" must never collapse into the reassuring state).
+func TestFormatPodSaveStateFailingShowsReason(t *testing.T) {
+	now := time.Date(2026, 9, 26, 21, 0, 0, 0, time.UTC)
+	saved := "2026-09-26T20:00:00.000Z"
+	reason := "agent unreachable"
+	v := &api.SetupVolumeSummary{SaveState: "failing", HeadSavedAt: &saved, LastSaveError: &reason}
+	got := formatPodSaveState(v, now)
+	if !strings.Contains(got, "failed") || !strings.Contains(got, reason) {
+		t.Errorf("got %q, want it to mention \"failed\" and %q", got, reason)
 	}
-	if got := formatLastSaved(items, 2884, now); got != "never saved" {
-		t.Errorf("got %q, want %q", got, "never saved")
+}
+
+// TestPodSaveLabelDegradesToUnknownWithNoSetupID checks a deployment with no
+// SetupID (predates the pod/environment/volume model, or the field failed to
+// resolve) degrades gracefully instead of guessing.
+func TestPodSaveLabelDegradesToUnknownWithNoSetupID(t *testing.T) {
+	client := api.NewAuthed("http://unused.invalid", "tok", "team-1")
+	if got := podSaveLabel(client, "", time.Now()); got != "unknown" {
+		t.Errorf("got %q, want %q", got, "unknown")
+	}
+}
+
+// TestRunStatusShowsRealSaveState is the end-to-end regression: `aq status`
+// must resolve the deployment's setup_id, fetch the pod, and print its real
+// Volume.headSavedAt age, not "never saved" from a retired endpoint that
+// never saw this pod's saves in the first place.
+func TestRunStatusShowsRealSaveState(t *testing.T) {
+	mux := http.NewServeMux()
+	stubDeploymentList(mux)
+	mux.HandleFunc("/deployments/3807/status", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"deploymentId": 3807, "status": "CLOSED",
+			"deployment": map[string]any{"id": 3807, "status": "CLOSED", "setup_id": "b8591f0f-038e-4d48-b9a2-26a3b7caeadd"}})
+	})
+	mux.HandleFunc("/setups/b8591f0f-038e-4d48-b9a2-26a3b7caeadd", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{
+			"id": "b8591f0f-038e-4d48-b9a2-26a3b7caeadd", "name": "MI300X box 11", "status": "ready",
+			"attachedDeploymentId": nil, "stopping": false,
+			"volume": map[string]any{
+				"id": "47a69ae8-f1d5-418f-8687-928bb4c464ff", "name": "MI300X box 11",
+				"sizeBytes": 8270434, "headSavedAt": "2026-09-26T20:06:46.999Z",
+				"saveState": "saved", "lastSaveError": nil,
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	if err := runStatus(statusOptions{cred: cred, target: "3807", out: &out}); err != nil {
+		t.Fatalf("runStatus error: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "never saved") {
+		t.Errorf("expected the real save age, not \"never saved\"; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Last saved:") || !strings.Contains(got, "ago") {
+		t.Errorf("expected a \"Last saved: ... ago\" line; got:\n%s", got)
 	}
 }
