@@ -676,7 +676,7 @@ pods / down:
                              change WHEN idle counts as idle, and this to
                              turn auto-stop on pods on/off at all.
   aq pods                    List the pods you own: name, whether it's
-                             running, and size.
+                             running, current environment, and size.
   aq down <name|id>          Tear a deployment down outright: nothing is
                              saved and it cannot be resumed. This is the
                              lower-level "kill this box" escape hatch;

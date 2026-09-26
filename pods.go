@@ -12,7 +12,7 @@ import (
 // pods parses `aq pods` and wires the real environment into runPods.
 //
 // `aq pods` lists what the caller owns, independent of whether a pod's
-// compute is currently rented — name, running/not, latest saved version, and
+// compute is currently rented: name, running/not, current environment, and
 // size on disk.
 func pods(args []string) error {
 	fs := flag.NewFlagSet("pods", flag.ContinueOnError)
@@ -31,59 +31,37 @@ func pods(args []string) error {
 		return fmt.Errorf("could not list pods: %w", err)
 	}
 
-	// GET /setups carries no nested "latest version" per row (see the Setup
-	// doc comment in internal/api/setups.go) — recover it from the one call
-	// that lists every version the caller can see, rather than one lookup
-	// per pod. A failure here degrades the VERSION column to "-" instead
-	// of failing the whole list; the pods themselves are already in hand.
-	versions, err := client.ListAllSetupVersions()
-	if err != nil {
-		versions = nil
-	}
-
-	printPods(os.Stdout, list, latestVersionsByPod(versions))
+	printPods(os.Stdout, list)
 	return nil
 }
 
-// latestVersionsByPod reduces a flat version list (as returned by
-// ListAllSetupVersions) to each pod's highest Version number, keyed by
-// SetupID. Legacy/external rows with no SetupID are naturally excluded —
-// the zero value never matches a real pod id.
-func latestVersionsByPod(versions []api.SetupVersion) map[string]int {
-	m := make(map[string]int)
-	for _, v := range versions {
-		if v.SetupID == "" {
-			continue
-		}
-		if v.Version > m[v.SetupID] {
-			m[v.SetupID] = v.Version
-		}
-	}
-	return m
-}
-
 // printPods renders the pod list as a simple aligned table, or a
-// one-line nudge when the caller owns none yet. latest maps pod id to its
-// highest saved version number (see latestVersionsByPod); a pod absent
-// from it renders "-".
-func printPods(out io.Writer, list []api.Setup, latest map[string]int) {
+// one-line nudge when the caller owns none yet.
+func printPods(out io.Writer, list []api.Setup) {
 	if len(list) == 0 {
 		fmt.Fprintln(out, "No pods yet. Run `aq up` to start one.")
 		return
 	}
 
-	fmt.Fprintf(out, "%-24s  %-7s  %-7s  %s\n", "NAME", "RUNNING", "VERSION", "SIZE")
+	fmt.Fprintf(out, "%-24s  %-7s  %-24s  %s\n", "NAME", "RUNNING", "ENVIRONMENT", "SIZE")
 	for _, s := range list {
 		running := "no"
 		if s.Running() {
 			running = "yes"
 		}
-		version := "-"
-		if v, ok := latest[s.ID]; ok {
-			version = fmt.Sprintf("v%d", v)
-		}
-		fmt.Fprintf(out, "%-24s  %-7s  %-7s  %s\n", s.Name, running, version, formatPodSize(int64(s.SizeBytes)))
+		fmt.Fprintf(out, "%-24s  %-7s  %-24s  %s\n", s.Name, running, formatPodEnvironment(s.Environment), formatPodSize(int64(s.SizeBytes)))
 	}
+}
+
+// formatPodEnvironment renders a pod's current environment as "name vN", or
+// bare "name" when it has no minted version yet: Version is nullable on the
+// wire and stays null until the pod's environment is Kept or Shared for the
+// first time (SetupEnvironmentSummary's doc comment in internal/api/setups.go).
+func formatPodEnvironment(e api.SetupEnvironmentSummary) string {
+	if e.Version == nil {
+		return orDash(e.Name)
+	}
+	return fmt.Sprintf("%s v%d", e.Name, *e.Version)
 }
 
 // printPodStorageSummary renders a pod's Environment/Volume state after
