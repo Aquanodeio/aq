@@ -545,6 +545,8 @@ job:
   --gpu-order <mode>        With two or more --gpu-model, prefer them in the
                             order given ("ordered") or cheapest-first
                             ("cheapest", the default)
+  --gpus <n>                How many GPUs the job's box should have: one of
+                            1, 2, 4 or 8 (default: 1)
   --disk-gb <n>             Disk size in GB for an --image job (default: 100)
 
   aq job point <name> <version>

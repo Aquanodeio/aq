@@ -155,8 +155,9 @@ type Entrypoint struct {
 }
 
 // Hardware constraints for an image-source Job. See the orchestrator's
-// hardware.ts HardwareSchema. GPUCount is always the closed literal 1: Jobs
-// are single-GPU only on the wire, never `aq up`'s free-form --gpus request.
+// hardware.ts HardwareSchema. GPUCount is one of the closed set 1, 2, 4, 8
+// (job.go's validateJobGPUCount), matched EXACTLY against a node's own GPU
+// count by job-placement.ts, never `aq up`'s free-form --gpus request.
 // GPUModels are exact marketplace names (see `aq gpus`), never `aq up`'s
 // substring --gpu match.
 type Hardware struct {

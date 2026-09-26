@@ -277,6 +277,7 @@ func baseImageCreateOpts(serverURL string) jobCreateOptions {
 		cred:            &config.Credential{Token: "aq_sk_test", TeamID: "team-1", APIURL: serverURL},
 		image:           "docker.io/acme/train:latest",
 		gpuModels:       []string{"H100", "A100"},
+		gpuCount:        1,
 		diskGB:          200,
 		maxInstances:    2,
 		monthlyCapCents: -1,
@@ -454,6 +455,7 @@ func TestCreateJobCheckpointAcceptedByTheRealOrchestrator(t *testing.T) {
 		cred:            cred,
 		image:           "docker.io/library/alpine:3.20",
 		gpuModels:       []string{avail.Models[0].GPUModel},
+		gpuCount:        1,
 		diskGB:          20,
 		maxInstances:    1,
 		monthlyCapCents: -1,
@@ -706,6 +708,110 @@ func TestCreateJobAnyGPUFetchesHardwareAvailabilityAndSendsEveryModel(t *testing
 	}
 	if decoded.Hardware == nil || !reflect.DeepEqual(decoded.Hardware.GPUModels, []string{"H100", "RTX4090"}) {
 		t.Fatalf("hardware.gpuModels = %+v, want the full fetched universe [H100 RTX4090] (raw body: %s)", decoded.Hardware, body)
+	}
+}
+
+// TestValidateJobGPUCount pins the closed set a Job's hardware.gpuCount
+// accepts on the wire: 1, 2, 4, 8 only, never `aq up`'s free-form range
+// (job-placement.ts matches gpuCount EXACTLY, so a node's own count is the
+// only value that could ever place).
+func TestValidateJobGPUCount(t *testing.T) {
+	for _, n := range []int{1, 2, 4, 8} {
+		if err := validateJobGPUCount(n); err != nil {
+			t.Fatalf("validateJobGPUCount(%d) = %v, want nil", n, err)
+		}
+	}
+	for _, n := range []int{-1, 0, 3, 5, 6, 7, 9, 16} {
+		err := validateJobGPUCount(n)
+		if err == nil {
+			t.Fatalf("validateJobGPUCount(%d) = nil, want an error", n)
+		}
+		if err.Error() != fmt.Sprintf("--gpus must be 1, 2, 4 or 8, got %d", n) {
+			t.Fatalf("validateJobGPUCount(%d) = %q, want the exact allowed-set message", n, err.Error())
+		}
+	}
+}
+
+// TestCreateJobImageSourceSendsRequestedGPUCount: hardware.gpuCount on the
+// wire must be whatever --gpus resolved to, not the old hardcoded 1 -- the
+// backend now matches it EXACTLY against a node's own GPU count rather than
+// forcing single-GPU.
+func TestCreateJobImageSourceSendsRequestedGPUCount(t *testing.T) {
+	var body []byte
+	srv := imageCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = readAll(r)
+		writeData(w, map[string]any{"id": "job-1", "name": "train"})
+	})
+	defer srv.Close()
+
+	opts := baseImageCreateOpts(srv.URL)
+	opts.gpuCount = 4
+	opts.argv = []string{"torchrun", "--nproc_per_node=4", "train.py"}
+	if err := runJobCreate(opts); err != nil {
+		t.Fatalf("runJobCreate: %v", err)
+	}
+	var decoded api.CreateJobRequest
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if decoded.Hardware == nil || decoded.Hardware.GPUCount != 4 {
+		t.Fatalf("hardware.gpuCount = %+v, want 4 (raw body: %s)", decoded.Hardware, body)
+	}
+}
+
+// TestJobCreateRejectsNonDefaultGPUsForVersionSource: a version-source create
+// has no wire path to carry --gpus (the backend seeds hardware from the
+// recipe instead), so a non-default value must be refused locally, before any
+// login check or network call, naming --image as the alternative.
+func TestJobCreateRejectsNonDefaultGPUsForVersionSource(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--gpus", "2"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "--gpus") || !strings.Contains(err.Error(), "--image") {
+		t.Fatalf("error should name --gpus and point at --image, got: %v", err)
+	}
+}
+
+// TestJobCreateAllowsDefaultGPUsForVersionSource: --gpus 1 (the default) is a
+// no-op on a version-source create, exactly as omitting the flag already is,
+// so it must reach the login check rather than being refused locally.
+func TestJobCreateAllowsDefaultGPUsForVersionSource(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--gpus", "1"})
+	if err == nil {
+		t.Fatal("expected an error (no stored credential in the sandbox)")
+	}
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("expected to reach the login check with a default --gpus, got: %v", err)
+	}
+}
+
+// TestJobCreateRejectsGPUsWithOn: a --on pinned job rents no hardware at all,
+// so --gpus has nothing to apply to and must be refused locally, naming --on
+// as the reason.
+func TestJobCreateRejectsGPUsWithOn(t *testing.T) {
+	detachedSandbox(t, attachedHost())
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--on", "lease-a", "--gpus", "2"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "--gpus") || !strings.Contains(err.Error(), "--on") {
+		t.Fatalf("error should name both --gpus and --on, got: %v", err)
+	}
+}
+
+// TestJobCreateRejectsInvalidGPUCount: an out-of-set --gpus must be refused
+// locally before any of the other source-specific checks run.
+func TestJobCreateRejectsInvalidGPUCount(t *testing.T) {
+	detachedSandbox(t)
+	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--gpus", "3"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "--gpus must be 1, 2, 4 or 8") {
+		t.Fatalf("expected the allowed-set message, got: %v", err)
 	}
 }
 
