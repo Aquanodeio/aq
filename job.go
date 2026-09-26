@@ -77,16 +77,24 @@ type jobCreateOptions struct {
 	argv []string
 	// outputPath pairs with argv; ignored when argv is nil.
 	outputPath string
-	// gpuModels/anyGPU/gpuOrder/diskGB are the image-source Job's hardware
-	// constraint. Never applied to a version-source create: the backend seeds
-	// that job's hardware from its recipe instead (job.service.ts
-	// seedHardwareFromRecipe), and the CLI does not override it.
+	// gpuModels/anyGPU/gpuOrder/diskGB/gpuCount are the image-source Job's
+	// hardware constraint. Never applied to a version-source create: the
+	// backend seeds that job's hardware from its recipe instead
+	// (job.service.ts seedHardwareFromRecipe), and the CLI does not override
+	// it -- jobCreate refuses a non-default --gpus locally for that source
+	// (and for a --on pinned job, which rents no hardware at all) before this
+	// is ever built.
 	gpuModels []string
 	anyGPU    bool
 	// gpuOrder is "" (cheapest, the default, never written to the wire),
 	// "ordered", or "cheapest" (written as "" too, matching what an absent
 	// key already means).
-	gpuOrder     string
+	gpuOrder string
+	// gpuCount is hardware.gpuCount: one of 1, 2, 4, 8 (validated by
+	// jobCreate via validateJobGPUCount before this ever runs), default 1.
+	// Always sent on the wire for an --image job, matching the backend's
+	// exact-match placement (job-placement.ts) rather than the old literal 1.
+	gpuCount     int
 	diskGB       int
 	name         string // job name (defaults to the source's own name)
 	maxInstances int
@@ -143,6 +151,7 @@ type jobCreateFlags struct {
 	gpuModels           *stringList
 	anyGPU              *bool
 	gpuOrder            *string
+	gpus                *int
 	diskGB              *int
 	outputPath          *string
 	secrets             *stringList
@@ -175,6 +184,7 @@ func registerJobCreateFlags(fs *flag.FlagSet) *jobCreateFlags {
 	fs.Var(f.gpuModels, "gpu-model", "exact marketplace GPU model name (see `aq gpus`) an --image job may run on (repeatable; required for --image unless --any-gpu)")
 	f.anyGPU = fs.Bool("any-gpu", false, "explicit opt-in: let an --image job run on any GPU model the market currently offers, instead of naming one")
 	f.gpuOrder = fs.String("gpu-order", "", "with two or more --gpu-model, prefer them in the order given (\"ordered\") or cheapest-first (\"cheapest\", the default)")
+	f.gpus = fs.Int("gpus", defaultJobGPUCount, "how many GPUs the job's box should have: one of 1, 2, 4 or 8 (default: 1); only applies to an --image job")
 	f.diskGB = fs.Int("disk-gb", 100, "disk size in GB for an --image job")
 	f.outputPath = fs.String("output-path", "/outputs", "absolute path inside the box the command writes results into (used whenever a command is given after `--`)")
 	fs.Var(f.secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Runs (repeatable)")
@@ -183,6 +193,35 @@ func registerJobCreateFlags(fs *flag.FlagSet) *jobCreateFlags {
 	f.installRequirements = fs.Bool("install-requirements", false, "wrap the command (after --) to install a declared requirements.txt before running it: copies /inputs into /workspace, pip installs -q -r requirements.txt, then execs the command (shared wire contract with the console's same toggle)")
 	f.port = fs.Int("port", 0, "refused: a job with a port is an endpoint, use `aq endpoint create --port` instead")
 	return f
+}
+
+// defaultJobGPUCount is what --gpus defaults to and the only value a
+// version-source or --on pinned create may carry: neither has a wire path
+// for a Job's hardware.gpuCount (see jobCreateOptions.gpuCount), so anything
+// else on those paths is refused locally by name rather than silently
+// ignored.
+const defaultJobGPUCount = 1
+
+// jobGPUCounts is the closed set a Job's hardware.gpuCount accepts on the
+// wire (orchestrator hardware.ts: z.union of the four literals). This is
+// deliberately NOT aq up/deploy's free-form --gpus (any 1..maxGPUCount):
+// job-placement.ts matches gpuCount EXACTLY against a node's own GPU count,
+// never `>=` (the fix for #1157's pricing bug, which is why single-GPU was
+// forced in the first place), so a value outside this closed set could never
+// place on a real node and the CLI refuses it before the request is ever
+// sent.
+var jobGPUCounts = [...]int{1, 2, 4, 8}
+
+// validateJobGPUCount rejects a --gpus value the API would 400 anyway,
+// naming the allowed set the same way the orchestrator's own schema error
+// does.
+func validateJobGPUCount(n int) error {
+	for _, v := range jobGPUCounts {
+		if n == v {
+			return nil
+		}
+	}
+	return fmt.Errorf("--gpus must be 1, 2, 4 or 8, got %d", n)
 }
 
 // jobCreate parses `aq job create <setup> <version>` (a version-source
@@ -231,6 +270,9 @@ func jobCreate(args []string) error {
 	if *maxInstances <= 0 {
 		return errors.New("--max-instances is required and must be a positive number: a job hands out a GPU budget, so it never defaults to unbounded")
 	}
+	if err := validateJobGPUCount(*f.gpus); err != nil {
+		return err
+	}
 
 	imageRef := strings.TrimSpace(*image)
 	registrySecretName := strings.TrimSpace(*registrySecret)
@@ -272,6 +314,21 @@ func jobCreate(args []string) error {
 			return fmt.Errorf("host %q has no valid attached deployment id: run `aq attach %s` again", onAlias, onAlias)
 		}
 		pinnedDeploymentID = h.DeploymentID
+	}
+
+	// --gpus only has a wire path on an --image job (runJobCreate's image
+	// branch writes hardware.gpuCount from it). A version-source create never
+	// overrides recipe hardware -- job.service.ts's seedHardwareFromRecipe
+	// runs instead, and the CLI does not carry an override for it -- and a
+	// --on pinned job rents no hardware at all, so neither has anything for
+	// the flag to apply to. A default (unset) --gpus is a silent no-op on
+	// both, since it already matches what happens without the flag; only a
+	// non-default value is refused, named by the reason specific to each.
+	if imageRef == "" && *f.gpus != defaultJobGPUCount {
+		if onAlias != "" {
+			return fmt.Errorf("--gpus cannot be combined with --on: a pinned job runs on the host you already attached with `aq attach`, so no hardware is rented for --gpus to apply to (got --gpus %d)", *f.gpus)
+		}
+		return fmt.Errorf("--gpus only applies to an --image job: a version-source job's hardware is seeded from its recipe, not overridden by the CLI (got --gpus %d)", *f.gpus)
 	}
 
 	var setupTarget string
@@ -332,6 +389,7 @@ func jobCreate(args []string) error {
 		gpuModels:           []string(gpuModels),
 		anyGPU:              *anyGPU,
 		gpuOrder:            *gpuOrder,
+		gpuCount:            *f.gpus,
 		diskGB:              *diskGB,
 		name:                *name,
 		maxInstances:        *maxInstances,
@@ -419,7 +477,7 @@ func runJobCreate(opts jobCreateOptions) error {
 		}
 		req.Hardware = &api.Hardware{
 			GPUModels: gpuModels,
-			GPUCount:  1,
+			GPUCount:  opts.gpuCount,
 			DiskGB:    opts.diskGB,
 		}
 		// Placement is always sent for an image job, exactly as the console
