@@ -22,23 +22,23 @@ type runOptions struct {
 	detach  bool
 	dir     string // remote working directory, "" → push destination
 	print   bool
-	// thenPauseMinutes is --then-pause's act-after window in whole minutes;
+	// thenStopMinutes is --then-stop's act-after window in whole minutes;
 	// 0 means the flag was not given. Only meaningful with detach: runCmd
 	// refuses it locally otherwise, since a foreground run leaves nothing
-	// running to arm a pause on once it returns.
-	thenPauseMinutes int
-	out              io.Writer
-	errOut           io.Writer
+	// running to arm a stop on once it returns.
+	thenStopMinutes int
+	out             io.Writer
+	errOut          io.Writer
 
 	resolveAlias func(target string, errOut io.Writer) (string, error)
 	doPush       func(alias string, opts pushOptions) error
 	handoff      func(args []string) error
 	launch       func(alias, workdir string, command []string) (string, error)
-	// armThenPause enables idle auto-pause on the deployment behind target,
-	// for a --then-pause detached run, and returns the resolved deployment
+	// armThenStop enables idle auto-stop on the deployment behind target,
+	// for a --then-stop detached run, and returns the resolved deployment
 	// id so the caller can print exactly what got armed. Tests inject a
 	// stub; runRun defaults it to a real idle-policy call.
-	armThenPause func(target string, actAfterMinutes int) (deploymentID int, err error)
+	armThenStop func(target string, actAfterMinutes int) (deploymentID int, err error)
 }
 
 // runCmd parses `aq run [name|id] -- <command…>`.
@@ -59,7 +59,7 @@ func runCmd(args []string) error {
 	includeSecrets := fs.Bool("include-secrets", false, "Also send .env, SSH keys, and other credential-shaped paths (skipped by default)")
 	noPush := fs.Bool("no-push", false, "Run without sending the working directory first")
 	detach := fs.Bool("detach", false, "Start the command and return: it keeps running after you disconnect")
-	thenPause := fs.String("then-pause", "", "Valid only with --detach. After launch, arm idle auto-pause on the deployment for this act-after window (e.g. 1h): it pauses once the command has finished AND the GPU has stayed idle that long, not the instant the process exits")
+	thenStop := fs.String("then-stop", "", "Valid only with --detach. After launch, arm idle auto-stop on the deployment for this act-after window (e.g. 1h): it stops once the command has finished AND the GPU has stayed idle that long, not the instant the process exits")
 	printOnly := fs.Bool("print", false, "Print the commands that would run, and exit")
 	var excludes stringList
 	fs.Var(&excludes, "exclude", "Skip paths matching this pattern (repeatable)")
@@ -82,19 +82,19 @@ func runCmd(args []string) error {
 		return fmt.Errorf("a command is required, usage: aq run [name|id] -- <command…>")
 	}
 
-	var thenPauseMinutes int
-	if *thenPause != "" {
+	var thenStopMinutes int
+	if *thenStop != "" {
 		if !*detach {
-			return fmt.Errorf("--then-pause requires --detach: a foreground run leaves nothing running to arm a pause on once it returns")
+			return fmt.Errorf("--then-stop requires --detach: a foreground run leaves nothing running to arm a stop on once it returns")
 		}
 		if isHostTarget(target) {
-			return fmt.Errorf("--then-pause needs the platform's idle-policy API, which a detached host: target never calls")
+			return fmt.Errorf("--then-stop needs the platform's idle-policy API, which a detached host: target never calls")
 		}
-		m, err := parsePositiveMinutes("--then-pause", *thenPause)
+		m, err := parsePositiveMinutes("--then-stop", *thenStop)
 		if err != nil {
 			return err
 		}
-		thenPauseMinutes = m
+		thenStopMinutes = m
 	}
 
 	var cred *config.Credential
@@ -113,14 +113,14 @@ func runCmd(args []string) error {
 	}
 
 	return runRun(runOptions{
-		cred:             cred,
-		target:           target,
-		command:          command,
-		noPush:           *noPush,
-		detach:           *detach,
-		thenPauseMinutes: thenPauseMinutes,
-		dir:              *dir,
-		print:            *printOnly,
+		cred:            cred,
+		target:          target,
+		command:         command,
+		noPush:          *noPush,
+		detach:          *detach,
+		thenStopMinutes: thenStopMinutes,
+		dir:             *dir,
+		print:           *printOnly,
 		push: pushOptions{
 			cred:           cred,
 			target:         target,
@@ -162,19 +162,19 @@ func runRun(opts runOptions) error {
 			return launchDetached(alias, workdir, command, nil)
 		}
 	}
-	if opts.armThenPause == nil {
+	if opts.armThenStop == nil {
 		cred := opts.cred
-		opts.armThenPause = func(target string, actAfterMinutes int) (int, error) {
+		opts.armThenStop = func(target string, actAfterMinutes int) (int, error) {
 			client := newControlClient(cred)
-			deploymentID, err := resolveDeploymentID(client, target, "run --then-pause")
+			deploymentID, err := resolveDeploymentID(client, target, "run --then-stop")
 			if err != nil {
 				return 0, err
 			}
 			enabled := true
 			m := actAfterMinutes
 			if _, err := client.SetIdlePolicy(deploymentID, api.IdlePolicyUpdate{
-				ActAfterMinutes:  &m,
-				AutoPauseEnabled: &enabled,
+				ActAfterMinutes: &m,
+				AutoStopEnabled: &enabled,
 			}); err != nil {
 				return 0, err
 			}
@@ -223,13 +223,13 @@ func runRun(opts runOptions) error {
 		fmt.Fprintf(opts.errOut, "→ %s: %s (detached, run %s)\n", alias, strings.Join(opts.command, " "), id)
 		fmt.Fprintf(opts.errOut, "  follow it with `aq logs %s-f`\n", displayTarget(opts.target))
 
-		if opts.thenPauseMinutes > 0 {
-			deploymentID, err := opts.armThenPause(opts.target, opts.thenPauseMinutes)
+		if opts.thenStopMinutes > 0 {
+			deploymentID, err := opts.armThenStop(opts.target, opts.thenStopMinutes)
 			if err != nil {
-				return fmt.Errorf("run %s started, but could not arm --then-pause: %w", id, err)
+				return fmt.Errorf("run %s started, but could not arm --then-stop: %w", id, err)
 			}
-			fmt.Fprintf(opts.errOut, "✓ Armed idle auto-pause on deployment #%d: pauses after %s of sustained GPU idle once this command finishes (not the instant it exits)\n",
-				deploymentID, formatMinutes(opts.thenPauseMinutes))
+			fmt.Fprintf(opts.errOut, "✓ Armed idle auto-stop on deployment #%d: stops after %s of sustained GPU idle once this command finishes (not the instant it exits)\n",
+				deploymentID, formatMinutes(opts.thenStopMinutes))
 		}
 		return nil
 	}

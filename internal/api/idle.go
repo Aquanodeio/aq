@@ -2,18 +2,18 @@ package api
 
 import "strconv"
 
-// Idle-auto-pause endpoints used by `aq idle status` / `aq idle set`.
+// Idle-auto-stop endpoints used by `aq idle status` / `aq idle set`.
 
 // IdlePolicy mirrors GET /deployments/:deploymentId/idle-policy: the
-// deployment's merged idle-auto-pause policy plus a live verdict computed
+// deployment's merged idle-auto-stop policy plus a live verdict computed
 // from its current usage data.
 type IdlePolicy struct {
 	WarnAfterMinutes        int  `json:"warnAfterMinutes"`
 	ActAfterMinutes         int  `json:"actAfterMinutes"`
 	GPUIdleThresholdPercent int  `json:"gpuIdleThresholdPercent"`
-	AutoPauseEnabled        bool `json:"autoPauseEnabled"`
+	AutoStopEnabled         bool `json:"autoStopEnabled"`
 	// State is one of UNKNOWN | ACTIVE | IDLE_WARN | IDLE_ACT. UNKNOWN means the
-	// box has reported no usable usage data yet — render it as unknown, never as
+	// box has reported no usable usage data yet, render it as unknown, never as
 	// active or idle: presenting a no-data verdict as either extreme is a lie the
 	// user could act on.
 	State string `json:"state"`
@@ -21,7 +21,7 @@ type IdlePolicy struct {
 	IdleMinutes int `json:"idleMinutes"`
 }
 
-// GetIdlePolicy fetches a deployment's merged idle-auto-pause policy and its
+// GetIdlePolicy fetches a deployment's merged idle-auto-stop policy and its
 // current live verdict.
 func (c *Client) GetIdlePolicy(deploymentID int) (*IdlePolicy, error) {
 	var out IdlePolicy
@@ -41,12 +41,12 @@ type IdlePolicyUpdate struct {
 	WarnAfterMinutes        *int  `json:"warnAfterMinutes,omitempty"`
 	ActAfterMinutes         *int  `json:"actAfterMinutes,omitempty"`
 	GPUIdleThresholdPercent *int  `json:"gpuIdleThresholdPercent,omitempty"`
-	AutoPauseEnabled        *bool `json:"autoPauseEnabled,omitempty"`
+	AutoStopEnabled         *bool `json:"autoStopEnabled,omitempty"`
 }
 
-// SetIdlePolicy updates a deployment's idle-auto-pause policy and returns the
+// SetIdlePolicy updates a deployment's idle-auto-stop policy and returns the
 // resulting merged policy plus live verdict. The orchestrator is the real
-// authority on validity (e.g. warnAfterMinutes < actAfterMinutes) — this only
+// authority on validity (e.g. warnAfterMinutes < actAfterMinutes), this only
 // shapes the request.
 func (c *Client) SetIdlePolicy(deploymentID int, req IdlePolicyUpdate) (*IdlePolicy, error) {
 	var out IdlePolicy

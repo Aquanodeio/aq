@@ -235,7 +235,7 @@ Commands:
   env           Manage a pod's Environment: keep it, share it, list, delete
   volume        Manage a pod's Volume: list, duplicate, restore a point, delete
   pods          List the pods you own
-  idle          View or change a DEPLOYMENT's idle-auto-pause thresholds
+  idle          View or change a DEPLOYMENT's idle-auto-stop thresholds
   job           Create, run, inspect and cancel GPU jobs
   endpoint      Create, list and inspect callable HTTP endpoints
   secret        Manage team secrets: env vars and registry credentials a job
@@ -271,9 +271,9 @@ up flags:
                      (the WHOLE offer's price, not per-GPU)
   --provider <name>  Restrict to a single provider (e.g. massecompute)
   --show-secrets     Echo the service password to stdout (hidden by default)
-  --auto-pause       Enable idle auto-pause on this deployment (off by default)
-  --warn-after <duration>  With --auto-pause: warn after this much idle time
-  --pause-after <duration> With --auto-pause: auto-pause after this much idle time
+  --auto-stop        Enable idle auto-stop on this deployment (off by default)
+  --warn-after <duration>  With --auto-stop: warn after this much idle time
+  --stop-after <duration>  With --auto-stop: auto-stop after this much idle time
 
   App (optional, you get a bare GPU box if you pick neither):
   --comfyui          Also install ComfyUI
@@ -443,12 +443,12 @@ push / run:
   --detach           Start it and return. The run keeps going after you
                      disconnect; read it back with "aq logs". Prints the run
                      id on stdout so you can capture it.
-  --then-pause <duration>
+  --then-stop <duration>
                      Valid only with --detach. After the run launches, arm
-                     idle auto-pause on its deployment for this act-after
-                     window (e.g. 1h): it pauses once this command has
+                     idle auto-stop on its deployment for this act-after
+                     window (e.g. 1h): it stops once this command has
                      finished AND the GPU has stayed idle that long, not the
-                     instant the process exits. Off unless you ask for it —
+                     instant the process exits. Off unless you ask for it,
                      each run that wants it opts in for itself.
 
   A .aqignore file in the directory you send adds exclude patterns, one per
@@ -474,18 +474,18 @@ ls / logs:
                               (default: /workspace)
 
 idle:
-  A PER-DEPLOYMENT idle-auto-pause policy (warn/pause thresholds, GPU idle %).
+  A PER-DEPLOYMENT idle-auto-stop policy (warn/stop thresholds, GPU idle %).
   It always outranks a pod's own "aq autostop" preference above, see
   "autostop" for how the two differ.
 
-  aq idle status <name|id>   Show the deployment's idle-auto-pause policy and
+  aq idle status <name|id>   Show the deployment's idle-auto-stop policy and
                               its current live verdict (ACTIVE / IDLE / UNKNOWN)
   aq idle set <name|id>      Update the policy (only the flags you pass change)
 
   --warn-after <duration>   Warn after this much idle time, e.g. 30m, 1h
-  --pause-after <duration>  Auto-pause after this much idle time, e.g. 1h
+  --stop-after <duration>   Auto-stop after this much idle time, e.g. 1h
   --gpu-threshold <percent> GPU utilization below which the box counts idle
-  --on / --off              Enable / disable idle auto-pause
+  --on / --off              Enable / disable idle auto-stop
 
 job:
   Everything about jobs lives under "aq job", not at the top level. "aq run"

@@ -31,7 +31,7 @@ type upOptions struct {
 	maxPrice     float64
 	provider     string
 	showSecrets  bool
-	idlePolicy   *api.IdlePolicyUpdate // nil unless the user passed --auto-pause/--warn-after/--pause-after
+	idlePolicy   *api.IdlePolicyUpdate // nil unless the user passed --auto-stop/--warn-after/--stop-after
 	out          io.Writer
 	errOut       io.Writer
 	pollInterval time.Duration
@@ -61,9 +61,9 @@ func up(args []string) error {
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
 	name := fs.String("name", "", "Set the deployment's display name (default: an auto-generated name)")
 	showSecrets := fs.Bool("show-secrets", false, "Echo the service password to stdout (hidden by default)")
-	autoPause := fs.Bool("auto-pause", false, "Enable idle auto-pause on this deployment (off by default)")
-	warnAfter := fs.String("warn-after", "", "With --auto-pause: warn after this much idle time, e.g. 30m")
-	pauseAfter := fs.String("pause-after", "", "With --auto-pause: auto-pause after this much idle time, e.g. 1h")
+	autoStop := fs.Bool("auto-stop", false, "Enable idle auto-stop on this deployment (off by default)")
+	warnAfter := fs.String("warn-after", "", "With --auto-stop: warn after this much idle time, e.g. 30m")
+	stopAfter := fs.String("stop-after", "", "With --auto-stop: auto-stop after this much idle time, e.g. 1h")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -100,7 +100,7 @@ func up(args []string) error {
 	}
 	template := upTemplate(*comfyui, *jupyter)
 
-	idlePolicy, err := buildUpIdlePolicy(*autoPause, *warnAfter, *pauseAfter)
+	idlePolicy, err := buildUpIdlePolicy(*autoStop, *warnAfter, *stopAfter)
 	if err != nil {
 		return err
 	}
@@ -147,24 +147,24 @@ func upTemplate(comfyui, jupyter bool) string {
 }
 
 // buildUpIdlePolicy builds the optional `idlePolicy` body for POST
-// /deployments/up from `aq up`'s --auto-pause/--warn-after/--pause-after flags.
+// /deployments/up from `aq up`'s --auto-stop/--warn-after/--stop-after flags.
 //
-// It returns nil — not a struct with everything zeroed — when the user passed
+// It returns nil, not a struct with everything zeroed, when the user passed
 // none of the three flags. A nil IdlePolicy omits the key from the request
 // entirely (`json:",omitempty"` on a pointer), which the orchestrator reads as
 // "no opinion, use the defaults." The console can default its idle toggle to
 // checked because the user SEES the checked box and can untick it; a CLI flag
 // the user never typed is invisible, so its absence must never be read as an
-// explicit "off" — and it must equally never be read as an explicit "on."
-func buildUpIdlePolicy(autoPause bool, warnAfterStr, pauseAfterStr string) (*api.IdlePolicyUpdate, error) {
-	if !autoPause && warnAfterStr == "" && pauseAfterStr == "" {
+// explicit "off", and it must equally never be read as an explicit "on."
+func buildUpIdlePolicy(autoStop bool, warnAfterStr, stopAfterStr string) (*api.IdlePolicyUpdate, error) {
+	if !autoStop && warnAfterStr == "" && stopAfterStr == "" {
 		return nil, nil
 	}
 
 	var p api.IdlePolicyUpdate
-	if autoPause {
+	if autoStop {
 		t := true
-		p.AutoPauseEnabled = &t
+		p.AutoStopEnabled = &t
 	}
 	if warnAfterStr != "" {
 		m, err := parsePositiveMinutes("--warn-after", warnAfterStr)
@@ -173,18 +173,18 @@ func buildUpIdlePolicy(autoPause bool, warnAfterStr, pauseAfterStr string) (*api
 		}
 		p.WarnAfterMinutes = &m
 	}
-	if pauseAfterStr != "" {
-		m, err := parsePositiveMinutes("--pause-after", pauseAfterStr)
+	if stopAfterStr != "" {
+		m, err := parsePositiveMinutes("--stop-after", stopAfterStr)
 		if err != nil {
 			return nil, err
 		}
 		p.ActAfterMinutes = &m
 	}
-	// Same client-side mirror of the server's warn < pause rule used by
-	// `aq idle set` — fail fast rather than round-trip a doomed request.
+	// Same client-side mirror of the server's warn < stop rule used by
+	// `aq idle set`, fail fast rather than round-trip a doomed request.
 	if p.WarnAfterMinutes != nil && p.ActAfterMinutes != nil && *p.WarnAfterMinutes >= *p.ActAfterMinutes {
 		return nil, fmt.Errorf(
-			"--warn-after (%s) must be less than --pause-after (%s)",
+			"--warn-after (%s) must be less than --stop-after (%s)",
 			formatMinutes(*p.WarnAfterMinutes), formatMinutes(*p.ActAfterMinutes),
 		)
 	}

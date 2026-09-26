@@ -64,12 +64,12 @@ type UpRequest struct {
 	// a stable `ticket-<N>-<label>` here lets the session-scoped reaper attribute
 	// and clean up a throwaway box that would otherwise bill as an orphan (#310).
 	Name string `json:"name,omitempty"`
-	// IdlePolicy opts a fresh deployment into idle-auto-pause at creation time.
+	// IdlePolicy opts a fresh deployment into idle-auto-stop at creation time.
 	// Nil (the Go zero value for a pointer) omits the key entirely, meaning "no
 	// opinion, use the orchestrator's defaults," never "explicitly off." Those
-	// defaults are OFF everywhere (DEFAULT_IDLE_POLICY.autoPauseEnabled is false
+	// defaults are OFF everywhere (DEFAULT_IDLE_POLICY.autoStopEnabled is false
 	// and the console's deploy-sheet toggle starts unchecked), so a CLI deploy
-	// that says nothing is not enrolled — same as every other surface.
+	// that says nothing is not enrolled, same as every other surface.
 	IdlePolicy *IdlePolicyUpdate `json:"idlePolicy,omitempty"`
 }
 
