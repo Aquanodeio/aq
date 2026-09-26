@@ -51,7 +51,7 @@ func resolveSetupID(client *api.Client, target string) (string, error) {
 
 // findSetup fetches the caller's setups and returns the one matching id, so
 // callers that already have a resolved id (from resolveSetupID or a direct
-// UUID) can get at its other fields (LeaseDeploymentID, ...) without a
+// UUID) can get at its other fields (AttachedDeploymentID, ...) without a
 // dedicated GET /setups/:id endpoint.
 func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 	setups, err := client.ListSetups()

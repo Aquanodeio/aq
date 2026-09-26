@@ -41,7 +41,7 @@ func TestPrintPodsRendersTheEnvironmentColumn(t *testing.T) {
 	four := 4
 	list := []api.Setup{
 		{
-			ID: "pod-1", Name: "trainer", LeaseDeploymentID: intPtr(42),
+			ID: "pod-1", Name: "trainer", AttachedDeploymentID: intPtr(42),
 			Environment: api.SetupEnvironmentSummary{Name: "pytorch-dev", Version: &four},
 		},
 		{

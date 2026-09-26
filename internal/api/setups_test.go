@@ -69,17 +69,16 @@ func TestListAllSetupVersionsQueriesWithNoNameFilter(t *testing.T) {
 	}
 }
 
-// TestListSetupsDecodesOwnedSetups checks `aq setups` decodes the fields it
-// renders, including deriving Running from leaseDeploymentId — there is no
-// boolean "running" field on the wire. The fixture is camelCase throughout
-// (serializeSetup's real wire shape, see the package doc comment in
-// setups.go) with `sizeBytes` as the decimal STRING serializeSetup actually
-// sends (BigInt doesn't survive JSON.stringify) — a plain JSON number here
-// would pass against a wrong Go type just as easily as a string, so this
-// pins the real shape, not just a decodable one. There is no
+// TestListSetupsDecodesOwnedSetups checks `aq pods` decodes the fields it
+// renders, including deriving Running from attachedDeploymentId and reading
+// stopping — there is no boolean "running" field on the wire. The fixture
+// matches the confirmed PodDTO shape (w3-backend, pod-serializer.ts,
+// 2026-09-26): the pre-pod/environment/volume serializeSetup's
+// `leaseDeploymentId`/`sizeBytes`/`mountPath`/`lastSyncAt` are gone from the
+// wire entirely, not renamed, so this fixture omits them rather than
+// asserting a fictional field decodes to nil. There is likewise no
 // "latest_version"/"latestVersion" field at all — GET /setups never sends
-// one (see ListAllSetupVersions's doc comment) — so this fixture omits it
-// rather than asserting a fictional field decodes to nil.
+// one (see ListAllSetupVersions's doc comment).
 func TestListSetupsDecodesOwnedSetups(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setups" {
@@ -87,8 +86,9 @@ func TestListSetupsDecodesOwnedSetups(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"success":true,"data":[
-			{"id":"11111111-1111-1111-1111-111111111111","name":"comfyui","status":"ACTIVE","sizeBytes":"1073741824","leaseDeploymentId":42},
-			{"id":"22222222-2222-2222-2222-222222222222","name":"jupyter","status":"CLOSED","sizeBytes":null,"leaseDeploymentId":null}
+			{"id":"11111111-1111-1111-1111-111111111111","name":"comfyui","status":"ACTIVE","attachedDeploymentId":42,"stopping":false},
+			{"id":"22222222-2222-2222-2222-222222222222","name":"jupyter","status":"STOPPING","attachedDeploymentId":43,"stopping":true},
+			{"id":"33333333-3333-3333-3333-333333333333","name":"idle","status":"STOPPED","attachedDeploymentId":null,"stopping":false}
 		]}`)
 	}))
 	defer srv.Close()
@@ -97,19 +97,16 @@ func TestListSetupsDecodesOwnedSetups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSetups: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d setups, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("got %d setups, want 3", len(got))
 	}
-	if !got[0].Running() {
-		t.Errorf("got[0].Running() = false, want true (leaseDeploymentId=42)")
+	if !got[0].Running() || got[0].Stopping {
+		t.Errorf("got[0]: Running()=%v Stopping=%v, want Running=true Stopping=false (attachedDeploymentId=42)", got[0].Running(), got[0].Stopping)
 	}
-	if got[0].SizeBytes != 1073741824 {
-		t.Errorf("got[0].SizeBytes = %d", got[0].SizeBytes)
+	if !got[1].Running() || !got[1].Stopping {
+		t.Errorf("got[1]: Running()=%v Stopping=%v, want both true (attachedDeploymentId=43, stopping=true: a Stop in flight is still attached)", got[1].Running(), got[1].Stopping)
 	}
-	if got[1].Running() {
-		t.Errorf("got[1].Running() = true, want false (leaseDeploymentId=null)")
-	}
-	if got[1].SizeBytes != 0 {
-		t.Errorf("got[1].SizeBytes = %d, want 0 (sizeBytes=null)", got[1].SizeBytes)
+	if got[2].Running() || got[2].Stopping {
+		t.Errorf("got[2]: Running()=%v Stopping=%v, want both false (attachedDeploymentId=null)", got[2].Running(), got[2].Stopping)
 	}
 }

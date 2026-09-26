@@ -43,13 +43,26 @@ func printPods(out io.Writer, list []api.Setup) {
 		return
 	}
 
-	fmt.Fprintf(out, "%-24s  %-7s  %-24s  %s\n", "NAME", "RUNNING", "ENVIRONMENT", "SIZE")
+	fmt.Fprintf(out, "%-24s  %-8s  %-24s  %s\n", "NAME", "RUNNING", "ENVIRONMENT", "SIZE")
 	for _, s := range list {
 		running := "no"
-		if s.Running() {
+		switch {
+		case s.Stopping:
+			// A Stop, or the first half of a Move, is in flight: neither
+			// cleanly Running nor cleanly Stopped yet.
+			running = "stopping"
+		case s.Running():
 			running = "yes"
 		}
-		fmt.Fprintf(out, "%-24s  %-7s  %-24s  %s\n", s.Name, running, formatPodEnvironment(s.Environment), formatPodSize(int64(s.SizeBytes)))
+		// A Setup carries no whole-pod size of its own any more (D8: the
+		// environment and the volume each have their own); show the
+		// volume's, the only size a pod row can honestly claim, and "-" for
+		// a bare pod (D4).
+		size := "-"
+		if s.Volume != nil {
+			size = formatPodSize(s.Volume.SizeBytes)
+		}
+		fmt.Fprintf(out, "%-24s  %-8s  %-24s  %s\n", s.Name, running, formatPodEnvironment(s.Environment), size)
 	}
 }
 

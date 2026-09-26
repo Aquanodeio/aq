@@ -3,7 +3,6 @@ package api
 import (
 	"net/url"
 	"strconv"
-	"strings"
 )
 
 // Setup-lineage endpoints backing `aq pods`, `aq job point`, and (for the
@@ -126,29 +125,6 @@ func (c *Client) GetSetupVersion(versionRowID int) (*SetupVersion, error) {
 	return &out, nil
 }
 
-// setupSizeBytes decodes GET /setups' `sizeBytes` field. serializeSetup
-// sends it as a decimal STRING (`ws.sizeBytes.toString()`), or JSON `null`
-// for a setup with no measured size yet — never a bare number: BigInt
-// doesn't survive JSON.stringify, per that function's own comment, so it
-// stringifies explicitly rather than relying on a global replacer. A plain
-// int64 field would hard-fail decoding every setup row once the tag below is
-// fixed to the real wire key.
-type setupSizeBytes int64
-
-func (n *setupSizeBytes) UnmarshalJSON(b []byte) error {
-	s := strings.Trim(string(b), `"`)
-	if s == "" || s == "null" {
-		*n = 0
-		return nil
-	}
-	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return err
-	}
-	*n = setupSizeBytes(v)
-	return nil
-}
-
 // SetupEnvironmentSummary mirrors the `environment` object the
 // pod/environment/volume plan's wire contract (section 2) nests on GET
 // /setups and GET /setups/:id. It is always present (never null) — every pod
@@ -192,21 +168,25 @@ type SetupRestoreProgress struct {
 //
 // ID is a UUID string (`model Setup { id String @id @default(uuid()) ...
 // }`) — never the numeric Deployment.ID from control.go, even though a
-// running setup has one associated via LeaseDeploymentID. There is also no
-// boolean "running" field on the wire — Running derives it from
-// LeaseDeploymentID, which is only non-nil while a live deployment holds the
-// lease. There is likewise no "latest version" field nested here at all —
+// running setup has one associated via AttachedDeploymentID. There is also
+// no boolean "running" field on the wire — Running derives it from
+// AttachedDeploymentID, which is only non-nil while a live deployment is
+// attached. There is likewise no "latest version" field nested here at all,
 // see ListAllSetupVersions.
 //
-// Every tag below is camelCase, matching serializeSetup's hand-written
-// object literal (setups.controller.ts) — see the package doc comment at
-// the top of this file for why this struct's convention differs from
-// SetupVersion's.
+// This struct mirrors the confirmed PodDTO shape (w3-backend,
+// pod-serializer.ts, 2026-09-26), not the pre-pod/environment/volume
+// serializeSetup shape the doc comment above used to describe: that
+// serializer sent `mountPath`, `sizeBytes` and `lastSyncAt` on every row,
+// none of which PodDTO sends any more, and reading them here would silently
+// decode to a zero value that looks like a real (empty) answer rather than
+// an absent field.
+//
+// Every tag below is camelCase, matching PodDTO field for field.
 type Setup struct {
 	ID          string                  `json:"id"`
 	Name        string                  `json:"name"`
 	Status      string                  `json:"status"`
-	MountPath   string                  `json:"mountPath"`
 	Environment SetupEnvironmentSummary `json:"environment"`
 	// Volume is nil for a pod running with no volume attached (D4 of the
 	// pod/environment/volume plan: a bare pod is allowed, and the New pod
@@ -222,23 +202,31 @@ type Setup struct {
 	// column). Renamed from AutopauseEnabled/autopauseEnabled per the
 	// pod/environment/volume plan's vocabulary sweep (PUT
 	// /setups/:id/autostop replaces PUT /setups/:id/autopause; no alias).
-	AutostopEnabled *bool          `json:"autostopEnabled"`
-	SizeBytes       setupSizeBytes `json:"sizeBytes"`
-	LastSyncAt      string         `json:"lastSyncAt"`
-	// DeploymentID is populated only on POST /setups/:id/start's response
-	// (W3, 2026-09-26): the freshly-rented deployment id, so the caller can
-	// poll `aq status <id>` while the box restores. Absent on every other
-	// response that decodes a Setup (Stop/Move return the pod with no such
-	// field) — nil there, never a stale or guessed id.
-	DeploymentID      *int   `json:"deploymentId,omitempty"`
-	LeaseDeploymentID *int   `json:"leaseDeploymentId"`
-	CreatedAt         string `json:"createdAt"`
-	UpdatedAt         string `json:"updatedAt"`
+	AutostopEnabled *bool `json:"autostopEnabled"`
+	// DeploymentID is populated on POST /setups and POST /setups/:id/start's
+	// response (w3-backend, 2026-09-26): the freshly-rented deployment id, so
+	// the caller can poll `aq status <id>` while the box restores. Absent on
+	// every other response that decodes a Setup (Stop/Move return the pod
+	// with no such field), nil there, never a stale or guessed id.
+	DeploymentID *int `json:"deploymentId,omitempty"`
+	// AttachedDeploymentID is the deployment currently running this pod, nil
+	// once Stopped or once that deployment closes. Replaces the pre-model
+	// LeaseDeploymentID (the lease moved to Volume and is no longer
+	// serialized on the pod itself, w3-backend 2026-09-26): Running() derives
+	// from this field alone.
+	AttachedDeploymentID *int `json:"attachedDeploymentId"`
+	// Stopping is true while a Stop, or the first half of a Move, is in
+	// flight: the pod is neither cleanly Running nor cleanly Stopped, and
+	// collapsing it into either would misreport an in-progress release as
+	// one of its two settled states.
+	Stopping  bool   `json:"stopping"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 // Running reports whether a deployment currently holds this setup's lease.
 func (s Setup) Running() bool {
-	return s.LeaseDeploymentID != nil
+	return s.AttachedDeploymentID != nil
 }
 
 // ListSetups returns every setup the caller owns.
