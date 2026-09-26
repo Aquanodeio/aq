@@ -101,31 +101,46 @@ func printVolumes(out io.Writer, volumes []api.Volume) {
 		fmt.Fprintln(out, "No volumes yet.")
 		return
 	}
-	fmt.Fprintf(out, "%-24s  %-10s  %-14s  %s\n", "NAME", "SIZE", "ATTACHED", "LAST SAVED")
+	fmt.Fprintf(out, "%-24s  %-10s  %-24s  %s\n", "NAME", "SIZE", "ATTACHED", "LAST SAVED")
 	for _, v := range volumes {
-		attached := "no"
-		if v.AttachedToPodID != nil && *v.AttachedToPodID != "" {
-			attached = "yes"
-		}
-		fmt.Fprintf(out, "%-24s  %-10s  %-14s  %s\n", truncate(v.Name, 24), formatPodSize(v.SizeBytes), attached, orDash(v.LastSyncedAt))
+		fmt.Fprintf(out, "%-24s  %-10s  %-24s  %s\n", truncate(v.Name, 24), formatPodSizePtr(v.SizeBytes), volumeAttachedLabel(v), orDashPtr(v.HeadSavedAt))
 	}
 }
 
-// printVolumeDetail renders one volume's fields plus its point history —
+// volumeAttachedLabel renders a volume's attachment, by the pod's NAME
+// (falling back to its id if the name is somehow absent) rather than a bare
+// yes/no: "-" unattached, the pod's name while its pod is Running, and
+// "<name> (stopped)" when the pod still owns this volume but isn't running
+// right now, three states, never collapsed into a boolean.
+func volumeAttachedLabel(v api.Volume) string {
+	if v.AttachedPodID == nil {
+		return "-"
+	}
+	name := *v.AttachedPodID
+	if v.AttachedPodName != nil && *v.AttachedPodName != "" {
+		name = *v.AttachedPodName
+	}
+	if v.Running {
+		return name
+	}
+	return name + " (stopped)"
+}
+
+// printVolumeDetail renders one volume's fields plus its point history,
 // provenance is the ONLY thing that created a point (a Stop, or an idle
 // auto-stop); there is no manual save point.
 func printVolumeDetail(out io.Writer, v api.Volume) {
 	fmt.Fprintf(out, "%s (%s)\n", v.Name, v.ID)
-	fmt.Fprintf(out, "  Size: %s\n", formatPodSize(v.SizeBytes))
+	fmt.Fprintf(out, "  Size: %s\n", formatPodSizePtr(v.SizeBytes))
 	fmt.Fprintf(out, "  Mount path: %s\n", orDash(v.MountPath))
-	if v.AttachedToPodID != nil && *v.AttachedToPodID != "" {
-		fmt.Fprintf(out, "  Attached to pod: %s\n", *v.AttachedToPodID)
-	} else {
-		fmt.Fprintln(out, "  Attached to pod: (none)")
+	fmt.Fprintf(out, "  Attached to pod: %s\n", volumeAttachedLabel(v))
+	state := v.SaveState
+	if state == "" {
+		state = "unknown"
 	}
-	fmt.Fprintf(out, "  Last saved: %s\n", orDash(v.LastSyncedAt))
-	if v.LastSyncError != nil && *v.LastSyncError != "" {
-		fmt.Fprintf(out, "  Last save failed: %s\n", *v.LastSyncError)
+	fmt.Fprintf(out, "  Last saved: %s (%s)\n", orDashPtr(v.HeadSavedAt), state)
+	if v.LastSaveError != nil && *v.LastSaveError != "" {
+		fmt.Fprintf(out, "  Last save failed: %s\n", *v.LastSaveError)
 	}
 
 	fmt.Fprintln(out, "\nHistory:")

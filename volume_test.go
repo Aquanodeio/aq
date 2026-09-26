@@ -7,8 +7,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
+
+// TestVolumeAttachedLabelIsThreeState checks unattached, attached-and-running,
+// and attached-but-stopped all render differently: a bare boolean would
+// collapse the last two into the same "yes", which is exactly the state a
+// user needs distinguished (a stopped pod's volume can still be restored;
+// a running one's can't).
+func TestVolumeAttachedLabelIsThreeState(t *testing.T) {
+	podID, podName := "pod-1", "trainer"
+	cases := []struct {
+		name string
+		v    api.Volume
+		want string
+	}{
+		{"unattached", api.Volume{}, "-"},
+		{"running", api.Volume{AttachedPodID: &podID, AttachedPodName: &podName, Running: true}, "trainer"},
+		{"stopped", api.Volume{AttachedPodID: &podID, AttachedPodName: &podName, Running: false}, "trainer (stopped)"},
+		{"no name falls back to id", api.Volume{AttachedPodID: &podID, Running: true}, "pod-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := volumeAttachedLabel(tc.v); got != tc.want {
+				t.Errorf("volumeAttachedLabel(%+v) = %q, want %q", tc.v, got, tc.want)
+			}
+		})
+	}
+}
 
 // TestVolumeDispatchesToKnownSubcommands mirrors TestEnvDispatchesToKnownSubcommands
 // for `aq volume`.
@@ -27,8 +54,8 @@ func TestRunVolumeLsWithNoTargetListsAll(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{
-			{"id": "vol-1", "name": "research-data", "sizeBytes": 1073741824, "attachedToPodId": "pod-1", "lastSyncedAt": "40s ago"},
-			{"id": "vol-2", "name": "scratch", "sizeBytes": 0, "attachedToPodId": nil, "lastSyncedAt": ""},
+			{"id": "vol-1", "name": "research-data", "sizeBytes": 1073741824, "attachedPodId": "pod-1", "attachedPodName": "trainer", "running": true, "headSavedAt": "2026-09-26T00:00:00Z", "saveState": "saved"},
+			{"id": "vol-2", "name": "scratch", "sizeBytes": nil, "attachedPodId": nil, "attachedPodName": nil, "running": false, "headSavedAt": nil, "saveState": "unknown"},
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -55,8 +82,9 @@ func TestRunVolumeLsWithTargetShowsDetailAndHistory(t *testing.T) {
 	mux.HandleFunc("/volumes/vol-1", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, map[string]any{
 			"id": "vol-1", "name": "research-data", "sizeBytes": 1073741824,
-			"mountPath": "/workspace", "attachedToPodId": "pod-1",
-			"lastSyncedAt": "2026-09-26T00:00:00Z", "lastSyncError": nil,
+			"mountPath": "/workspace", "attachedPodId": "pod-1", "attachedPodName": "trainer",
+			"running": true, "headSavedAt": "2026-09-26T00:00:00Z", "saveState": "saved",
+			"lastSaveError": nil, "createdAt": "2026-09-01T00:00:00Z",
 			"points": []map[string]any{
 				{"id": "pt-1", "createdAt": "2026-09-25T00:00:00Z", "provenance": "stop", "label": nil},
 			},
@@ -71,7 +99,7 @@ func TestRunVolumeLsWithTargetShowsDetailAndHistory(t *testing.T) {
 		t.Fatalf("runVolumeLs: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"research-data", "Attached to pod: pod-1", "stop"} {
+	for _, want := range []string{"research-data", "Attached to pod: trainer", "stop"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q; got:\n%s", want, got)
 		}

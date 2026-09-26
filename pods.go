@@ -57,10 +57,10 @@ func printPods(out io.Writer, list []api.Setup) {
 		// A Setup carries no whole-pod size of its own any more (D8: the
 		// environment and the volume each have their own); show the
 		// volume's, the only size a pod row can honestly claim, and "-" for
-		// a bare pod (D4).
+		// a bare pod (D4) or an unmeasured volume.
 		size := "-"
 		if s.Volume != nil {
-			size = formatPodSize(s.Volume.SizeBytes)
+			size = formatPodSizePtr(s.Volume.SizeBytes)
 		}
 		fmt.Fprintf(out, "%-24s  %-8s  %-24s  %s\n", s.Name, running, formatPodEnvironment(s.Environment), size)
 	}
@@ -92,11 +92,11 @@ func printPodStorageSummary(out io.Writer, s api.Setup) {
 	if state == "" {
 		state = "unknown"
 	}
-	fmt.Fprintf(out, "  Volume: %s (%s, %s)\n", orDash(v.Name), formatPodSize(v.SizeBytes), state)
+	fmt.Fprintf(out, "  Volume: %s (%s, %s)\n", orDash(v.Name), formatPodSizePtr(v.SizeBytes), state)
 }
 
 // formatPodSize renders a byte count in the largest whole binary unit that
-// keeps it readable, at GiB precision — matching how held-snapshot storage
+// keeps it readable, at GiB precision, matching how held-snapshot storage
 // is billed (see heldStorageRateLabel in pricing.go).
 func formatPodSize(n int64) string {
 	const unit = 1024
@@ -109,4 +109,15 @@ func formatPodSize(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// formatPodSizePtr renders a nullable byte count (SetupVolumeSummary's and
+// Volume's SizeBytes are both null before storage metering has ever
+// measured that volume). A nil pointer renders as "-", never as "0 B": the
+// two mean different things (unmeasured vs. genuinely empty).
+func formatPodSizePtr(n *int64) string {
+	if n == nil {
+		return "-"
+	}
+	return formatPodSize(*n)
 }
