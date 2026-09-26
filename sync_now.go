@@ -15,7 +15,7 @@ import (
 // leader-elected periodic tick with no user-facing button (spec mechanism 9),
 // so there is nothing left for a managed target to force. `aq sync-now`
 // therefore survives ONLY for a detached (BYO-bucket, no Aquanode account)
-// box, which runs no scheduler at all — "force the tick now" is the only
+// box, which runs no scheduler at all: "force the tick now" is the only
 // form the verb has there, and the real one, not a stand-in.
 func syncNow(args []string) error {
 	fs := flag.NewFlagSet("sync-now", flag.ContinueOnError)

@@ -311,7 +311,7 @@ import:
   Run ON a box you already rent somewhere else (RunPod, Vast, your own
   hardware). Captures its /workspace-equivalent data into a new Aquanode
   Volume. Survey-first: aq shows exactly what it will and won't capture, and
-  asks before anything is uploaded. This never rents anything itself — attach
+  asks before anything is uploaded. This never rents anything itself. Attach
   the resulting volume to a pod (any built-in environment) from the console
   to bring it online.
 
@@ -696,7 +696,7 @@ pods / down:
 env:
   A pod's Environment is everything OUTSIDE /workspace: base image, installed
   packages, startup script. It saves silently with the pod's config on every
-  Stop and never needs a click — it only becomes a visible, named thing when
+  Stop and never needs a click: it only becomes a visible, named thing when
   you Keep or Share it.
 
   aq env keep <name|id> <name>

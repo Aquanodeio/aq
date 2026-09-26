@@ -399,7 +399,7 @@ func (s *importServer) handler() http.Handler {
 		}
 		writeData(w, body)
 	})
-	// /volumes/import/credentials returns EVERYTHING --resume needs —
+	// /volumes/import/credentials returns EVERYTHING --resume needs:
 	// storage_prefix/restic_backup_id/restic_password alongside a FRESH
 	// import_token, so aq keeps no local copy of any of it. The token here
 	// deliberately differs from /start's "tok-1" so tests can catch aq
@@ -448,7 +448,7 @@ func testImportOptions(cred *config.Credential, ogrePath string, out, errOut *by
 }
 
 // TestRunImportDryRunMakesNoStartCall checks --dry-run never calls
-// /volumes/import/start — nothing is captured or uploaded.
+// /volumes/import/start: nothing is captured or uploaded.
 func TestRunImportDryRunMakesNoStartCall(t *testing.T) {
 	obs := sampleObservation()
 	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
@@ -468,7 +468,7 @@ func TestRunImportDryRunMakesNoStartCall(t *testing.T) {
 		t.Fatalf("runImport --dry-run: %v", err)
 	}
 	if server.startCalls != 0 {
-		t.Fatal("--dry-run called /volumes/import/start — it must capture and upload nothing")
+		t.Fatal("--dry-run called /volumes/import/start: it must capture and upload nothing")
 	}
 	if !strings.Contains(out.String(), "dry-run") {
 		t.Errorf("expected a dry-run notice; got:\n%s", out.String())
@@ -606,7 +606,7 @@ func TestRunImportResumeReusesStoragePrefixAndBackupID(t *testing.T) {
 	}
 
 	// The resumed run's --resume flag is the ONLY input identifying the
-	// volume — no file from the failed attempt above is read.
+	// volume: no file from the failed attempt above is read.
 	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"snap-1","restic_snapshot_id":"r1","path":"/workspace","size":84213000,"observation":%s}`, marshalObservation(t, obs))
 	okOgre, argsFile, _ := writeStubOgre(t, surveyJSON, captureJSON)
 

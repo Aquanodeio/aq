@@ -16,7 +16,7 @@ import (
 // pod/environment/volume model: everything OUTSIDE /workspace (base image,
 // installed packages, startup script). It saves silently with its pod's
 // config on every Stop and only becomes a visible, named object when Kept or
-// Shared — there is no standalone "save environment" verb and no
+// Shared. There is no standalone "save environment" verb and no
 // `/environments` browsing page; `keep`/`share`/`ls`/`rm` are the whole
 // vocabulary.
 func env(args []string) error {
@@ -68,7 +68,7 @@ func envKeep(args []string) error {
 }
 
 // runEnvKeep names the pod's current environment. It mints nothing by
-// itself — the pod's working environment (and any version it already has)
+// itself: the pod's working environment (and any version it already has)
 // is just filed under a name so it lists under Yours in the New pod picker
 // and survives pod deletion.
 func runEnvKeep(opts envKeepOptions) error {
@@ -143,7 +143,7 @@ func envShare(args []string) error {
 
 // runEnvShare shares one environment version and polls until the
 // server-side publish job (a restic copy into a fresh per-version repo)
-// reports ready or failed, printing "Preparing link..." while it waits — the
+// reports ready or failed, printing "Preparing link..." while it waits: the
 // link is not safe to hand out until GET /shares/:shareId says ready.
 func runEnvShare(opts envShareOptions) error {
 	out := opts.out
@@ -195,8 +195,8 @@ func runEnvShare(opts envShareOptions) error {
 }
 
 // printEnvironmentPreview shows the outgoing-paths preview before a
-// pod-scoped share — included roots, what's left out, and any secret hits in
-// the startup script — the same information the console's Share dialog shows
+// pod-scoped share: included roots, what's left out, and any secret hits in
+// the startup script. This is the same information the console's Share dialog shows
 // before confirming. A failed preview lookup never blocks the share itself:
 // it is a courtesy, not a gate (the server enforces the actual secret-hit
 // refusal).
@@ -280,8 +280,8 @@ func envLs(args []string) error {
 
 // runEnvLs lists every environment the caller can pick from (no target), or
 // one pod's/environment's version history (target given). A target is tried
-// as a pod first, then as a named environment — read-only, so a wrong guess
-// costs nothing.
+// as a pod first, then as a named environment (read-only, so a wrong guess
+// costs nothing).
 func runEnvLs(opts envLsOptions) error {
 	out := opts.out
 	if out == nil {

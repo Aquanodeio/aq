@@ -6,13 +6,13 @@ import "net/url"
 // is everything OUTSIDE /workspace: base image, installed packages, startup
 // script. It saves silently with its pod on every Stop and only becomes a
 // visible, named object when Kept or Shared (`aq env keep`/`aq env share`).
-// Numbered versions (v1, v2, ...) are minted ONLY by Keep or Share — there is
+// Numbered versions (v1, v2, ...) are minted ONLY by Keep or Share: there is
 // no standalone "save environment" verb.
 
 // EnvironmentPreview is the data returned by GET
 // /setups/:id/environment/preview: everything a share/keep confirmation needs
-// to show BEFORE anything leaves the box — no box required, since it's
-// rendered from the version's already-stored includedRoots/excluded.
+// to show BEFORE anything leaves the box (no box required, since it's
+// rendered from the version's already-stored includedRoots/excluded).
 type EnvironmentPreview struct {
 	IncludedRoots []string               `json:"includedRoots"`
 	Excluded      []string               `json:"excluded"`
@@ -30,7 +30,7 @@ type EnvironmentSecretHit struct {
 }
 
 // GetEnvironmentPreview fetches the outgoing-paths preview for setupID's
-// current (working) environment — GET /setups/:id/environment/preview.
+// current (working) environment: GET /setups/:id/environment/preview.
 func (c *Client) GetEnvironmentPreview(setupID string) (*EnvironmentPreview, error) {
 	var out EnvironmentPreview
 	path := "/setups/" + url.PathEscape(setupID) + "/environment/preview"
@@ -51,7 +51,7 @@ type EnvironmentVersion struct {
 }
 
 // ListSetupEnvironmentVersions returns every version of setupID's own
-// environment lineage — GET /setups/:id/environment/versions. The owner sees
+// environment lineage: GET /setups/:id/environment/versions. The owner sees
 // the full history.
 func (c *Client) ListSetupEnvironmentVersions(setupID string) ([]EnvironmentVersion, error) {
 	var out []EnvironmentVersion
@@ -63,7 +63,7 @@ func (c *Client) ListSetupEnvironmentVersions(setupID string) ([]EnvironmentVers
 }
 
 // ListEnvironmentVersions returns every version of a named (Kept or Shared)
-// Environment — GET /environments/:id/versions. An owner sees every version;
+// Environment: GET /environments/:id/versions. An owner sees every version;
 // a recipient sees only the one version shared with them.
 func (c *Client) ListEnvironmentVersions(environmentID string) ([]EnvironmentVersion, error) {
 	var out []EnvironmentVersion
@@ -87,7 +87,7 @@ type KeepEnvironmentResult struct {
 
 // KeepSetupEnvironment names setupID's current environment so it lists under
 // Yours in the New pod picker and survives pod deletion. It mints nothing by
-// itself — Share is the only thing that mints a version, and Keep on a pod
+// itself: Share is the only thing that mints a version, and Keep on a pod
 // whose environment already has one just files the existing lineage under a
 // name.
 func (c *Client) KeepSetupEnvironment(setupID string, name string) (*KeepEnvironmentResult, error) {
@@ -110,7 +110,7 @@ type ShareEnvironmentRequest struct {
 // ShareResult is the data returned by POST /setups/:id/environment/share and
 // POST /environments/:id/share. State is "preparing" until the server-side
 // publish job (a restic copy into a fresh per-version repo) finishes;
-// GET /shares/:shareId polls it to "ready" or "failed" — never assume ready
+// GET /shares/:shareId polls it to "ready" or "failed". Never assume ready
 // from this response alone.
 type ShareResult struct {
 	ShareID  string `json:"shareId"`
@@ -138,7 +138,7 @@ type ShareEnvironmentByIDRequest struct {
 }
 
 // ShareEnvironmentByID shares one version of a named (Kept or Shared)
-// Environment directly, without going through the pod that made it — POST
+// Environment directly, without going through the pod that made it: POST
 // /environments/:id/share.
 func (c *Client) ShareEnvironmentByID(environmentID string, versionID string) (*ShareResult, error) {
 	var out ShareResult
@@ -234,7 +234,7 @@ type EnvironmentsResult struct {
 	Shared  []EnvironmentSummary `json:"shared"`
 }
 
-// ListEnvironments fetches every environment the caller can pick from — GET
+// ListEnvironments fetches every environment the caller can pick from: GET
 // /environments.
 func (c *Client) ListEnvironments() (*EnvironmentsResult, error) {
 	var out EnvironmentsResult
@@ -244,7 +244,7 @@ func (c *Client) ListEnvironments() (*EnvironmentsResult, error) {
 	return &out, nil
 }
 
-// DeleteEnvironment deletes a Kept or Shared environment — DELETE
+// DeleteEnvironment deletes a Kept or Shared environment: DELETE
 // /environments/:id. Breaks nothing running; existing share links to it stop
 // working.
 func (c *Client) DeleteEnvironment(environmentID string) error {

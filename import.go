@@ -149,7 +149,7 @@ func runImport(opts importOptions) error {
 		}
 	}
 
-	// 3. Create the volume and mint scoped write credentials for it — a real,
+	// 3. Create the volume and mint scoped write credentials for it: a real,
 	// billed, visible, deletable Volume exists from this point on, even if
 	// the capture below fails or is abandoned.
 	start, err := client.StartImport(api.ImportStartRequest{
@@ -189,7 +189,7 @@ func runImport(opts importOptions) error {
 	// aq keeps NO local copy of storage_prefix/restic_backup_id/restic_password/
 	// import_token: this box is rented from another vendor, we don't control
 	// its disk, and it gets recycled. A restic password decrypting the whole
-	// volume — left behind by an abandoned import — is a bad thing to leave on
+	// volume (left behind by an abandoned import) is a bad thing to leave on
 	// someone else's hardware. If the capture below fails or is interrupted,
 	// `aq import --resume <volume-id>` re-derives everything it needs from
 	// POST /volumes/import/credentials instead (runImportResume below).
@@ -337,7 +337,7 @@ func printImportWarnings(out io.Writer, warnings []string) {
 }
 
 // runImportResume resumes a volume whose import didn't finish. aq keeps NO
-// local state for this — the volume id comes from argv (the user has it: it
+// local state for this. The volume id comes from argv (the user has it: it
 // was printed at /start), and POST /volumes/import/credentials returns
 // EVERYTHING else needed: storage_prefix, restic_backup_id, restic_password,
 // scoped write credentials, and a freshly-minted (any prior one now dead)

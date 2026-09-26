@@ -13,7 +13,7 @@ import (
 
 // volume dispatches `aq volume <sub>`, the Volume half of the
 // pod/environment/volume model: /workspace, your code and data. It has
-// automatic history (one point per Stop) and no manual save button —
+// automatic history (one point per Stop) and no manual save button:
 // `ls`/`dup`/`restore`/`rm` are the whole vocabulary. `aq import` is the
 // separate top-level command that CREATES a volume from a box rented
 // elsewhere; it is not one of these subcommands.
@@ -187,7 +187,7 @@ func volumeDup(args []string) error {
 	return runVolumeDup(volumeDupOptions{cred: cred, target: positional[0], name: positional[1], out: os.Stdout})
 }
 
-// runVolumeDup forks a volume into a brand new one at its latest point — an
+// runVolumeDup forks a volume into a brand new one at its latest point: an
 // honest fork, writes never merge back.
 func runVolumeDup(opts volumeDupOptions) error {
 	out := opts.out
@@ -240,7 +240,7 @@ func volumeRestore(args []string) error {
 }
 
 // runVolumeRestore sets a volume's head to an earlier point. Refused (409)
-// while the volume is attached to a running pod — this is never "newest by
+// while the volume is attached to a running pod: this is never "newest by
 // time", only ever the exact point named.
 func runVolumeRestore(opts volumeRestoreOptions) error {
 	out := opts.out

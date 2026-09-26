@@ -107,7 +107,7 @@ func TestDownRequiresLogin(t *testing.T) {
 // read no differently than a saved one. The disclosure must be printed
 // BEFORE the terminate call, because afterwards the box is already gone.
 // There is no more --save flag here (see stop.go: a pod's Stop is always
-// save-then-release under the pod/environment/volume model) — `aq down`
+// save-then-release under the pod/environment/volume model). `aq down`
 // stays the lower-level, always-unsaved "kill this deployment id" verb.
 func TestRunDownDisclosesNothingIsSavedBeforeTerminating(t *testing.T) {
 	mux := http.NewServeMux()

@@ -11,7 +11,7 @@ import (
 
 // boxDefaultCPU/Memory/StorageGB are the last-resort resource sizes used only
 // when a marketplace offer's own reported number is unusable (zero, absent,
-// or an unrecognized unit) — mirroring the console's own `BOX` fallback
+// or an unrecognized unit), mirroring the console's own `BOX` fallback
 // (`app/pods/new/page.tsx`: `{cpu: 4, memory: 32, storage: 100}`), since
 // `resource.cpu`/`.memory`/`.storage` are required, non-nullable fields on
 // the wire and omitting one is not an option.
@@ -22,7 +22,7 @@ const (
 )
 
 // offerSelectFilter narrows the marketplace search `aq start`/`aq move` run
-// client-side before building a full OfferSelection — this model's
+// client-side before building a full OfferSelection: this model's
 // /setups/:id/{start,move} takes one ALREADY-CHOSEN offer, not a filter the
 // orchestrator resolves server-side the way `aq up`/`aq deploy` do.
 type offerSelectFilter struct {
@@ -33,7 +33,7 @@ type offerSelectFilter struct {
 }
 
 // selectCheapestOffer filters the live marketplace by f and returns the
-// cheapest matching offer by TOTAL hourly price — matching `aq up`/`aq
+// cheapest matching offer by TOTAL hourly price, matching `aq up`/`aq
 // deploy`'s own --max-price convention ("the WHOLE offer's price, not
 // per-GPU"), not `aq gpus`'s per-GPU-rate convention, since a caller renting
 // here is billed the total. --gpus matches "at least this many", the same
@@ -70,7 +70,7 @@ func selectCheapestOffer(offers []api.MarketplaceOffer, f offerSelectFilter) (ap
 
 // toGB converts a MemorySize into GB, mirroring the console's own `toGB`
 // (`lib/utils.ts`) exactly: GB unchanged, TB*1024, MB/1024, any other unit
-// UNKNOWN (nil) rather than guessed at — a value we can't convert must never
+// UNKNOWN (nil) rather than guessed at: a value we can't convert must never
 // silently become 0 or the raw number in the wrong unit.
 func toGB(m api.MemorySize) *float64 {
 	if !(m.Value > 0) {
@@ -91,13 +91,13 @@ func toGB(m api.MemorySize) *float64 {
 }
 
 // offerToResourceSpec builds the `resource` object a Start/Move offer needs
-// from a chosen marketplace offer — the same fields the console's
+// from a chosen marketplace offer, the same fields the console's
 // `transformToBackendFormat` derives from a `chosenOffer`
 // (`lib/utils/deployment-config-builder.ts`), field for field:
 // desiredInstanceId <- offer.address, location_id <- offer.location_id,
 // gpuUnits <- offer.gpuCount, gpuModel <- offer.gpuShortName. CPU/memory/
 // storage fall back to the box default only when the offer's own number is
-// unusable (see toGB) — sending the offer's real spec is what the console
+// unusable (see toGB). Sending the offer's real spec is what the console
 // itself does for every provider except akash's own flat request, which aq
 // has no equivalent per-provider table for and does not attempt to replicate.
 func offerToResourceSpec(o api.MarketplaceOffer) api.ResourceSpec {

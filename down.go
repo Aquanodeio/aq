@@ -28,12 +28,12 @@ type downOptions struct {
 //
 // `aq down <deploymentId>` tears down a raw deployment (one brought up by
 // `aq up` / `aq deploy`, or one left over after a pod's Start), stopping the
-// rented GPU box and its billing for good — a bare close writes close_reason
+// rented GPU box and its billing for good: a bare close writes close_reason
 // USER_REQUEST, which the orchestrator excludes from RESUMABLE_CLOSE_REASONS,
 // so nothing on the box is kept. This used to take a `--save` flag that
 // checkpointed the setup first; that mechanism (`aq save`) is gone under the
 // pod/environment/volume model, where Stop is ALWAYS save-then-release (see
-// stop.go) — `aq down` stays only as the lower-level "kill this deployment
+// stop.go). `aq down` stays only as the lower-level "kill this deployment
 // id outright" escape hatch, distinct from the Pod-level Stop.
 func down(args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
@@ -65,7 +65,7 @@ func down(args []string) error {
 // This is disclosure, not a warning to talk the user out of it: `aq down`
 // releases the box with nothing saved. A pod (see stop.go) always saves on
 // the way down; a raw deployment does not, and saying so before the box is
-// gone is the whole point — afterward there's nothing left to disclose.
+// gone is the whole point. Afterward there's nothing left to disclose.
 func runDown(opts downOptions) error {
 	if opts.out == nil {
 		opts.out = os.Stdout

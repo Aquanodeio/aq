@@ -25,19 +25,19 @@ type startOptions struct {
 // start parses `aq start <pod> [--gpu][--max-price][--provider][--gpus]` and
 // wires the real environment into runStart.
 //
-// Start brings a Stopped pod back onto a GPU box, on ANY matching GPU — not
+// Start brings a Stopped pod back onto a GPU box, on ANY matching GPU, not
 // necessarily the one it last ran on (the model's own rule: "Start (on any
 // GPU)"). With no filter flags it rents the cheapest offer anywhere, same as
 // a bare `aq up`; the flags here narrow that search exactly like `aq up`'s
 // do. Unlike `aq up`/`aq deploy`, this pod/environment/volume route needs one
 // fully-resolved offer (resource + provider + sshKeyId), not a filter for
-// the orchestrator to match server-side — see offer_select.go for why and
-// how that offer is chosen.
+// the orchestrator to match server-side (see offer_select.go for why and
+// how that offer is chosen).
 //
 // This replaces the old pause/resume cycle: pause always saved and
 // released, and resuming meant `aq deploy --snapshot <deploymentId>` naming
 // a raw deployment id. Stop (see stop.go) is now always the resumable save,
-// and Start takes the pod itself — there is nothing left to route around.
+// and Start takes the pod itself: there is nothing left to route around.
 func start(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")

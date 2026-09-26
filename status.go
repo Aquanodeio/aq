@@ -138,8 +138,8 @@ func printStatusReady(out io.Writer, dep api.Deployment) {
 // default (refuse, or use a default value) is used silently instead.
 //
 // The character-device test alone is not enough, and the gap is not academic:
-// /dev/null IS a character device, so `aq <cmd> </dev/null` — the shape every
-// script, CI step and automated tool runs in — reported an interactive
+// /dev/null IS a character device, so `aq <cmd> </dev/null` (the shape every
+// script, CI step and automated tool runs in) reported an interactive
 // terminal. Anything trusting that answer to decide whether a human could
 // object was asking a proxy, and getting the confident wrong answer rather
 // than the safe one. os.SameFile against os.DevNull closes it: the two stats

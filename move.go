@@ -29,7 +29,7 @@ type moveOptions struct {
 // after) then starts it again on a different GPU matching the given filters
 // (see offer_select.go for how that offer is chosen). This replaces "Change
 // machine", which used to leave the source box running because it had no
-// verified exit-save to lean on — Stop's guarantee here is exactly that
+// verified exit-save to lean on: Stop's guarantee here is exactly that
 // verified save. If the new Start fails, the pod is left Stopped with its
 // data intact, never mid-air between two boxes.
 func move(args []string) error {

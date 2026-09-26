@@ -69,7 +69,7 @@ func findSetup(client *api.Client, setupID string) (*api.Setup, error) {
 // setupDisplayName fetches a pod's own name (the wire route is still
 // GET /setups, and there is no single-pod endpoint). `aq job create` uses
 // this to default a job's name to its source pod's own name when none is
-// given. A failed lookup must never abort the caller — it falls back to a
+// given. A failed lookup must never abort the caller: it falls back to a
 // generic label instead.
 func setupDisplayName(client *api.Client, setupID string) string {
 	setup, err := findSetup(client, setupID)
@@ -89,14 +89,14 @@ func setupDisplayName(client *api.Client, setupID string) string {
 // a per-lineage sequence that restarts at 1 for every lineage (comfyui's v1,
 // v2, v3, ...), while the row id is the versions table's global
 // autoincrement key. Treating the typed number as the id directly would
-// address whatever row happens to have that id — almost certainly a
+// address whatever row happens to have that id, almost certainly a
 // different setup, quite possibly a different account's data. So this
 // always resolves through the API instead of ever guessing: list every
-// version row the caller can see (ListAllSetupVersions — GET /setups has no
+// version row the caller can see (ListAllSetupVersions: GET /setups has no
 // nested "latest version"/lineage-name field to start a name-scoped lookup
 // from, see internal/api/setups.go) and pick the one row whose SetupID
 // matches AND whose Version matches what the user typed. No match is a hard
-// error — this never falls back to treating the number as an id.
+// error: this never falls back to treating the number as an id.
 func resolveSetupVersionRowID(client *api.Client, setupID string, version int) (int, error) {
 	setup, err := findSetup(client, setupID)
 	if err != nil {

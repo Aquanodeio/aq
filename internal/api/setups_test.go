@@ -71,7 +71,7 @@ func TestListAllSetupVersionsQueriesWithNoNameFilter(t *testing.T) {
 
 // TestListSetupsDecodesOwnedSetups checks `aq pods` decodes the fields it
 // renders, including deriving Running from attachedDeploymentId and reading
-// stopping — there is no boolean "running" field on the wire. The fixture
+// stopping: there is no boolean "running" field on the wire. The fixture
 // matches the confirmed PodDTO shape (w3-backend, pod-serializer.ts,
 // 2026-09-26): the pre-pod/environment/volume serializeSetup's
 // `leaseDeploymentId`/`sizeBytes`/`mountPath`/`lastSyncAt` are gone from the

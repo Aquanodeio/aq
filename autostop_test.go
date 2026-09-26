@@ -52,7 +52,7 @@ func TestRunAutostopPutsToAutostopPathAndRendersThreeStates(t *testing.T) {
 
 // TestRunAutostopRendersUnsetHonestly checks a nil AutostopEnabled in the
 // response (a surprising server reply) is rendered as unset, never silently
-// treated as off — the three-state signal rule.
+// treated as off: the three-state signal rule.
 func TestRunAutostopRendersUnsetHonestly(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {

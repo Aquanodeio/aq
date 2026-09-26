@@ -12,7 +12,7 @@ import (
 // This command used to also save a MANAGED pod's current state into a named
 // lineage (POST /setups/:id/snapshot). That mechanism is gone under the
 // pod/environment/volume model: a pod's environment and volume are saved
-// automatically, silently, on every Stop (see stop.go) — there is no
+// automatically, silently, on every Stop (see stop.go). There is no
 // standalone "save" button or verb for a managed pod any more (spec: "no
 // save button anywhere in the everyday flow"). `aq save` therefore survives
 // ONLY for a detached (BYO-bucket, no Aquanode account) box, where ogre's own

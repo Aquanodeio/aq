@@ -20,10 +20,10 @@ type stopOptions struct {
 // stop parses `aq stop <pod>` and wires the real environment into runStop.
 //
 // Stop saves the pod's environment and volume (both confirmed) and then
-// releases its box — always, with no flag to skip it: this is the one thing
+// releases its box, always, with no flag to skip it: this is the one thing
 // that changed most in the pod/environment/volume model. The pod keeps its
 // config and full history; bring it back with `aq start`. There is no more
-// separate "pause" verb, and no "resume" — Stop/Start replace both, and
+// separate "pause" verb, and no "resume": Stop/Start replace both, and
 // unlike the old pause/resume pair, Start never has to target the SAME
 // machine or a specific deployment id.
 func stop(args []string) error {

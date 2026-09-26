@@ -17,7 +17,7 @@ import (
 
 // ResourceSpec is the `resource` object inside an OfferSelection, mirroring
 // the orchestrator's own ResourceSchema (deployment.schemas.ts) byte for
-// byte — the pod/environment/volume plan's REST amendment (2026-09-26)
+// byte: the pod/environment/volume plan's REST amendment (2026-09-26)
 // states this is the SAME shape POST /deployments/deploy already takes, not
 // a new one invented for pods. CPU/Memory/Storage are REQUIRED on the wire
 // (no omitempty): the schema has no default for them, and a caller must
@@ -26,7 +26,7 @@ import (
 //
 // DesiredInstanceID is the SERVER's own name for what a marketplace offer's
 // own `address` field already is (console: `desiredInstanceId:
-// chosenOffer.address` — aquanode-backend gotcha 1: "format:
+// chosenOffer.address`, aquanode-backend gotcha 1: "format:
 // <provider_address>/<preset_id>"). It is `.optional()` on the zod schema
 // but effectively REQUIRED by createDeployment (400s without it), so a
 // caller building this from a real offer must always send it.
@@ -54,7 +54,7 @@ type ProviderSpec struct {
 // The caller (aq's start.go/move.go) is responsible for querying the
 // marketplace, picking the cheapest offer matching its own filters, and
 // building this from it. Image, ports, startup script, and template are NOT
-// here — they come from the pod's own config columns (D10).
+// here: they come from the pod's own config columns (D10).
 type OfferSelection struct {
 	Resource ResourceSpec `json:"resource"`
 	Provider ProviderSpec `json:"provider"`
@@ -137,7 +137,7 @@ func (c *Client) StartSetup(setupID string, req StartSetupRequest) (*Setup, erro
 
 // StopSetup saves the pod (environment capture and volume sync, both
 // confirmed) and releases its box. The pod's config and history are
-// untouched — Stop never deletes anything; see StartSetup for bringing it
+// untouched: Stop never deletes anything; see StartSetup for bringing it
 // back. A failed save keeps the box Running with the error reported on the
 // pod, rather than releasing a box whose save just failed.
 func (c *Client) StopSetup(setupID string) (*Setup, error) {
@@ -156,8 +156,8 @@ type MoveSetupRequest struct {
 
 // MoveSetup stops the pod (both captures confirmed, box released only after)
 // then starts it again on the given offer. A failed Start after the Stop
-// leaves the pod Stopped with its data intact — see the pod/environment/
-// volume plan's mechanism 7.
+// leaves the pod Stopped with its data intact (see the pod/environment/
+// volume plan's mechanism 7).
 func (c *Client) MoveSetup(setupID string, req MoveSetupRequest) (*Setup, error) {
 	var out Setup
 	path := "/setups/" + url.PathEscape(setupID) + "/move"
@@ -168,7 +168,7 @@ func (c *Client) MoveSetup(setupID string, req MoveSetupRequest) (*Setup, error)
 }
 
 // SetupAutostopRequest is the body of PUT /setups/:id/autostop. Enabled is
-// three-state on the wire (enabled:boolean|null — null clears back to the
+// three-state on the wire (enabled:boolean|null, null clears back to the
 // platform default). `aq autostop` itself only ever sends true or false
 // today (there is no "unset" verb yet, matching the old `aq autopause`'s own
 // limitation), but the pointer keeps the client honest about what the wire
@@ -180,7 +180,7 @@ type SetupAutostopRequest struct {
 // SetSetupAutostop replaces the old SetSetupAutopause: same mechanism (a
 // per-pod stop-when-idle preference layered underneath `aq idle`'s
 // per-deployment thresholds), renamed route and field per the
-// pod/environment/volume plan's vocabulary sweep — "pause" is retired
+// pod/environment/volume plan's vocabulary sweep: "pause" is retired
 // everywhere except environment versions (D15).
 func (c *Client) SetSetupAutostop(setupID string, enabled bool) (*Setup, error) {
 	var out Setup

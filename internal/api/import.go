@@ -175,8 +175,8 @@ type ImportObservation struct {
 }
 
 // ImportCredentials are scoped, time-limited write credentials for the new
-// volume's storage prefix — minted by /volumes/import/start and re-mintable
-// via /volumes/import/credentials for an upload that outlives one minting.
+// volume's storage prefix (minted by /volumes/import/start and re-mintable
+// via /volumes/import/credentials for an upload that outlives one minting).
 type ImportCredentials struct {
 	Endpoint        string `json:"endpoint"`
 	Bucket          string `json:"bucket"`
@@ -186,7 +186,7 @@ type ImportCredentials struct {
 }
 
 // ImportStartRequest is the body of POST /volumes/import/start. Both fields
-// are optional — the orchestrator names the volume and picks a mount path
+// are optional: the orchestrator names the volume and picks a mount path
 // when they're empty.
 type ImportStartRequest struct {
 	Name      string `json:"name,omitempty"`
@@ -232,7 +232,7 @@ func (c *Client) StartImport(req ImportStartRequest) (*ImportStartResult, error)
 }
 
 // ImportCredentialsRefreshRequest is the body of POST
-// /volumes/import/credentials — re-mints EVERYTHING `aq import --resume`
+// /volumes/import/credentials: re-mints EVERYTHING `aq import --resume`
 // needs for a still-pending import, keyed by volume id alone.
 type ImportCredentialsRefreshRequest struct {
 	VolumeID string `json:"volume_id"`
@@ -240,9 +240,9 @@ type ImportCredentialsRefreshRequest struct {
 
 // ImportCredentialsRefreshResult is the data returned by POST
 // /volumes/import/credentials. This is the WHOLE point of the route: it
-// returns everything --resume needs — StoragePrefix/ResticBackupID/
+// returns everything --resume needs: StoragePrefix/ResticBackupID/
 // ResticPassword alongside a freshly-minted ImportToken and scoped write
-// Credentials — so aq never has to persist a single one of these locally.
+// Credentials, so aq never has to persist a single one of these locally.
 // ImportToken here SUPERSEDES any token from a prior /start or /credentials
 // call for this volume; using a remembered one for /complete will be
 // refused.
@@ -285,7 +285,7 @@ type ImportCompleteRequest struct {
 
 // ImportCompleteResult is the data returned by POST /volumes/import/complete.
 // There is no recipe/version here any more (that was the old Setup-shaped
-// flow's synthesized launch config) — a Volume carries /workspace data only,
+// flow's synthesized launch config). A Volume carries /workspace data only,
 // nothing installable, so nothing is synthesized on completion.
 type ImportCompleteResult struct {
 	VolumeID string   `json:"volume_id"`
@@ -295,7 +295,7 @@ type ImportCompleteResult struct {
 // CompleteImport registers the capture as the volume's first history point,
 // consuming the single-use import token. The token is deleted server-side on
 // read, so a retried call after a transport error (rather than a genuine
-// second import) will be refused — that's a real gap in this v1 client,
+// second import) will be refused. That's a real gap in this v1 client,
 // noted rather than papered over.
 func (c *Client) CompleteImport(req ImportCompleteRequest) (*ImportCompleteResult, error) {
 	var out ImportCompleteResult

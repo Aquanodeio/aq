@@ -10,7 +10,7 @@ import (
 
 // TestStartSetupPostsOfferSelectionNested checks POST /setups/:id/start sends
 // a single already-chosen offer NESTED under "offer" as {resource, provider,
-// sshKeyId} — the pod/environment/volume plan's wire contract (section 2,
+// sshKeyId}: the pod/environment/volume plan's wire contract (section 2,
 // REST amendments): image/ports/startup script are NOT here, they come from
 // the pod's own config columns, and the orchestrator does no server-side
 // matching the way UpRequest/DeployRequest's flattened gpuModel/maxPrice do.
@@ -72,8 +72,8 @@ func TestStartSetupPostsOfferSelectionNested(t *testing.T) {
 }
 
 // TestStartSetupOmitsUnsetResourceFields checks every optional ResourceSpec
-// field is omitempty on the wire — "no opinion" must be an ABSENT key, never
-// a zero value the orchestrator could misread as "gpuUnits: 0 GPUs" — while
+// field is omitempty on the wire: "no opinion" must be an ABSENT key, never
+// a zero value the orchestrator could misread as "gpuUnits: 0 GPUs", while
 // the required fields (cpu/memory/storage, which have no server-side
 // default) are always present even when the caller has nothing better than
 // the box defaults.
@@ -116,7 +116,7 @@ func TestStartSetupOmitsUnsetResourceFields(t *testing.T) {
 }
 
 // TestStopSetupPostsToStopPath checks POST /setups/:id/stop sends no body
-// fields the orchestrator would need to interpret — Stop takes no filter,
+// fields the orchestrator would need to interpret: Stop takes no filter,
 // unlike Start/Move.
 func TestStopSetupPostsToStopPath(t *testing.T) {
 	var gotPath string
@@ -175,7 +175,7 @@ func TestMoveSetupPostsOfferSelectionNested(t *testing.T) {
 }
 
 // TestSetSetupAutostopPutsToAutostopPath checks PUT /setups/:id/autostop
-// (not the old /autopause) with a boolean, non-null Enabled — the CLI itself
+// (not the old /autopause) with a boolean, non-null Enabled: the CLI itself
 // never sends null, but the field stays a pointer end to end so a future
 // verb can.
 func TestSetSetupAutostopPutsToAutostopPath(t *testing.T) {

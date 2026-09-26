@@ -9,7 +9,7 @@ import (
 )
 
 // TestKeepSetupEnvironmentPostsName checks POST /setups/:id/environment/keep
-// sends {name} and decodes {environmentId} — Keep only names the pod's
+// sends {name} and decodes {environmentId}: Keep only names the pod's
 // current environment, it mints no version.
 func TestKeepSetupEnvironmentPostsName(t *testing.T) {
 	var gotPath string
@@ -63,7 +63,7 @@ func TestShareSetupEnvironmentOmitsVersionIDWhenAbsent(t *testing.T) {
 }
 
 // TestShareEnvironmentByIDRequiresVersionOnTheWire checks POST
-// /environments/:id/share always sends versionId (never omitempty) — unlike
+// /environments/:id/share always sends versionId (never omitempty), unlike
 // the pod-scoped route, a named environment has no single "current pod" to
 // default the latest version from, so the caller must always supply one.
 func TestShareEnvironmentByIDRequiresVersionOnTheWire(t *testing.T) {
@@ -89,7 +89,7 @@ func TestShareEnvironmentByIDRequiresVersionOnTheWire(t *testing.T) {
 }
 
 // TestGetShareStatusDecodesThreeStates checks GET /shares/:shareId decodes
-// all three states, including a non-nil Error only on "failed" — a share
+// all three states, including a non-nil Error only on "failed". A share
 // link must never be handed out while State is anything but "ready".
 func TestGetShareStatusDecodesThreeStates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +170,7 @@ func TestGetShareStatusDecodesAPreparingPublishWithAVersionAlready(t *testing.T)
 }
 
 // TestListEnvironmentsDecodesThreeGroups checks GET /environments decodes
-// builtin/yours/shared as three DISTINCT groups — the New pod picker's whole
+// builtin/yours/shared as three DISTINCT groups: the New pod picker's whole
 // vocabulary, and a caller that merges them can no longer tell "ours" from
 // "someone else's".
 func TestListEnvironmentsDecodesThreeGroups(t *testing.T) {

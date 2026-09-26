@@ -83,7 +83,7 @@ func formatPodEnvironment(e api.SetupEnvironmentSummary) string {
 // printPodStorageSummary renders a pod's Environment/Volume state after
 // Start/Stop/Move, matching the console pod-detail line: environment name,
 // volume name, size, and its three-state save status. Volume is nil for a
-// pod running with no volume attached (D4: a bare pod is allowed) — printed
+// pod running with no volume attached (D4: a bare pod is allowed), printed
 // as nothing, never a blank/zeroed row.
 func printPodStorageSummary(out io.Writer, s api.Setup) {
 	fmt.Fprintf(out, "  Environment: %s\n", orDash(s.Environment.Name))

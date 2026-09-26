@@ -127,7 +127,7 @@ func (c *Client) GetSetupVersion(versionRowID int) (*SetupVersion, error) {
 
 // SetupEnvironmentSummary mirrors the `environment` object the
 // pod/environment/volume plan's wire contract (section 2) nests on GET
-// /setups and GET /setups/:id. It is always present (never null) — every pod
+// /setups and GET /setups/:id. It is always present (never null): every pod
 // has a working environment even before anything is ever Kept or Shared out
 // of it. Version is nullable on the wire (int|null): the working environment
 // has no minted EnvironmentVersion until the pod's environment is Kept or
@@ -174,7 +174,7 @@ type SetupRestoreProgress struct {
 // ID is a UUID string (`model Setup { id String @id @default(uuid()) ...
 // }`) — never the numeric Deployment.ID from control.go, even though a
 // running setup has one associated via AttachedDeploymentID. There is also
-// no boolean "running" field on the wire — Running derives it from
+// no boolean "running" field on the wire: Running derives it from
 // AttachedDeploymentID, which is only non-nil while a live deployment is
 // attached. There is likewise no "latest version" field nested here at all,
 // see ListAllSetupVersions.

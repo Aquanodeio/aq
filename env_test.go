@@ -212,8 +212,8 @@ func TestRunEnvLsWithPodTargetListsThatPodsVersions(t *testing.T) {
 }
 
 // TestRunEnvLsFallsBackToEnvironmentWhenNoPodMatches checks a target that
-// doesn't match any pod falls back to resolving it as a named environment —
-// read-only, so a wrong first guess costs nothing.
+// doesn't match any pod falls back to resolving it as a named environment
+// (read-only, so a wrong first guess costs nothing).
 func TestRunEnvLsFallsBackToEnvironmentWhenNoPodMatches(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {

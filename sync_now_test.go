@@ -7,7 +7,7 @@ import (
 
 // TestSyncNowRefusesAManagedTarget pins the post-migration shape of
 // `aq sync-now`: it used to also force a managed pod's sync tick (POST
-// /setups/:id/sync, now gone — a running pod's volume ticks itself, see the
+// /setups/:id/sync, now gone: a running pod's volume ticks itself, see the
 // pod/environment/volume plan's periodic save mechanism), and must now
 // refuse a non-host target rather than silently doing nothing.
 func TestSyncNowRefusesAManagedTarget(t *testing.T) {
