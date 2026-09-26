@@ -103,5 +103,8 @@ func runStart(opts startOptions) error {
 
 	fmt.Fprintf(out, "✓ Starting %s.\n", res.Name)
 	printPodStorageSummary(out, *res)
+	if res.DeploymentID != nil {
+		fmt.Fprintf(out, "\nCheck its status with:\n    aq status %d\n", *res.DeploymentID)
+	}
 	return nil
 }

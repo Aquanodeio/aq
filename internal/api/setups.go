@@ -222,12 +222,18 @@ type Setup struct {
 	// column). Renamed from AutopauseEnabled/autopauseEnabled per the
 	// pod/environment/volume plan's vocabulary sweep (PUT
 	// /setups/:id/autostop replaces PUT /setups/:id/autopause; no alias).
-	AutostopEnabled   *bool          `json:"autostopEnabled"`
-	SizeBytes         setupSizeBytes `json:"sizeBytes"`
-	LastSyncAt        string         `json:"lastSyncAt"`
-	LeaseDeploymentID *int           `json:"leaseDeploymentId"`
-	CreatedAt         string         `json:"createdAt"`
-	UpdatedAt         string         `json:"updatedAt"`
+	AutostopEnabled *bool          `json:"autostopEnabled"`
+	SizeBytes       setupSizeBytes `json:"sizeBytes"`
+	LastSyncAt      string         `json:"lastSyncAt"`
+	// DeploymentID is populated only on POST /setups/:id/start's response
+	// (W3, 2026-09-26): the freshly-rented deployment id, so the caller can
+	// poll `aq status <id>` while the box restores. Absent on every other
+	// response that decodes a Setup (Stop/Move return the pod with no such
+	// field) — nil there, never a stale or guessed id.
+	DeploymentID      *int   `json:"deploymentId,omitempty"`
+	LeaseDeploymentID *int   `json:"leaseDeploymentId"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
 }
 
 // Running reports whether a deployment currently holds this setup's lease.

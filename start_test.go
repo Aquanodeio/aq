@@ -110,6 +110,40 @@ func TestRunStartResolvesPodByNameAndSendsOfferSelection(t *testing.T) {
 			t.Errorf("output missing %q; got:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "aq status") {
+		t.Errorf("must not print a status hint when the response carries no deploymentId; got:\n%s", got)
+	}
+}
+
+// TestRunStartPrintsAStatusHintWhenDeploymentIDIsPresent checks the
+// deploymentId Start's response adds (W3, 2026-09-26 amendment) prints a
+// pollable `aq status <id>` hint, and TestRunStartResolvesPodByNameAndSendsOfferSelection's
+// fixture (no deploymentId key) confirms the hint is absent, not a zero id,
+// when the server omits it.
+func TestRunStartPrintsAStatusHintWhenDeploymentIDIsPresent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "pod-1", "name": "trainer"}})
+	})
+	stubMarketplaceOffer(mux, "RTX 4090", "runpod")
+	stubSSHKeys(mux)
+	mux.HandleFunc("/setups/pod-1/start", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{
+			"id": "pod-1", "name": "trainer", "deploymentId": 4242,
+			"environment": map[string]any{"id": "e1", "name": "pytorch-dev", "version": 3, "kind": "kept"},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out bytes.Buffer
+	if err := runStart(startOptions{cred: cred, target: "trainer", out: &out}); err != nil {
+		t.Fatalf("runStart: %v", err)
+	}
+	if !strings.Contains(out.String(), "aq status 4242") {
+		t.Errorf("expected a pollable status hint naming deployment 4242; got:\n%s", out.String())
+	}
 }
 
 // TestRunStartOmitsVolumeLineForABarePod checks a pod with no volume prints
