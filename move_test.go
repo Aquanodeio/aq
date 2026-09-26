@@ -11,14 +11,17 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// TestRunMovePostsOfferFilterAndReportsTheNewPod checks `aq move` resolves
-// the pod, hits POST /setups/:id/move with the GPU filters nested under
-// "offer", and prints the resulting environment/volume summary.
-func TestRunMovePostsOfferFilterAndReportsTheNewPod(t *testing.T) {
+// TestRunMovePostsOfferSelectionAndReportsTheNewPod checks `aq move` resolves
+// the pod, builds an already-chosen offer from the marketplace (matching
+// --provider), and hits POST /setups/:id/move with it nested under "offer",
+// then prints the resulting environment/volume summary.
+func TestRunMovePostsOfferSelectionAndReportsTheNewPod(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "pod-1", "name": "trainer"}})
 	})
+	stubMarketplaceOffer(mux, "RTX 4090", "runpod")
+	stubSSHKeys(mux)
 	var gotBody map[string]any
 	mux.HandleFunc("/setups/pod-1/move", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -38,8 +41,12 @@ func TestRunMovePostsOfferFilterAndReportsTheNewPod(t *testing.T) {
 		t.Fatalf("runMove: %v", err)
 	}
 	offer, ok := gotBody["offer"].(map[string]any)
-	if !ok || offer["provider"] != "runpod" {
-		t.Errorf("offer body = %#v", gotBody)
+	if !ok {
+		t.Fatalf("body has no nested \"offer\" object: %#v", gotBody)
+	}
+	provider, ok := offer["provider"].(map[string]any)
+	if !ok || provider["name"] != "runpod" {
+		t.Errorf("offer.provider = %+v", provider)
 	}
 	if !strings.Contains(out.String(), "Moved trainer") {
 		t.Errorf("expected a move confirmation; got:\n%s", out.String())
@@ -48,13 +55,15 @@ func TestRunMovePostsOfferFilterAndReportsTheNewPod(t *testing.T) {
 
 // TestRunMoveSurfacesAFailedStartWithoutLosingData checks a failed Move
 // (Stop succeeded, the new Start failed) surfaces an error that reassures
-// the caller their data is intact — mechanism 7 of the pod/environment/
+// the caller their data is intact, mechanism 7 of the pod/environment/
 // volume plan.
 func TestRunMoveSurfacesAFailedStartWithoutLosingData(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "pod-1", "name": "trainer"}})
 	})
+	stubMarketplaceOffer(mux, "RTX 4090", "runpod")
+	stubSSHKeys(mux)
 	mux.HandleFunc("/setups/pod-1/move", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "no matching offer available"})

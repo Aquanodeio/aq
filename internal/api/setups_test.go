@@ -8,9 +8,9 @@ import (
 )
 
 // TestListSetupVersionsQueriesByName checks GET /setups/versions?name=...
-// decodes id/version/setup_id — the three fields `aq share` needs to resolve
-// a (setup, version-number) pair to the version's global row id without ever
-// guessing.
+// decodes id/version/setup_id, the three fields `aq job point` needs to
+// resolve a (setup, version-number) pair to the version's global row id
+// without ever guessing.
 func TestListSetupVersionsQueriesByName(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,9 +42,9 @@ func TestListSetupVersionsQueriesByName(t *testing.T) {
 }
 
 // TestListAllSetupVersionsQueriesWithNoNameFilter checks GET /setups/versions
-// with no `name` query param — the path `aq setups`/`aq share` use to recover
-// a setup's latest/named version, since GET /setups carries no such field
-// nested on the row itself (see the Setup doc comment in setups.go).
+// with no `name` query param, the path `aq pods`/`aq job create` use to
+// recover a setup's latest/named version, since GET /setups carries no such
+// field nested on the row itself (see the Setup doc comment in setups.go).
 func TestListAllSetupVersionsQueriesWithNoNameFilter(t *testing.T) {
 	var gotURL string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,38 +66,6 @@ func TestListAllSetupVersionsQueriesWithNoNameFilter(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("got %d versions, want 2", len(got))
-	}
-}
-
-// TestShareSetupVersionPostsToVersionScopedPath checks `aq share` hits the
-// version-scoped route by the version's global ROW id, not a setup-scoped
-// one and not the per-lineage version number — a share link addresses one
-// immutable version, never a moving lineage head. It also pins the real
-// server contract: createVersionShare (snapshot-version.service.ts) returns
-// a bare {token,name,expires_at} — never a url — and ShareSetupVersion must
-// build the public /launch/<token> link itself from Token.
-func TestShareSetupVersionPostsToVersionScopedPath(t *testing.T) {
-	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"token":"abc123","name":null,"expires_at":null}}`)
-	}))
-	defer srv.Close()
-
-	t.Setenv("AQ_CONSOLE_URL", "https://console.aquanode.io")
-	got, err := NewAuthed(srv.URL, "tok", "t").ShareSetupVersion(9)
-	if err != nil {
-		t.Fatalf("ShareSetupVersion: %v", err)
-	}
-	if gotPath != "/setups/versions/9/share" {
-		t.Errorf("path = %q, want /setups/versions/9/share", gotPath)
-	}
-	if got.Token != "abc123" {
-		t.Errorf("Token = %q, want abc123", got.Token)
-	}
-	if got.URL != "https://console.aquanode.io/launch/abc123" {
-		t.Errorf("URL = %q", got.URL)
 	}
 }
 

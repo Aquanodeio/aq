@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-// TestStartSetupPostsOfferFilterNested checks POST /setups/:id/start sends
-// the GPU filter fields NESTED under "offer" (not flattened like
-// UpRequest/DeployRequest) — that nesting is the one thing the
-// pod/environment/volume plan's wire contract states explicitly for this
-// route, and a caller that flattens them silently sends an offer the
-// orchestrator never sees.
-func TestStartSetupPostsOfferFilterNested(t *testing.T) {
+// TestStartSetupPostsOfferSelectionNested checks POST /setups/:id/start sends
+// a single already-chosen offer NESTED under "offer" as {resource, provider,
+// sshKeyId} — the pod/environment/volume plan's wire contract (section 2,
+// REST amendments): image/ports/startup script are NOT here, they come from
+// the pod's own config columns, and the orchestrator does no server-side
+// matching the way UpRequest/DeployRequest's flattened gpuModel/maxPrice do.
+func TestStartSetupPostsOfferSelectionNested(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +26,18 @@ func TestStartSetupPostsOfferFilterNested(t *testing.T) {
 	defer srv.Close()
 
 	got, err := NewAuthed(srv.URL, "tok", "t").StartSetup("11111111-1111-1111-1111-111111111111", StartSetupRequest{
-		Offer: OfferFilter{GPUModel: "RTX 4090", MaxPrice: 1.5, Provider: "massecompute", GPUCount: 2},
+		Offer: OfferSelection{
+			Resource: ResourceSpec{
+				CPU:               8,
+				Memory:            "32Gi",
+				Storage:           "200Gi",
+				GPUUnits:          2,
+				GPUModel:          "RTX 4090",
+				DesiredInstanceID: "massecompute/abc123",
+			},
+			Provider: ProviderSpec{Name: "massecompute"},
+			SSHKeyID: "key-1",
+		},
 	})
 	if err != nil {
 		t.Fatalf("StartSetup: %v", err)
@@ -38,8 +49,16 @@ func TestStartSetupPostsOfferFilterNested(t *testing.T) {
 	if !ok {
 		t.Fatalf("body has no nested \"offer\" object: %#v", gotBody)
 	}
-	if offer["gpuModel"] != "RTX 4090" || offer["provider"] != "massecompute" {
-		t.Errorf("offer body = %+v", offer)
+	resource, ok := offer["resource"].(map[string]any)
+	if !ok || resource["gpuModel"] != "RTX 4090" {
+		t.Errorf("offer.resource = %+v", resource)
+	}
+	provider, ok := offer["provider"].(map[string]any)
+	if !ok || provider["name"] != "massecompute" {
+		t.Errorf("offer.provider = %+v", provider)
+	}
+	if offer["sshKeyId"] != "key-1" {
+		t.Errorf("offer.sshKeyId = %v, want key-1", offer["sshKeyId"])
 	}
 	if got.Name != "trainer" {
 		t.Errorf("result name = %q, want trainer", got.Name)
@@ -52,11 +71,13 @@ func TestStartSetupPostsOfferFilterNested(t *testing.T) {
 	}
 }
 
-// TestStartSetupOmitsUnsetOfferFields checks every OfferFilter field is
-// omitempty on the wire — "no opinion" must be an ABSENT key, never a zero
-// value the orchestrator could misread as "gpuCount: 0 GPUs" or
-// "maxPrice: $0/hr".
-func TestStartSetupOmitsUnsetOfferFields(t *testing.T) {
+// TestStartSetupOmitsUnsetResourceFields checks every optional ResourceSpec
+// field is omitempty on the wire — "no opinion" must be an ABSENT key, never
+// a zero value the orchestrator could misread as "gpuUnits: 0 GPUs" — while
+// the required fields (cpu/memory/storage, which have no server-side
+// default) are always present even when the caller has nothing better than
+// the box defaults.
+func TestStartSetupOmitsUnsetResourceFields(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -65,16 +86,31 @@ func TestStartSetupOmitsUnsetOfferFields(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := NewAuthed(srv.URL, "tok", "t").StartSetup("x", StartSetupRequest{}); err != nil {
+	if _, err := NewAuthed(srv.URL, "tok", "t").StartSetup("x", StartSetupRequest{
+		Offer: OfferSelection{
+			Resource: ResourceSpec{CPU: 4, Memory: "16Gi", Storage: "100Gi"},
+			Provider: ProviderSpec{Name: "runpod"},
+			SSHKeyID: "key-1",
+		},
+	}); err != nil {
 		t.Fatalf("StartSetup: %v", err)
 	}
 	offer, ok := gotBody["offer"].(map[string]any)
 	if !ok {
 		t.Fatalf("body has no \"offer\" object: %#v", gotBody)
 	}
-	for _, key := range []string{"gpuModel", "maxPrice", "provider", "gpuCount"} {
-		if _, present := offer[key]; present {
-			t.Errorf("offer.%s must be ABSENT when unset, got it present: %+v", key, offer)
+	resource, ok := offer["resource"].(map[string]any)
+	if !ok {
+		t.Fatalf("offer has no \"resource\" object: %#v", offer)
+	}
+	for _, key := range []string{"gpuUnits", "gpuModel", "desiredInstanceId", "region", "location_id"} {
+		if _, present := resource[key]; present {
+			t.Errorf("resource.%s must be ABSENT when unset, got it present: %+v", key, resource)
+		}
+	}
+	for _, key := range []string{"cpu", "memory", "storage"} {
+		if _, present := resource[key]; !present {
+			t.Errorf("resource.%s is required (no omitempty) and must always be present: %+v", key, resource)
 		}
 	}
 }
@@ -103,9 +139,9 @@ func TestStopSetupPostsToStopPath(t *testing.T) {
 	}
 }
 
-// TestMoveSetupPostsOfferFilterNested mirrors TestStartSetupPostsOfferFilterNested
-// for POST /setups/:id/move.
-func TestMoveSetupPostsOfferFilterNested(t *testing.T) {
+// TestMoveSetupPostsOfferSelectionNested mirrors
+// TestStartSetupPostsOfferSelectionNested for POST /setups/:id/move.
+func TestMoveSetupPostsOfferSelectionNested(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -116,15 +152,25 @@ func TestMoveSetupPostsOfferFilterNested(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := NewAuthed(srv.URL, "tok", "t").MoveSetup("x", MoveSetupRequest{Offer: OfferFilter{Provider: "runpod"}}); err != nil {
+	if _, err := NewAuthed(srv.URL, "tok", "t").MoveSetup("x", MoveSetupRequest{
+		Offer: OfferSelection{
+			Resource: ResourceSpec{CPU: 4, Memory: "16Gi", Storage: "100Gi"},
+			Provider: ProviderSpec{Name: "runpod"},
+			SSHKeyID: "key-1",
+		},
+	}); err != nil {
 		t.Fatalf("MoveSetup: %v", err)
 	}
 	if gotPath != "/setups/x/move" {
 		t.Errorf("path = %q, want /setups/x/move", gotPath)
 	}
 	offer, ok := gotBody["offer"].(map[string]any)
-	if !ok || offer["provider"] != "runpod" {
-		t.Errorf("body = %#v, want offer.provider=runpod", gotBody)
+	if !ok {
+		t.Fatalf("body has no nested \"offer\" object: %#v", gotBody)
+	}
+	provider, ok := offer["provider"].(map[string]any)
+	if !ok || provider["name"] != "runpod" {
+		t.Errorf("body = %#v, want offer.provider.name=runpod", gotBody)
 	}
 }
 

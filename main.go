@@ -120,10 +120,6 @@ func main() {
 		run(status(args))
 	case "save":
 		run(snapshot(args))
-	case "share":
-		run(share(args))
-	case "fork":
-		run(fork(args))
 	case "sync-now":
 		run(syncNow(args))
 	case "start":
@@ -231,8 +227,6 @@ Commands:
   ls            List your deployments: what is running and what it costs
   status        Show a pod's status, HTTPS URL, and credentials
   save          Detached only: capture a BYO-bucket box into its own remote
-  share         Get a link to one saved version of a pod (legacy lineages)
-  fork          Turn a share link into a new pod in your own library
   sync-now      Detached only: force a BYO-bucket box's sync tick right now
   start         Start a Stopped pod on the cheapest matching GPU
   stop          Save a pod's environment and volume, then release its machine
@@ -361,8 +355,8 @@ host / attach / release (boxes we never provisioned):
     aq up host:lease-a               (bring services up in place; rents nothing)
 
   ATTACHED: your box, our control plane. The box becomes a deployment we never
-  provisioned and gains the console, version history, fork/share, teams, metrics
-  and jobs.
+  provisioned and gains the console, environment/volume history, sharing, teams,
+  metrics and jobs.
 
   aq attach <alias>          Adopt a registered box (needs a login)
   aq attach <alias> --dry-run
@@ -403,8 +397,8 @@ host / attach / release (boxes we never provisioned):
 
   Detached does: capture, restore, pods, run/logs/ssh/sync, ogre up
   templates, BYO bucket.
-  Attached adds: teams and RBAC, share/fork, the console, jobs and
-  aq job run, cross-provider burst, the marketplace.
+  Attached adds: teams and RBAC, environment sharing ("aq env share"), the
+  console, jobs and aq job run, cross-provider burst, the marketplace.
   Neither does: splitting one box across several independent pods.
 
 ssh:
@@ -640,7 +634,7 @@ secret:
   aq secret rm <name|id>      Delete a secret. A job still referencing it
                               starts failing that reference at its next run.
 
-status / save / share / fork / sync-now / start / stop / move / autostop /
+status / save / sync-now / start / stop / move / autostop /
 pods / down:
   A pod is a GPU plus its config (name, GPU choice, ports, which Environment,
   which Volume). It has no versions of its own: Start / Stop / Move / Delete
@@ -653,18 +647,8 @@ pods / down:
   aq save host:<alias>       Detached only: capture a BYO-bucket box into its
                              own configured remote (ogre's own snapshot verb).
                              A managed pod saves its environment and volume
-                             automatically on every "aq stop" instead — there
+                             automatically on every "aq stop" instead: there
                              is no save button or lineage for one any more.
-  aq share <name|id> <ver>   Print a link to ONE immutable legacy saved
-                             version from before this pod's environment/volume
-                             split (e.g. "aq share comfyui 3"). New sharing
-                             goes through "aq env share" instead.
-  aq fork <token|link>       Turn a link from "aq share" (someone else's,
-                             or your own team's own share of a team you've
-                             since left) into a brand new pod in your own
-                             library. Registers ownership only. It does
-                             not itself boot any hardware.
-                             (--name <name>, default: derived from the source)
   aq sync-now host:<alias>   Detached only: force a BYO-bucket box's sync tick
                              right now instead of waiting for its own
                              schedule; it runs no scheduler of its own. A
@@ -741,8 +725,6 @@ volume:
 
 Environment:
   AQ_API_URL      Aquanode API base (default https://server.aquanode.io/api/v1)
-  AQ_CONSOLE_URL  Aquanode console base "aq share"/"aq env share" links
-                  point at (default https://console.aquanode.io)
   AQ_CONFIG_DIR   Credential directory (default <user-config-dir>/aq)
   AQ_SSH_KEY      Private key to use for box access (default: your ~/.ssh key,
                   else aq's managed ~/.ssh/aquanode_ed25519)

@@ -26,15 +26,16 @@ type moveOptions struct {
 // wires the real environment into runMove.
 //
 // Move stops a running pod (both captures confirmed, box released only
-// after) then starts it again on a different GPU matching the given filters.
-// This replaces "Change machine", which used to leave the source box running
-// because it had no verified exit-save to lean on — Stop's guarantee here is
-// exactly that verified save. If the new Start fails, the pod is left
-// Stopped with its data intact, never mid-air between two boxes.
+// after) then starts it again on a different GPU matching the given filters
+// (see offer_select.go for how that offer is chosen). This replaces "Change
+// machine", which used to leave the source box running because it had no
+// verified exit-save to lean on — Stop's guarantee here is exactly that
+// verified save. If the new Start fails, the pod is left Stopped with its
+// data intact, never mid-air between two boxes.
 func move(args []string) error {
 	fs := flag.NewFlagSet("move", flag.ContinueOnError)
 	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
-	maxPrice := fs.Float64("max-price", 0, "Only move onto GPUs at or below this hourly price")
+	maxPrice := fs.Float64("max-price", 0, "Only move onto GPUs at or below this hourly price (the whole offer's price, not per-GPU)")
 	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
 	positional, err := parseInterspersed(fs, args)
@@ -65,8 +66,8 @@ func move(args []string) error {
 	})
 }
 
-// runMove resolves the target to a pod id and moves it to a new offer
-// matching the given filters.
+// runMove resolves the target to a pod id, picks the cheapest offer matching
+// the given filters, and moves the pod onto it.
 func runMove(opts moveOptions) error {
 	out := opts.out
 	if out == nil {
@@ -79,14 +80,17 @@ func runMove(opts moveOptions) error {
 		return err
 	}
 
-	res, err := client.MoveSetup(setupID, api.MoveSetupRequest{
-		Offer: api.OfferFilter{
-			GPUModel: opts.gpuModel,
-			MaxPrice: opts.maxPrice,
-			Provider: opts.provider,
-			GPUCount: opts.gpuCount,
-		},
+	offer, err := buildOfferSelection(client, out, offerSelectFilter{
+		gpuModel: opts.gpuModel,
+		gpuCount: opts.gpuCount,
+		maxPrice: opts.maxPrice,
+		provider: opts.provider,
 	})
+	if err != nil {
+		return err
+	}
+
+	res, err := client.MoveSetup(setupID, api.MoveSetupRequest{Offer: offer})
 	if err != nil {
 		return fmt.Errorf("could not move %q: its data is safe on whatever box it was last Stopped on: %w", opts.target, err)
 	}

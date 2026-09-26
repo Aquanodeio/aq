@@ -4,16 +4,18 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-
-	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// Setup-lineage endpoints backing `aq save`, `aq share`, `aq fork`,
-// `aq autopause`, `aq force-detach`, `aq sync-now`,
-// `aq edit-version`, and `aq setups`. A "setup" is its own object, distinct
-// from the deployment that may currently hold its compute lease (Deployment,
-// in control.go) — never pass a deployment id where a setup id belongs, or
-// vice versa.
+// Setup-lineage endpoints backing `aq pods`, `aq job point`, and (for the
+// still-live SnapshotVersion rows Jobs read, D11 of the pod/environment/
+// volume plan) `aq job create`. A "setup" is its own object, distinct from
+// the deployment that may currently hold its compute lease (Deployment, in
+// control.go), never pass a deployment id where a setup id belongs, or vice
+// versa. Everything else the "Setup-lineage" name once described (`aq save`,
+// `aq share`, `aq fork`, `aq autopause`, `aq force-detach`, `aq edit-version`
+// on a managed pod) is gone under this model: Start/Stop/Move own the
+// lifecycle, and Environment/Volume own history and sharing (see
+// pods_lifecycle.go, environments.go, volumes.go).
 //
 // Setup ids are UUID strings (`model Setup { id String @id
 // @default(uuid()) ... }`), NOT the small integer ids deployments use.
@@ -38,20 +40,20 @@ import (
 // SetupVersion mirrors one row of the setup_versions table, as returned by
 // GET /setups/versions[?name=...]. Pods stop WRITING this table under the
 // pod/environment/volume model (D11: `aq save` and its route are gone, saves
-// mint EnvironmentVersion/VolumePoint rows now) — it survives read-only,
+// mint EnvironmentVersion/VolumePoint rows now), it survives read-only,
 // because Jobs still reference a SnapshotVersion as a source
 // (`aq job create <pod> <version>`, job.go) and existing rows must stay
-// resolvable. There is no "latest version" field nested on Setup itself —
-// see ListAllSetupVersions for how `aq share`/`aq job create` recover a
-// setup's latest/named version instead.
+// resolvable. There is no "latest version" field nested on Setup itself,
+// see ListAllSetupVersions for how `aq pods`/`aq job create`/`aq job point`
+// recover a setup's latest/named version instead.
 //
-// SetupID is a string for the same reason Setup.ID is — see the package doc.
+// SetupID is a string for the same reason Setup.ID is, see the package doc.
 // The version row's own ID is left an int: unlike Setup, nothing in the
 // ticket's Prisma excerpt confirms its type, and control.go already shows
 // this schema mixing int autoincrement ids (Deployment) with uuid ids
 // (Setup) rather than using one convention everywhere. If a live server
-// returns a non-numeric version id, ShareSetupVersion's request will surface
-// that as a clear decode/404 error rather than a silent wrong-row share —
+// returns a non-numeric version id, GetSetupVersion's request will surface
+// that as a clear decode/404 error rather than a silent wrong-row resolve,
 // but it hasn't been confirmed either way.
 type SetupVersion struct {
 	ID              int    `json:"id"`
@@ -69,14 +71,14 @@ type SetupVersion struct {
 	DeploymentCount int    `json:"deployment_count"`
 }
 
-// ListSetupVersions returns every version row named `name` — GET
+// ListSetupVersions returns every version row named `name`, GET
 // /setups/versions?name=<name>. The name alone is NOT unique to one setup
 // (two different setups' lineages can share a chosen name), so a caller that
 // needs one particular setup's version must additionally filter the result
-// on SetupID. This is `aq share`'s only path from a (setup, version-number)
-// pair the user typed to the version ROW id the share route actually needs —
-// version and id are different counters (see ShareSetupVersion), and this is
-// the one lookup that resolves one to the other instead of guessing.
+// on SetupID. This is `aq job point`'s path from a (setup, version-number)
+// pair to the version ROW id a repoint request actually needs: version and
+// id are different counters (see GetSetupVersion), and this is the one
+// lookup that resolves one to the other instead of guessing.
 func (c *Client) ListSetupVersions(name string) ([]SetupVersion, error) {
 	var out []SetupVersion
 	path := "/setups/versions?name=" + url.QueryEscape(name)
@@ -119,203 +121,6 @@ func (c *Client) GetSetupVersion(versionRowID int) (*SetupVersion, error) {
 	var out SetupVersion
 	path := "/setups/versions/" + strconv.Itoa(versionRowID)
 	if err := c.getJSON(path, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// InstallPreviewStartupScript mirrors InstallPreviewDTO's nested
-// startupScript — willRun only, NEVER the script's content.
-type InstallPreviewStartupScript struct {
-	WillRun bool    `json:"willRun"`
-	Source  *string `json:"source"`
-}
-
-// InstallPreviewHardware mirrors InstallPreviewDTO's suggestedHardware — the
-// version author's own box, offered as a SUGGESTION only, never enforced.
-type InstallPreviewHardware struct {
-	GPU      *string `json:"gpu"`
-	GPUCount *int    `json:"gpuCount"`
-	CPU      *int    `json:"cpu"`
-	Memory   *string `json:"memory"`
-	Storage  *string `json:"storage"`
-}
-
-// InstallPreviewVRAM mirrors InstallPreviewDTO's peakVram. Three-state on the
-// wire — nil (not a zeroed struct) when the author's last save never
-// observed a peak.
-type InstallPreviewVRAM struct {
-	PeakMB  int  `json:"peakMb"`
-	TotalMB *int `json:"totalMb"`
-	Pegged  bool `json:"pegged"`
-}
-
-// InstallPreviewResult mirrors InstallPreviewDTO (snapshot-version.service.ts)
-// exactly — a hand-written object literal, camelCase like the Setup DTO, not
-// run through the snake_case DTO helpers SetupVersion's own routes use. It is
-// everything a prospective installer needs to see BEFORE renting hardware:
-// no startup-script CONTENT, no secrets, no ancestry — every finding here is
-// a warning, never a gate.
-type InstallPreviewResult struct {
-	ID                int                         `json:"id"`
-	Name              string                      `json:"name"`
-	Version           int                         `json:"version"`
-	Provenance        string                      `json:"provenance"`
-	HasRecipe         bool                        `json:"hasRecipe"`
-	Template          *string                     `json:"template"`
-	Image             *string                     `json:"image"`
-	Ports             []int                       `json:"ports"`
-	HasAppURL         bool                        `json:"hasAppUrl"`
-	HasSecureURL      bool                        `json:"hasSecureUrl"`
-	StartupScript     InstallPreviewStartupScript `json:"startupScript"`
-	SuggestedHardware *InstallPreviewHardware     `json:"suggestedHardware"`
-	PeakVRAM          *InstallPreviewVRAM         `json:"peakVram"`
-	Warnings          []string                    `json:"warnings"`
-}
-
-// GetSetupVersionInstallPreview fetches GET /setups/versions/:id/install-preview.
-// gpuModel/gpuCount/vramMB are the caller's PROPOSED target hardware — optional
-// (pass "" / 0 / 0 to omit); when given, the server compares them against the
-// recipe's own observation and returns any mismatch in Warnings.
-func (c *Client) GetSetupVersionInstallPreview(versionRowID int, gpuModel string, gpuCount, vramMB int) (*InstallPreviewResult, error) {
-	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/install-preview"
-	q := url.Values{}
-	if gpuModel != "" {
-		q.Set("gpu", gpuModel)
-	}
-	if gpuCount > 0 {
-		q.Set("gpu_count", strconv.Itoa(gpuCount))
-	}
-	if vramMB > 0 {
-		q.Set("vram_mb", strconv.Itoa(vramMB))
-	}
-	if enc := q.Encode(); enc != "" {
-		path += "?" + enc
-	}
-	var out InstallPreviewResult
-	if err := c.getJSON(path, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// InstallSetupVersionRequest is the body of POST /setups/versions/:id/install
-// ("provision FROM the recipe"). The caller supplies only what is genuinely
-// theirs — their SSH key and their hardware choice; everything describing the
-// workload (image/template/ports/startup script) comes from the recipe.
-type InstallSetupVersionRequest struct {
-	SSHKeyID   string  `json:"ssh_key_id"`
-	Name       string  `json:"name,omitempty"`
-	GPUModel   string  `json:"gpu_model,omitempty"`
-	MaxPrice   float64 `json:"max_price,omitempty"`
-	Provider   string  `json:"provider,omitempty"`
-	ShareToken string  `json:"share_token,omitempty"`
-}
-
-// InstallSetupVersionResult is the data returned by POST
-// /setups/versions/:id/install: a fresh deployment shaped by the recipe. This
-// does NOT restore the version's bytes yet — poll the deployment until
-// active, then call RunSetupVersion against it.
-type InstallSetupVersionResult struct {
-	DeploymentID int    `json:"deployment_id"`
-	ProjectID    string `json:"project_id"`
-}
-
-// InstallSetupVersion provisions a new deployment shaped by versionRowID's
-// recipe. See InstallSetupVersionResult's doc comment for the required
-// poll-then-run follow-up.
-func (c *Client) InstallSetupVersion(versionRowID int, req InstallSetupVersionRequest) (*InstallSetupVersionResult, error) {
-	var out InstallSetupVersionResult
-	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/install"
-	if err := c.postJSON(path, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// RunSetupVersionRequest is the body of POST /setups/versions/:id/run —
-// install a version onto hardware the caller already rented (their own, via
-// InstallSetupVersion above, or any other deployment they own).
-type RunSetupVersionRequest struct {
-	TargetDeploymentID int    `json:"target_deployment_id"`
-	ShareToken         string `json:"share_token,omitempty"`
-}
-
-// RunSetupVersionCompatibility mirrors the run response's nested
-// compatibility object — non-blocking findings only. A mismatch never
-// refuses the run; it only ever lands here.
-type RunSetupVersionCompatibility struct {
-	Warnings []string `json:"warnings"`
-}
-
-// RunSetupVersionResult is the data returned by POST
-// /setups/versions/:id/run.
-type RunSetupVersionResult struct {
-	Message       string                       `json:"message"`
-	Compatibility RunSetupVersionCompatibility `json:"compatibility"`
-}
-
-// RunSetupVersion restores versionRowID's bytes onto targetDeploymentID —
-// the second half of the install → poll → run sequence for launching an
-// imported (or any other) setup version onto fresh hardware.
-func (c *Client) RunSetupVersion(versionRowID int, req RunSetupVersionRequest) (*RunSetupVersionResult, error) {
-	var out RunSetupVersionResult
-	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/run"
-	if err := c.postJSON(path, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// ShareSetupVersionResult is the data returned by POST
-// /setups/versions/:id/share — a bare share TOKEN plus the optional name/
-// expiry the caller passed. The orchestrator's `createVersionShare`
-// (snapshot-version.service.ts) never returns a URL — the console builds the
-// public link itself, client-side, as `<console origin>/launch/<token>` (see
-// its AccessPopover.tsx). URL below is filled in here the same way, so every
-// caller of this method still gets a ready-to-paste link.
-type ShareSetupVersionResult struct {
-	Token     string  `json:"token"`
-	Name      *string `json:"name"`
-	ExpiresAt *string `json:"expires_at"`
-	// URL is never present on the wire — see the type doc above. Populated
-	// by ShareSetupVersion from Token before returning.
-	URL string `json:"-"`
-}
-
-// ShareSetupVersion mints a link for ONE immutable version of a setup's save
-// lineage. versionRowID is the setup_versions table's own id — NOT the
-// per-lineage version NUMBER (v1, v2, v3, ...) a user types; those are
-// different counters and must never be confused (see ListSetupVersions,
-// which resolves one to the other). The link always addresses that exact
-// version, never the lineage's current head — sharing v3 keeps pointing at
-// v3's bytes even after v4, v5, ... exist.
-func (c *Client) ShareSetupVersion(versionRowID int) (*ShareSetupVersionResult, error) {
-	var out ShareSetupVersionResult
-	path := "/setups/versions/" + strconv.Itoa(versionRowID) + "/share"
-	if err := c.postJSON(path, struct{}{}, &out); err != nil {
-		return nil, err
-	}
-	out.URL = config.ConsoleURL() + "/launch/" + out.Token
-	return &out, nil
-}
-
-// ForkSetupRequest is the body of POST /setups/fork — a live share TOKEN
-// (from ShareSetupVersion/`aq share`, or one pulled out of a pasted
-// /launch/<token> link) and an optional display name for the new setup.
-// Same shape as adoptSetupSchema for the same reason (setups.schemas.ts).
-type ForkSetupRequest struct {
-	Token string `json:"token"`
-	Name  string `json:"name,omitempty"`
-}
-
-// ForkSetup turns a live share token into a brand new Setup the caller owns,
-// filed under their own team — the consuming half of `aq share`'s link.
-// Forking your own team's own version is refused server-side (pointless
-// empty copy of something you can already read/save/run directly).
-func (c *Client) ForkSetup(req ForkSetupRequest) (*Setup, error) {
-	var out Setup
-	if err := c.postJSON("/setups/fork", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

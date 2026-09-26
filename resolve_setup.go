@@ -78,3 +78,39 @@ func setupDisplayName(client *api.Client, setupID string) string {
 	}
 	return setup.Name
 }
+
+// resolveSetupVersionRowID turns a (setup, version-NUMBER) pair a user types
+// into the setup_versions table's global row id `aq job create`/`aq job
+// point` need. Kept alive after the pod/environment/volume model retired
+// the version share/install/fork/run routes (D11: jobs still read
+// SnapshotVersion rows by this same lineage-version addressing).
+//
+// These are two different counters and must never be conflated: `version` is
+// a per-lineage sequence that restarts at 1 for every lineage (comfyui's v1,
+// v2, v3, ...), while the row id is the versions table's global
+// autoincrement key. Treating the typed number as the id directly would
+// address whatever row happens to have that id — almost certainly a
+// different setup, quite possibly a different account's data. So this
+// always resolves through the API instead of ever guessing: list every
+// version row the caller can see (ListAllSetupVersions — GET /setups has no
+// nested "latest version"/lineage-name field to start a name-scoped lookup
+// from, see internal/api/setups.go) and pick the one row whose SetupID
+// matches AND whose Version matches what the user typed. No match is a hard
+// error — this never falls back to treating the number as an id.
+func resolveSetupVersionRowID(client *api.Client, setupID string, version int) (int, error) {
+	setup, err := findSetup(client, setupID)
+	if err != nil {
+		return 0, err
+	}
+
+	versions, err := client.ListAllSetupVersions()
+	if err != nil {
+		return 0, fmt.Errorf("could not look up versions for %q: %w", setup.Name, err)
+	}
+	for _, v := range versions {
+		if v.SetupID == setupID && v.Version == version {
+			return v.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("no version %d found for %q", version, setup.Name)
+}

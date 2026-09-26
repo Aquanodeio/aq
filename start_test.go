@@ -11,16 +11,60 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// TestRunStartResolvesPodByNameAndSendsOfferFilters checks `aq start` resolves
-// a pod by name (not just uuid), posts the GPU filters NESTED under "offer",
-// and prints the returned environment/volume summary.
-func TestRunStartResolvesPodByNameAndSendsOfferFilters(t *testing.T) {
+// stubMarketplaceOffer registers a single-offer /marketplace fixture, for
+// tests that exercise buildOfferSelection's client-side cheapest-offer pick
+// (start.go/move.go) rather than posting a filter for the orchestrator to
+// resolve.
+func stubMarketplaceOffer(mux *http.ServeMux, gpuModel, provider string) {
+	mux.HandleFunc("/marketplace", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{
+			{
+				"address":          provider + "/offer-1",
+				"gpuCount":         1,
+				"gpuShortName":     gpuModel,
+				"availableCpu":     8,
+				"availableMemory":  map[string]any{"value": 32, "unit": "GB"},
+				"availableStorage": map[string]any{"value": 200, "unit": "GB"},
+				"price":            1.0,
+				"region":           "US-EAST-1",
+				"provider":         provider,
+			},
+		})
+	})
+}
+
+// stubSSHKeys registers /settings/ssh-keys with no existing keys, so
+// ensureSSHKey registers the sandboxed test HOME's local key and every
+// Start/Move test exercises the same real path a fresh laptop takes.
+func stubSSHKeys(mux *http.ServeMux) {
+	mux.HandleFunc("/settings/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeData(w, []map[string]any{})
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		writeData(w, map[string]any{
+			"id":         "key-new",
+			"name":       body["name"],
+			"public_key": body["public_key"],
+		})
+	})
+}
+
+// TestRunStartResolvesPodByNameAndSendsOfferSelection checks `aq start`
+// resolves a pod by name (not just uuid), builds an already-chosen offer
+// from the marketplace (matching --gpu) and posts it NESTED under "offer",
+// then prints the returned environment/volume summary.
+func TestRunStartResolvesPodByNameAndSendsOfferSelection(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{
 			{"id": "11111111-2222-3333-4444-555555555555", "name": "trainer"},
 		})
 	})
+	stubMarketplaceOffer(mux, "RTX 4090", "runpod")
+	stubSSHKeys(mux)
 	var gotPath string
 	var gotBody map[string]any
 	mux.HandleFunc("/setups/11111111-2222-3333-4444-555555555555/start", func(w http.ResponseWriter, r *http.Request) {
@@ -45,8 +89,19 @@ func TestRunStartResolvesPodByNameAndSendsOfferFilters(t *testing.T) {
 		t.Fatal("start route was never called")
 	}
 	offer, ok := gotBody["offer"].(map[string]any)
-	if !ok || offer["gpuModel"] != "RTX 4090" {
-		t.Errorf("offer body = %#v", gotBody)
+	if !ok {
+		t.Fatalf("body has no nested \"offer\" object: %#v", gotBody)
+	}
+	resource, ok := offer["resource"].(map[string]any)
+	if !ok || resource["gpuModel"] != "RTX 4090" {
+		t.Errorf("offer.resource = %+v", resource)
+	}
+	provider, ok := offer["provider"].(map[string]any)
+	if !ok || provider["name"] != "runpod" {
+		t.Errorf("offer.provider = %+v", provider)
+	}
+	if offer["sshKeyId"] == "" || offer["sshKeyId"] == nil {
+		t.Errorf("offer.sshKeyId must be set, got %+v", offer)
 	}
 
 	got := out.String()
@@ -64,6 +119,8 @@ func TestRunStartOmitsVolumeLineForABarePod(t *testing.T) {
 	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{{"id": "pod-1", "name": "bare"}})
 	})
+	stubMarketplaceOffer(mux, "RTX 4090", "runpod")
+	stubSSHKeys(mux)
 	mux.HandleFunc("/setups/pod-1/start", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, map[string]any{
 			"id": "pod-1", "name": "bare",

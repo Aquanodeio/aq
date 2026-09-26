@@ -11,31 +11,61 @@ import "net/url"
 // the box, and Start brings it back on ANY matching GPU, not necessarily the
 // one it last ran on.
 
-// OfferFilter narrows the marketplace offer Start/Move rent against. Every
-// field is optional (omitempty) — an absent field means "no opinion", not
-// "match nothing": the orchestrator picks the cheapest offer that satisfies
-// whatever IS set, exactly like `aq up`/`aq deploy`'s flattened filter
-// fields (control.go's UpRequest/DeployRequest), just nested here under
-// "offer" per the pod/environment/volume plan's wire contract.
-type OfferFilter struct {
-	GPUModel string  `json:"gpuModel,omitempty"`
-	MaxPrice float64 `json:"maxPrice,omitempty"`
-	Provider string  `json:"provider,omitempty"`
-	// GPUCount asks for a multi-GPU box; 0 means "no opinion" (the
-	// orchestrator's own default of one). See UpRequest.GPUCount.
-	GPUCount int `json:"gpuCount,omitempty"`
+// ResourceSpec is the `resource` object inside an OfferSelection, mirroring
+// the orchestrator's own ResourceSchema (deployment.schemas.ts) byte for
+// byte — the pod/environment/volume plan's REST amendment (2026-09-26)
+// states this is the SAME shape POST /deployments/deploy already takes, not
+// a new one invented for pods. CPU/Memory/Storage are REQUIRED on the wire
+// (no omitempty): the schema has no default for them, and a caller must
+// resolve a real number/string from the chosen marketplace offer rather than
+// omit the key.
+//
+// DesiredInstanceID is the SERVER's own name for what a marketplace offer's
+// own `address` field already is (console: `desiredInstanceId:
+// chosenOffer.address` — aquanode-backend gotcha 1: "format:
+// <provider_address>/<preset_id>"). It is `.optional()` on the zod schema
+// but effectively REQUIRED by createDeployment (400s without it), so a
+// caller building this from a real offer must always send it.
+type ResourceSpec struct {
+	CPU               int    `json:"cpu"`
+	Memory            string `json:"memory"`
+	Storage           string `json:"storage"`
+	GPUUnits          int    `json:"gpuUnits,omitempty"`
+	GPUModel          string `json:"gpuModel,omitempty"`
+	DesiredInstanceID string `json:"desiredInstanceId,omitempty"`
+	Region            string `json:"region,omitempty"`
+	LocationID        string `json:"location_id,omitempty"`
+}
+
+// ProviderSpec is the `provider` object inside an OfferSelection.
+type ProviderSpec struct {
+	Name string `json:"name"`
+}
+
+// OfferSelection is the `offer` object POST /setups, /setups/:id/start, and
+// /setups/:id/move all take (the pod/environment/volume plan's REST
+// amendment, 2026-09-26): a single, ALREADY-CHOSEN marketplace offer, not a
+// filter for the orchestrator to resolve server-side the way
+// UpRequest/DeployRequest's flattened gpuModel/maxPrice/provider fields are.
+// The caller (aq's start.go/move.go) is responsible for querying the
+// marketplace, picking the cheapest offer matching its own filters, and
+// building this from it. Image, ports, startup script, and template are NOT
+// here — they come from the pod's own config columns (D10).
+type OfferSelection struct {
+	Resource ResourceSpec `json:"resource"`
+	Provider ProviderSpec `json:"provider"`
+	SSHKeyID string       `json:"sshKeyId"`
 }
 
 // StartSetupRequest is the body of POST /setups/:id/start.
 type StartSetupRequest struct {
-	Offer OfferFilter `json:"offer"`
+	Offer OfferSelection `json:"offer"`
 }
 
-// StartSetup starts a Stopped pod on the cheapest offer matching req.Offer's
-// filters (all empty = cheapest offer anywhere), returning the pod's updated
-// state. Restoring the environment and the volume both gate readiness; the
-// pod is Running only once both land (`ready_at`), never on the first
-// reachable signal.
+// StartSetup starts a Stopped pod on the given offer, returning the pod's
+// updated state. Restoring the environment and the volume both gate
+// readiness; the pod is Running only once both land (`ready_at`), never on
+// the first reachable signal.
 func (c *Client) StartSetup(setupID string, req StartSetupRequest) (*Setup, error) {
 	var out Setup
 	path := "/setups/" + url.PathEscape(setupID) + "/start"
@@ -61,13 +91,13 @@ func (c *Client) StopSetup(setupID string) (*Setup, error) {
 
 // MoveSetupRequest is the body of POST /setups/:id/move.
 type MoveSetupRequest struct {
-	Offer OfferFilter `json:"offer"`
+	Offer OfferSelection `json:"offer"`
 }
 
 // MoveSetup stops the pod (both captures confirmed, box released only after)
-// then starts it again on the cheapest offer matching req.Offer's filters. A
-// failed Start after the Stop leaves the pod Stopped with its data intact —
-// see the pod/environment/volume plan's mechanism 7.
+// then starts it again on the given offer. A failed Start after the Stop
+// leaves the pod Stopped with its data intact — see the pod/environment/
+// volume plan's mechanism 7.
 func (c *Client) MoveSetup(setupID string, req MoveSetupRequest) (*Setup, error) {
 	var out Setup
 	path := "/setups/" + url.PathEscape(setupID) + "/move"
