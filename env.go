@@ -333,7 +333,11 @@ func printEnvironmentGroup(out io.Writer, label string, list []api.EnvironmentSu
 		return
 	}
 	for _, e := range list {
-		fmt.Fprintf(out, "  %-24s  %s\n", truncate(e.Name, 24), e.ID)
+		name := e.Name
+		if e.LatestVersion != nil {
+			name = fmt.Sprintf("%s v%d", e.Name, e.LatestVersion.Version)
+		}
+		fmt.Fprintf(out, "  %-24s  %s\n", truncate(name, 24), e.ID)
 	}
 }
 

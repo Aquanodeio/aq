@@ -167,18 +167,40 @@ func (c *Client) GetShareStatus(shareID string) (*ShareStatus, error) {
 	return &out, nil
 }
 
-// RevokeShare revokes a share link — DELETE /shares/:shareId. Deletes the
+// RevokeShare revokes a share link, DELETE /shares/:shareId. Deletes the
 // published repo once no link to it remains.
 func (c *Client) RevokeShare(shareID string) error {
 	path := "/shares/" + url.PathEscape(shareID)
 	return c.deleteJSON(path, nil)
 }
 
+// EnvironmentVersionRef is the {id,version,createdAt} triple GET
+// /environments nests as an item's latestVersion (confirmed against
+// EnvironmentListItem, orchestrator/src/services/environments/
+// environment.service.ts, w3-backend 2026-09-26). ID here is the version's
+// own row id, an EnvironmentVersion.ID, not the environment's id: this is
+// what a caller creating a pod from this environment must send as
+// POST /setups' environmentVersionId.
+type EnvironmentVersionRef struct {
+	ID        string `json:"id"`
+	Version   int    `json:"version"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // EnvironmentSummary is one row of GET /environments' builtin/yours/shared
-// arrays: enough to pick from in "aq env ls" and resolve a name to an id.
+// arrays: enough to pick from in "aq env ls"/"aq pods create --env" and
+// resolve a name to an id. Kind is "builtin"|"kept"|"shared" on THIS
+// listing specifically (never "working": an unnamed working environment
+// isn't a listable object until Kept or Shared, unlike Setup.environment.kind
+// which does include "working"). LatestVersion is nil only for a
+// genuinely version-less environment; nothing the picker offers should be
+// version-less in practice, but a caller must still check rather than
+// assume.
 type EnvironmentSummary struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Kind          string                 `json:"kind"`
+	LatestVersion *EnvironmentVersionRef `json:"latestVersion"`
 }
 
 // EnvironmentsResult is the data returned by GET /environments: the three

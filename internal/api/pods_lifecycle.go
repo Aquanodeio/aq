@@ -1,15 +1,19 @@
 package api
 
-import "net/url"
+import (
+	"encoding/json"
+	"errors"
+	"net/url"
+)
 
-// Pod lifecycle endpoints for the pod/environment/volume model: Start, Stop,
-// Move, and the per-pod autostop preference. These replace the old
-// pause/resume cycle (`aq pause` saved and released a setup's lease; resuming
-// meant `aq deploy --snapshot <deploymentId>` naming a raw deployment id).
-// Under this model a pod is Running or Stopped, nothing else: Stop always
-// saves (both the environment and the volume, confirmed) before releasing
-// the box, and Start brings it back on ANY matching GPU, not necessarily the
-// one it last ran on.
+// Pod lifecycle endpoints for the pod/environment/volume model: Create,
+// Start, Stop, Move, and the per-pod autostop preference. These replace the
+// old pause/resume cycle (`aq pause` saved and released a setup's lease;
+// resuming meant `aq deploy --snapshot <deploymentId>` naming a raw
+// deployment id). Under this model a pod is Running or Stopped, nothing
+// else: Stop always saves (both the environment and the volume, confirmed)
+// before releasing the box, and Start brings it back on ANY matching GPU,
+// not necessarily the one it last ran on.
 
 // ResourceSpec is the `resource` object inside an OfferSelection, mirroring
 // the orchestrator's own ResourceSchema (deployment.schemas.ts) byte for
@@ -55,6 +59,62 @@ type OfferSelection struct {
 	Resource ResourceSpec `json:"resource"`
 	Provider ProviderSpec `json:"provider"`
 	SSHKeyID string       `json:"sshKeyId"`
+}
+
+// CreateSetupRequest is the body of POST /setups (New pod): create the pod
+// and start it on Offer in one call (confirmed against createSetupSchema,
+// orchestrator/src/schemas/setups.schemas.ts, 2026-09-26).
+//
+// Name is omitted (never sent empty) when the caller has none; the server
+// derives one from the environment's template or the GPU.
+//
+// VolumeID is ALWAYS present on the wire, never omitted: `"new"` mints a
+// fresh volume named after the pod, an existing volume's id attaches it,
+// and a nil pointer serializes to JSON `null` and runs the pod with no
+// volume at all (D4). The schema is explicit about this ("never defaulted
+// server-side"), so this field has no `omitempty` even though it's a
+// pointer.
+type CreateSetupRequest struct {
+	Name                 string         `json:"name,omitempty"`
+	Offer                OfferSelection `json:"offer"`
+	EnvironmentVersionID string         `json:"environmentVersionId"`
+	VolumeID             *string        `json:"volumeId"`
+}
+
+// CreateSetupRefusedStart is returned by CreateSetup when POST /setups
+// creates the pod but the immediate Start it also attempts is refused (a
+// bad SSH key, the chosen offer gone, insufficient credits, ...). The pod
+// is real: created, Stopped, and already listed by `aq pods`. Setup carries
+// its state as of the refusal. Never retry the create on this error (a
+// second call mints a second pod); `aq start` the one that already exists
+// once the refusal reason is fixed.
+type CreateSetupRefusedStart struct {
+	Setup *Setup
+	Err   error
+}
+
+func (e *CreateSetupRefusedStart) Error() string { return e.Err.Error() }
+func (e *CreateSetupRefusedStart) Unwrap() error { return e.Err }
+
+// CreateSetup creates a new pod and starts it on the given offer in one
+// call, POST /setups. See CreateSetupRefusedStart for the one error shape
+// this unwraps specially; every other failure (a validation 400, a name
+// conflict 409, ...) surfaces as a plain *APIError with no pod created.
+func (c *Client) CreateSetup(req CreateSetupRequest) (*Setup, error) {
+	var out Setup
+	if err := c.postJSON("/setups", req, &out); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && len(apiErr.Data) > 0 {
+			var body struct {
+				Setup *Setup `json:"setup"`
+			}
+			if jsonErr := json.Unmarshal(apiErr.Data, &body); jsonErr == nil && body.Setup != nil {
+				return nil, &CreateSetupRefusedStart{Setup: body.Setup, Err: apiErr}
+			}
+		}
+		return nil, err
+	}
+	return &out, nil
 }
 
 // StartSetupRequest is the body of POST /setups/:id/start.

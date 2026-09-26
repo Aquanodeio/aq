@@ -40,18 +40,35 @@ import (
 // `up` and `deploy` do it unconditionally (api.Client.Up / api.Client.Deploy).
 // `start` and `move` do it under the pod/environment/volume model: Start
 // brings a Stopped pod up on the cheapest matching offer, and Move stops the
-// pod then starts it again on a new one. `import` used to reach a lease on
-// its --launch path; that flag is gone (a bare Volume import carries no
-// recipe to launch from, see import.go), so import never rents hardware now
-// and does NOT belong here. Everything else in the dispatch either reads,
-// edits metadata, or de-provisions — `down` and `stop` stop spend rather than
-// start it, so guarding them would be backwards: it would make the safe
-// action harder than the expensive one.
+// pod then starts it again on a new one. `pods create` does too (it's a
+// create-then-start in one call), which is why it's keyed as its own entry
+// rather than under the bare `pods` verb, see main's `guardCmd` comment: a
+// bare `aq pods` only lists and rents nothing. `import` used to reach a
+// lease on its --launch path; that flag is gone (a bare Volume import
+// carries no recipe to launch from, see import.go), so import never rents
+// hardware now and does NOT belong here. Everything else in the dispatch
+// either reads, edits metadata, or de-provisions, `down` and `stop` stop
+// spend rather than start it, so guarding them would be backwards: it would
+// make the safe action harder than the expensive one.
 var billableCommands = map[string]string{
-	"up":     "rent a GPU box",
-	"deploy": "rent a GPU box to restore a save onto",
-	"start":  "start a pod on a rented GPU box",
-	"move":   "stop a pod and start it again on a new rented GPU box",
+	"up":          "rent a GPU box",
+	"deploy":      "rent a GPU box to restore a save onto",
+	"start":       "start a pod on a rented GPU box",
+	"move":        "stop a pod and start it again on a new rented GPU box",
+	"pods create": "create a pod and rent a GPU box to start it on",
+}
+
+// podsGuardCmd returns the key both rails below key off of: cmd itself for
+// every verb except `pods`, whose one billable subcommand needs its own
+// entry so a bare `aq pods` (a read) and `aq pods create` (rents hardware)
+// are never gated identically. Only inspects args[0]; `aq pods create
+// --help` still resolves to "pods create" here, which is correct, since
+// guardBillable itself is what exempts a --help request from the refusal.
+func podsGuardCmd(cmd string, args []string) string {
+	if cmd == "pods" && len(args) > 0 && args[0] == "create" {
+		return "pods create"
+	}
+	return cmd
 }
 
 // nonMutatingCommands are the verbs that change nothing on the account, so
@@ -77,7 +94,11 @@ var nonMutatingCommands = map[string]bool{
 	// Listing it to keep `aq job runs` quiet would silence the announcement for
 	// `aq job rm` too, and this file exists to stop exactly that. The cost is
 	// one extra host announcement on a read; the alternative is a silent
-	// destructive verb, which is not a trade worth making.
+	// destructive verb, which is not a trade worth making. `pods` stays
+	// listed ONLY because main's dispatch computes a distinct guardCmd
+	// ("pods create") for its one billable subcommand before either rail
+	// ever looks at this map, so `pods` here still means exactly "the bare
+	// list form", never the create form too.
 	"ssh":    true,
 	"host":   true,
 	"logout": true,

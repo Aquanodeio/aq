@@ -61,7 +61,7 @@ func main() {
 	cmd, args := os.Args[1], os.Args[2:]
 
 	// Resolve the host this run will talk to ONCE, here, and apply the two
-	// target rails before anything dispatches — see prodguard.go for why they
+	// target rails before anything dispatches, see prodguard.go for why they
 	// live at the dispatch rather than inside each command. Doing it here also
 	// keeps the rails out of the run<Verb> functions the tests drive directly,
 	// so no existing test's captured output changes.
@@ -74,16 +74,27 @@ func main() {
 	cred, _ := config.Load()
 	apiURL := resolveAPIURL(cred)
 
-	if _, billable := billableCommands[cmd]; billable {
+	// guardCmd is cmd itself for almost every verb, but `pods` has exactly one
+	// billable subcommand (`pods create`, which rents hardware just like
+	// `start`/`move`) among otherwise-safe ones (a bare `aq pods` only lists).
+	// Keying the two rails below on the bare top-level verb, the way `job`
+	// already does, would either wrongly guard every `aq pods` or wrongly
+	// leave `aq pods create` unguarded, see the billableCommands comment on
+	// `job` for why that allowlist stays keyed on the top-level verb ONLY
+	// when none of its subcommands rent hardware, which is no longer true
+	// for pods.
+	guardCmd := podsGuardCmd(cmd, args)
+
+	if _, billable := billableCommands[guardCmd]; billable {
 		var prodFlag bool
 		args, prodFlag = stripProdFlag(args)
 		allowProd := prodFlag || os.Getenv("AQ_ALLOW_PROD") == "1"
 		overseen := hasHumanOversight(os.Getenv, isInteractiveStdin())
-		if err := guardBillable(cmd, apiURL, args, allowProd, overseen); err != nil {
+		if err := guardBillable(guardCmd, apiURL, args, allowProd, overseen); err != nil {
 			run(err)
 		}
 	}
-	announceTarget(cmd, apiURL, os.Stderr)
+	announceTarget(guardCmd, apiURL, os.Stderr)
 
 	switch cmd {
 	case "version", "--version", "-v":

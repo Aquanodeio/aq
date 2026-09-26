@@ -10,11 +10,14 @@ import (
 )
 
 // pods parses `aq pods` and wires the real environment into runPods.
-//
-// `aq pods` lists what the caller owns, independent of whether a pod's
+// `aq pods create` is a subcommand (see pods_create.go); every other form
+// of `aq pods` lists what the caller owns, independent of whether a pod's
 // compute is currently rented: name, running/not, current environment, and
 // size on disk.
 func pods(args []string) error {
+	if len(args) > 0 && args[0] == "create" {
+		return podsCreate(args[1:])
+	}
 	fs := flag.NewFlagSet("pods", flag.ContinueOnError)
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
