@@ -125,13 +125,22 @@ func (c *Client) GetSetupVersion(versionRowID int) (*SetupVersion, error) {
 	return &out, nil
 }
 
-// SetupEnvironmentSummary mirrors the `environment` object the
-// pod/environment/volume plan's wire contract (section 2) nests on GET
-// /setups and GET /setups/:id. It is always present (never null): every pod
-// has a working environment even before anything is ever Kept or Shared out
-// of it. Version is nullable on the wire (int|null): the working environment
-// has no minted EnvironmentVersion until the pod's environment is Kept or
-// Shared for the first time.
+// SetupEnvironmentSummary mirrors the `environment` object nested on GET
+// /setups, GET /setups/:id. The plan's wire contract (section 2) describes it
+// as always present, but PodDTO's own type (pod-serializer.ts,
+// aquanode-backend) is `environment: {...} | null`, and the serializer
+// genuinely returns null when a pod's `environmentVersionId` doesn't resolve
+// to a live version row. The plan wins on prose, the running code wins on
+// what the wire actually sends, and this is why `Setup.Environment` is a
+// pointer rather than a plain value: decoding a JSON `null` into a non-pointer
+// struct silently zeroes every field, which then renders identically to a
+// normal (if unusual) empty name, exactly the "environment version -" a
+// console `Running` pod must never show for `aq pods`. Every pod observed live
+// (224 rows, 2026-09-26) had a non-null environment, so this is the rare path,
+// not the common one; callers still must not assume non-nil. Version is
+// nullable on the wire (int|null): the working environment has no minted
+// EnvironmentVersion until the pod's environment is Kept or Shared for the
+// first time.
 type SetupEnvironmentSummary struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -189,10 +198,13 @@ type SetupRestoreProgress struct {
 //
 // Every tag below is camelCase, matching PodDTO field for field.
 type Setup struct {
-	ID          string                  `json:"id"`
-	Name        string                  `json:"name"`
-	Status      string                  `json:"status"`
-	Environment SetupEnvironmentSummary `json:"environment"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	// Environment is nil on the rare row whose environmentVersionId doesn't
+	// resolve (see SetupEnvironmentSummary's doc comment). Never render a nil
+	// Environment as an empty-but-real one.
+	Environment *SetupEnvironmentSummary `json:"environment"`
 	// Volume is nil for a pod running with no volume attached (D4 of the
 	// pod/environment/volume plan: a bare pod is allowed, and the New pod
 	// flow warns about it). Never render a nil Volume as an empty one.
@@ -241,4 +253,18 @@ func (c *Client) ListSetups() ([]Setup, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// GetSetup fetches one pod by id, GET /setups/:id (sendPod in
+// setups.controller.ts: the same serializePods DTO a list row gets, just for
+// one row). `aq status` uses this to recover the pod's real Volume save
+// state from the deployment's setup_id: the deployment endpoints carry no
+// save/volume information of their own, only the setup does.
+func (c *Client) GetSetup(setupID string) (*Setup, error) {
+	var out Setup
+	path := "/setups/" + url.PathEscape(setupID)
+	if err := c.getJSON(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

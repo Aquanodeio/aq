@@ -114,35 +114,43 @@ func TestPauseDeploymentPostsToProjectScopedPath(t *testing.T) {
 	}
 }
 
-// TestSnapshotHistoryAssociatesByBackupsDeploymentID checks the match key used
-// to find "the last snapshot for deployment N": the account-scoped history
-// endpoint nests a snapshot's owning deployment under `backups.deployment_id`,
-// not the top-level `backup_id` (that field is the internal backup ROW id, not
-// a deployment id).
-func TestSnapshotHistoryAssociatesByBackupsDeploymentID(t *testing.T) {
+// TestGetDeploymentDecodesSetupID and TestDeploymentStatusDecodesSetupID pin
+// SetupID against a trimmed copy of a real captured response (prod deployment
+// 3807, 2026-09-27, ids kept since they identify our own test-account rows,
+// not a customer's): `aq status` needs setup_id to look up the pod's real
+// save state (GetSetup), and it is snake_case on BOTH the raw row and the
+// nested object /status returns, unlike most of that endpoint's other fields.
+
+func TestGetDeploymentDecodesSetupID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/snapshots/history" {
-			t.Errorf("path = %q, want /snapshots/history", r.URL.Path)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":[
-			{"id":42,"backup_id":7,"path":"/workspace","status":"completed","size":100,"type":"manual","created_at":"2026-08-07T11:30:00Z","backups":{"deployment_id":2884,"path":"/workspace"}},
-			{"id":9,"backup_id":3,"path":"/workspace","status":"completed","size":50,"type":"external","created_at":"2026-08-06T09:00:00Z","backups":null}
-		]}`)
+		fmt.Fprint(w, `{"success":true,"data":{"id":3807,"name":"MI300X box 11","status":"CLOSED",`+
+			`"setup_id":"b8591f0f-038e-4d48-b9a2-26a3b7caeadd"}}`)
 	}))
 	defer srv.Close()
 
-	items, err := NewAuthed(srv.URL, "tok", "t").SnapshotHistory()
+	dep, err := NewAuthed(srv.URL, "tok", "t").GetDeployment(3807)
 	if err != nil {
-		t.Fatalf("SnapshotHistory: %v", err)
+		t.Fatalf("GetDeployment: %v", err)
 	}
-	if len(items) != 2 {
-		t.Fatalf("got %d items, want 2", len(items))
+	if dep.SetupID != "b8591f0f-038e-4d48-b9a2-26a3b7caeadd" {
+		t.Errorf("SetupID = %q, want the pod uuid", dep.SetupID)
 	}
-	if items[0].Backups == nil || items[0].Backups.DeploymentID != 2884 {
-		t.Errorf("items[0].Backups = %+v, want deployment_id 2884", items[0].Backups)
+}
+
+func TestDeploymentStatusDecodesSetupID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":{"deploymentId":3807,"status":"CLOSED","deployment":`+
+			`{"id":3807,"status":"CLOSED","setup_id":"b8591f0f-038e-4d48-b9a2-26a3b7caeadd","deploymentId":3807}}}`)
+	}))
+	defer srv.Close()
+
+	res, err := NewAuthed(srv.URL, "tok", "t").DeploymentStatus(3807)
+	if err != nil {
+		t.Fatalf("DeploymentStatus: %v", err)
 	}
-	if items[1].Backups != nil {
-		t.Errorf("items[1].Backups = %+v, want nil (external snapshot)", items[1].Backups)
+	if res.Deployment.SetupID != "b8591f0f-038e-4d48-b9a2-26a3b7caeadd" {
+		t.Errorf("Deployment.SetupID = %q, want the pod uuid", res.Deployment.SetupID)
 	}
 }
