@@ -167,11 +167,12 @@ type Hardware struct {
 }
 
 // JobPlacement is a Job's placement preferences. See the orchestrator's
-// hardware.ts PlacementSchema. Named JobPlacement, not Placement, because
-// control.go's Placement already names an unrelated concept (where a resumed
-// deployment landed). GPUOrder carries `omitempty`: an absent key already
-// means "cheapest" (today's behaviour), so that value is never written
-// explicitly, exactly as the console omits it.
+// hardware.ts PlacementSchema. Named JobPlacement rather than the bare
+// Placement, so a future concept sharing that name (control.go used to have
+// one, for a deploy-snapshot resume the pod/environment/volume plan retired)
+// never collides with it by accident. GPUOrder carries `omitempty`: an
+// absent key already means "cheapest" (today's behaviour), so that value is
+// never written explicitly, exactly as the console omits it.
 type JobPlacement struct {
 	GPUOrder string `json:"gpuOrder,omitempty"`
 }
