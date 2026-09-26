@@ -94,7 +94,7 @@ func TestShareEnvironmentByIDRequiresVersionOnTheWire(t *testing.T) {
 func TestGetShareStatusDecodesThreeStates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"state":"failed","error":"publish job timed out"}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"state":"failed","error":"publish job timed out","environment":{"id":"e1","name":"pytorch-dev"},"versionId":"v-3","version":3}}`)
 	}))
 	defer srv.Close()
 
@@ -104,6 +104,68 @@ func TestGetShareStatusDecodesThreeStates(t *testing.T) {
 	}
 	if got.State != "failed" || got.Error == nil || *got.Error != "publish job timed out" {
 		t.Errorf("result = %+v", got)
+	}
+}
+
+// TestGetShareStatusDecodesAPreparingCaptureWithNoVersionYet checks a real
+// "preparing" body from a Running pod's share whose capture hasn't minted a
+// version yet (environment.service.ts's openShare, aquanode-backend#803):
+// versionId and version are both a literal JSON null, and must decode to
+// nil pointers, never a zero-value "" or 0 that could be mistaken for a
+// real (if odd) answer.
+func TestGetShareStatusDecodesAPreparingCaptureWithNoVersionYet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":{"state":"preparing","error":null,"environment":{"id":"e1","name":"pytorch-dev"},"versionId":null,"version":null}}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewAuthed(srv.URL, "tok", "t").GetShareStatus("share-1")
+	if err != nil {
+		t.Fatalf("GetShareStatus: %v", err)
+	}
+	if got.State != "preparing" {
+		t.Errorf("State = %q, want preparing", got.State)
+	}
+	if got.Error != nil {
+		t.Errorf("Error = %v, want nil while preparing", got.Error)
+	}
+	if got.Environment.ID != "e1" || got.Environment.Name != "pytorch-dev" {
+		t.Errorf("Environment = %+v, want {e1 pytorch-dev}", got.Environment)
+	}
+	if got.VersionID != nil {
+		t.Errorf("VersionID = %v, want nil (capture hasn't minted a version yet)", *got.VersionID)
+	}
+	if got.Version != nil {
+		t.Errorf("Version = %v, want nil", *got.Version)
+	}
+}
+
+// TestGetShareStatusDecodesAPreparingPublishWithAVersionAlready pins the
+// nuance that "preparing" does NOT always mean versionId is null: once the
+// environment version exists and only its publish-to-a-shareable-copy job
+// is still running, State stays "preparing" but VersionID/Version are
+// already populated. A caller must read them independently of State, never
+// infer one from the other.
+func TestGetShareStatusDecodesAPreparingPublishWithAVersionAlready(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":{"state":"preparing","error":null,"environment":{"id":"e1","name":"pytorch-dev"},"versionId":"v-3","version":3}}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewAuthed(srv.URL, "tok", "t").GetShareStatus("share-1")
+	if err != nil {
+		t.Fatalf("GetShareStatus: %v", err)
+	}
+	if got.State != "preparing" {
+		t.Errorf("State = %q, want preparing", got.State)
+	}
+	if got.VersionID == nil || *got.VersionID != "v-3" {
+		t.Errorf("VersionID = %v, want v-3 (the version exists; only its publish job is preparing)", got.VersionID)
+	}
+	if got.Version == nil || *got.Version != 3 {
+		t.Errorf("Version = %v, want 3", got.Version)
 	}
 }
 

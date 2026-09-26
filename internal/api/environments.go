@@ -149,12 +149,35 @@ func (c *Client) ShareEnvironmentByID(environmentID string, versionID string) (*
 	return &out, nil
 }
 
-// ShareStatus is the data returned by GET /shares/:shareId. State is
-// three-state ("preparing"|"ready"|"failed"); Error is non-nil only once
-// State is "failed".
+// ShareEnvironmentRef is the {id,name} pair GET /shares/:shareId nests as
+// environment: the environment the link names, present on every successful
+// response regardless of state (a link whose environment is gone 404s
+// instead, environment.service.ts's openShare).
+type ShareEnvironmentRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ShareStatus is the data returned by GET /shares/:shareId (confirmed
+// against environment.service.ts's openShare, aquanode-backend#803,
+// 2026-09-26). State is three-state ("preparing"|"ready"|"failed"); Error is
+// non-nil only once State is "failed". Environment is always present on a
+// successful response regardless of State: openShare 404s the whole call
+// (EnvironmentNotFoundError) rather than ever returning it null or absent.
+//
+// VersionID and Version are BOTH nullable, and null is not tied to a
+// specific State the way it might look: they are null while a Running pod's
+// share is still capturing (or that capture failed, so State is
+// "preparing"/"failed" with no version minted yet), but can already be
+// non-nil even while State is still "preparing", once the version exists
+// and only its publish-to-a-shareable-copy job is still running. Never
+// assume one implies the other; read both independently.
 type ShareStatus struct {
-	State string  `json:"state"`
-	Error *string `json:"error"`
+	State       string              `json:"state"`
+	Error       *string             `json:"error"`
+	Environment ShareEnvironmentRef `json:"environment"`
+	VersionID   *string             `json:"versionId"`
+	Version     *int                `json:"version"`
 }
 
 // GetShareStatus polls a share's publish-job status.
