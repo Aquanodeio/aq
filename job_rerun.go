@@ -67,7 +67,7 @@ func runJobRerun(opts jobRerunOptions) error {
 		return fmt.Errorf("could not rerun job %q: %w", opts.target, err)
 	}
 
-	fmt.Fprintf(out, "✓ Rerun %q → new job %q, run %s %s\n", opts.target, job.Name, job.Run.ID, job.Run.Status)
+	fmt.Fprintf(out, "✓ Rerun %q → new job %q, run %s %s\n", opts.target, job.Name, job.Run.ID, jobStatusWord(job.Run.Status))
 	fmt.Fprintf(out, "  aq job logs %s\n", job.Name)
 	return nil
 }
