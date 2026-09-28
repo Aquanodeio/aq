@@ -150,9 +150,10 @@ type SetupEnvironmentSummary struct {
 
 // SetupVolumeSummary mirrors the `volume` object nested on GET /setups, GET
 // /setups/:id (PodVolumeSummary, orchestrator/src/services/volumes/volume.service.ts,
-// confirmed against source 2026-09-26). SaveState is three-state on the wire
-// ("saved"|"failing"|"unknown") and must never collapse "unknown" (the agent
-// could not be reached) into "saved", see the workspace's three-state
+// confirmed against source 2026-09-28, #811). SaveState is three-state on the
+// wire ("saved"|"failing"|"never_saved" -- renamed from "unknown" in #811,
+// same meaning: nothing has landed yet, not a warning) and must never
+// collapse "never_saved" into "saved", see the workspace's three-state
 // signal rule. LastSaveError is nil except while SaveState is "failing".
 // SizeBytes and HeadSavedAt are both nullable: SizeBytes is null before
 // storage metering has ever measured this volume, HeadSavedAt is null

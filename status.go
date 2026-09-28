@@ -207,7 +207,7 @@ func formatPodSaveState(v *api.SetupVolumeSummary, now time.Time) string {
 		return "no volume attached"
 	}
 	if v.HeadSavedAt == nil {
-		// SaveState is "unknown" whenever nothing has ever synced (see
+		// SaveState is "never_saved" whenever nothing has ever synced (see
 		// SetupVolumeSummary's doc comment). HeadSavedAt nil is the honest
 		// signal here, not SaveState, since saveStateOf's wire encoding
 		// cannot tell "never saved" apart from "agent unreachable" on its

@@ -100,11 +100,7 @@ func printPodStorageSummary(out io.Writer, s api.Setup) {
 		return
 	}
 	v := *s.Volume
-	state := v.SaveState
-	if state == "" {
-		state = "unknown"
-	}
-	fmt.Fprintf(out, "  Volume: %s (%s, %s)\n", orDash(v.Name), formatPodSizePtr(v.SizeBytes), state)
+	fmt.Fprintf(out, "  Volume: %s (%s, %s)\n", orDash(v.Name), formatPodSizePtr(v.SizeBytes), saveStateLabel(v.SaveState))
 }
 
 // formatPodSize renders a byte count in the largest whole binary unit that
