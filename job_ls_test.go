@@ -15,10 +15,10 @@ import (
 func i64Ptr(n int64) *int64 { return &n }
 
 // TestPrintBatchJobsRendersGPUDurationAndCost pins the columns the
-// jobs-are-jobs spec names for `aq job ls`:
-// name, status, GPU, duration, cost — all derived from the run's own
-// attempts, since the batch shape carries no top-level cost/GPU field any
-// more.
+// jobs-are-jobs spec names for `aq job ls`: name, status, GPU, duration,
+// cost. GPU and duration are derived from the run's own attempts/timestamps;
+// cost is rendered straight from the server's own run.costCents, never
+// computed here.
 func TestPrintBatchJobsRendersGPUDurationAndCost(t *testing.T) {
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	started := now.Add(-30 * time.Minute).Format(time.RFC3339)
@@ -31,8 +31,9 @@ func TestPrintBatchJobsRendersGPUDurationAndCost(t *testing.T) {
 				Status:     "running",
 				StartedAt:  started,
 				FinishedAt: "",
+				CostCents:  i64Ptr(125),
 				Attempts: []api.RunAttempt{
-					{Ordinal: 1, GPUModel: strPtr("H100"), PriceCentsPerHour: i64Ptr(250), StartedAt: strPtr(started)},
+					{Ordinal: 1, GPUModel: strPtr("H100")},
 				},
 			},
 		},
@@ -53,12 +54,18 @@ func TestPrintBatchJobsRendersGPUDurationAndCost(t *testing.T) {
 	if !strings.Contains(got, "30m0s") {
 		t.Fatalf("want a 30m duration for the running job, got:\n%s", got)
 	}
-	// 30 minutes at 250 cents/hr = 125 cents = $1.25.
 	if !strings.Contains(got, "$1.25") {
-		t.Fatalf("want a computed cost of $1.25, got:\n%s", got)
+		t.Fatalf("want run.costCents (125) rendered as $1.25, got:\n%s", got)
 	}
 	if !strings.Contains(got, "no-attempt-yet") || !strings.Contains(got, "queued") {
 		t.Fatalf("want the queued job's name and status rendered, got:\n%s", got)
+	}
+	// The queued job's run.costCents is nil -- must render "-", never "$0.00".
+	lines := strings.Split(got, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "no-attempt-yet") && !strings.HasSuffix(strings.TrimRight(line, " "), "-") {
+			t.Fatalf("want nil costCents rendered as -, got line: %q", line)
+		}
 	}
 }
 
@@ -99,10 +106,22 @@ func TestFormatRunDurationNeverStartedIsDash(t *testing.T) {
 	}
 }
 
-// TestFormatRunCostNoAttemptsIsDash.
-func TestFormatRunCostNoAttemptsIsDash(t *testing.T) {
-	if got := formatRunCost(api.Run{}, time.Now()); got != "-" {
-		t.Fatalf("formatRunCost(no attempts) = %q, want -", got)
+// TestFormatRunCostCentsNilIsDash: nil (UNKNOWN) must render "-", never
+// "$0.00" -- this CLI never computes a cost itself, it only renders what
+// the server's run.costCents sends.
+func TestFormatRunCostCentsNilIsDash(t *testing.T) {
+	if got := formatRunCostCents(nil); got != "-" {
+		t.Fatalf("formatRunCostCents(nil) = %q, want -", got)
+	}
+}
+
+// TestFormatRunCostCentsRendersTheServersFigureVerbatim.
+func TestFormatRunCostCentsRendersTheServersFigureVerbatim(t *testing.T) {
+	if got := formatRunCostCents(i64Ptr(0)); got != "$0.00" {
+		t.Fatalf("formatRunCostCents(0) = %q, want $0.00 -- a real zero, distinct from nil/UNKNOWN", got)
+	}
+	if got := formatRunCostCents(i64Ptr(1234)); got != "$12.34" {
+		t.Fatalf("formatRunCostCents(1234) = %q, want $12.34", got)
 	}
 }
 

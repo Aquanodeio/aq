@@ -37,9 +37,8 @@ func jobLs(args []string) error {
 }
 
 // printBatchJobs renders the table: name, status, GPU, duration, cost — the
-// jobs-are-jobs spec's console columns,
-// plus ID for addressability, matching every other list command in this CLI
-// (`aq ls`, `aq endpoint list`).
+// jobs-are-jobs spec's console columns, plus ID for addressability, matching
+// every other list command in this CLI (`aq ls`, `aq endpoint list`).
 func printBatchJobs(out io.Writer, list []api.BatchJob, now time.Time) {
 	if len(list) == 0 {
 		fmt.Fprintln(out, "No jobs yet. Run `aq job run --image <ref> -- <cmd>` to start one.")
@@ -53,7 +52,7 @@ func printBatchJobs(out io.Writer, list []api.BatchJob, now time.Time) {
 			status = "UNSERVABLE"
 		}
 		fmt.Fprintf(out, "%-36s  %-24s  %-11s  %-14s  %-10s  %s\n",
-			j.ID, truncate(j.Name, 24), status, formatRunGPU(j.Run), formatRunDuration(j.Run, now), formatRunCost(j.Run, now))
+			j.ID, truncate(j.Name, 24), status, formatRunGPU(j.Run), formatRunDuration(j.Run, now), formatRunCostCents(j.Run.CostCents))
 	}
 }
 
@@ -133,42 +132,17 @@ func formatShortDuration(d time.Duration) string {
 	}
 }
 
-// formatRunCost is a best-effort estimate from each attempt's own recorded
-// rate and wall time: sum over attempts of priceCentsPerHour * (endedAt (or
-// now, if the run is still going) - startedAt). The wire has no single
-// "this run cost N cents" field any more -- the per-job spentCents column
-// this used to read is one of the fields the jobs-are-jobs contract removes
-// from the batch shape -- so this is derived locally
-// from the two numbers the run detail page already carries, per attempt,
-// rather than inventing a server-side total this CLI has no way to verify.
-func formatRunCost(run api.Run, now time.Time) string {
-	var totalCents float64
-	var any bool
-	for _, a := range run.Attempts {
-		if a.PriceCentsPerHour == nil || a.StartedAt == nil {
-			continue
-		}
-		start, ok := parseRFC3339(*a.StartedAt)
-		if !ok {
-			continue
-		}
-		end := now
-		if a.EndedAt != nil {
-			if t, ok := parseRFC3339(*a.EndedAt); ok {
-				end = t
-			}
-		}
-		hours := end.Sub(start).Hours()
-		if hours < 0 {
-			continue
-		}
-		totalCents += hours * float64(*a.PriceCentsPerHour)
-		any = true
-	}
-	if !any {
+// formatRunCostCents renders run.costCents, the server's own billed-cost
+// figure (round(sum(billing_buckets_v2.amount_usd) * 100), computed from the
+// ledger). nil is UNKNOWN -- the run has no attempt with a deployment yet,
+// or every such deployment is customer-owned (unmetered) -- and renders as
+// "-", never "$0.00": this CLI never computes cost itself, it only renders
+// what the server sends.
+func formatRunCostCents(costCents *int64) string {
+	if costCents == nil {
 		return "-"
 	}
-	return formatCents(int64(totalCents))
+	return formatCents(*costCents)
 }
 
 // formatCents renders a cent amount as a dollar figure, e.g. 150 -> "$1.50".

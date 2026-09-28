@@ -346,15 +346,19 @@ type Run struct {
 	StartedAt  string `json:"startedAt"`
 	FinishedAt string `json:"finishedAt"`
 	Phase      string `json:"phase"`
+	// CostCents is the billed cost of this run in US cents, computed
+	// server-side from the ledger (round(sum(billing_buckets_v2.amount_usd)
+	// * 100) over this run's attempts' deployments). nil means UNKNOWN --
+	// the run has no attempt with a deployment yet, or every such
+	// deployment is customer-owned (unmetered) -- never "free" or "$0.00".
+	// Clients render this number and never compute cost themselves.
+	CostCents *int64 `json:"costCents"`
 	// Attempts is the run's own history (run.service.ts serializeRunForOwner):
 	// a failover shows up here as more than one entry, each with its own
-	// provider, rate and window. `aq job ls` derives its GPU/duration/cost
-	// columns from this rather than inventing a new top-level field, since
-	// the wire has no single "this run's total cost" number and the spec
-	// names none — the two numbers that exist (a rate and a wall-clock
-	// window) are already here, per attempt. omitempty because the CALLER's
-	// view (serializeRunForCaller, what a run-token holder sees) never
-	// carries this key at all.
+	// provider, rate and window. `aq job ls` derives its GPU/duration
+	// columns from this. omitempty because the CALLER's view
+	// (serializeRunForCaller, what a run-token holder sees) never carries
+	// this key at all.
 	Attempts []RunAttempt `json:"attempts,omitempty"`
 }
 
