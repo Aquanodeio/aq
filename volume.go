@@ -101,44 +101,69 @@ func printVolumes(out io.Writer, volumes []api.Volume) {
 		fmt.Fprintln(out, "No volumes yet.")
 		return
 	}
-	fmt.Fprintf(out, "%-24s  %-10s  %-24s  %s\n", "NAME", "SIZE", "ATTACHED", "LAST SAVED")
+	fmt.Fprintf(out, "%-24s  %-10s  %-24s  %s\n", "NAME", "SIZE", "STATUS", "LAST SAVED")
 	for _, v := range volumes {
-		fmt.Fprintf(out, "%-24s  %-10s  %-24s  %s\n", truncate(v.Name, 24), formatPodSizePtr(v.SizeBytes), volumeAttachedLabel(v), orDashPtr(v.HeadSavedAt))
+		fmt.Fprintf(out, "%-24s  %-10s  %-24s  %s\n", truncate(v.Name, 24), formatPodSizePtr(v.SizeBytes), volumeStatusLabel(v), orDashPtr(v.HeadSavedAt))
 	}
 }
 
-// volumeAttachedLabel renders a volume's attachment, by the pod's NAME
-// (falling back to its id if the name is somehow absent) rather than a bare
-// yes/no: "-" unattached, the pod's name while its pod is Running, and
-// "<name> (stopped)" when the pod still owns this volume but isn't running
-// right now, three states, never collapsed into a boolean.
-func volumeAttachedLabel(v api.Volume) string {
-	if v.AttachedPodID == nil {
-		return "-"
+// volumeStatusLabel renders a volume's one-line status, never a bare
+// attached/unattached boolean: "copying" while its bytes are still landing
+// server-side (a Duplicate's target, a share link's files), "in use by
+// <pod>" while a pod's live box is writing it (InUseBy, not merely "some pod
+// references it" -- a stopped referencing pod blocks nothing), "never
+// saved" for one that has never landed a save and isn't in use right now,
+// and "idle" otherwise. InUseBy.PodName nil (its lease outlived the pod row)
+// renders as "another pod" rather than a blank or the raw pod id.
+func volumeStatusLabel(v api.Volume) string {
+	if v.Copying {
+		return "copying"
 	}
-	name := *v.AttachedPodID
-	if v.AttachedPodName != nil && *v.AttachedPodName != "" {
-		name = *v.AttachedPodName
+	if v.InUseBy != nil {
+		name := "another pod"
+		if v.InUseBy.PodName != nil && *v.InUseBy.PodName != "" {
+			name = *v.InUseBy.PodName
+		}
+		return "in use by " + name
 	}
-	if v.Running {
-		return name
+	if v.SaveState == "never_saved" {
+		return "never saved"
 	}
-	return name + " (stopped)"
+	return "idle"
 }
 
-// printVolumeDetail renders one volume's fields plus its point history,
-// provenance is the ONLY thing that created a point (a Stop, or an idle
-// auto-stop); there is no manual save point.
+// saveStateLabel renders a volume's raw wire SaveState for display: the
+// wire's "never_saved" becomes the readable "never saved", and an empty
+// string (a backend too old to send the field) becomes the CLI's own
+// "unknown" -- two different facts that must never collapse into the same
+// string, so this never routes an empty field through "never saved".
+func saveStateLabel(raw string) string {
+	switch raw {
+	case "":
+		return "unknown"
+	case "never_saved":
+		return "never saved"
+	default:
+		return raw
+	}
+}
+
+// printVolumeDetail renders one volume's fields plus every pod that
+// references it and its point history. Provenance is the ONLY thing that
+// created a point (a Stop, or an idle auto-stop); there is no manual save
+// point.
 func printVolumeDetail(out io.Writer, v api.Volume) {
 	fmt.Fprintf(out, "%s (%s)\n", v.Name, v.ID)
 	fmt.Fprintf(out, "  Size: %s\n", formatPodSizePtr(v.SizeBytes))
 	fmt.Fprintf(out, "  Mount path: %s\n", orDash(v.MountPath))
-	fmt.Fprintf(out, "  Attached to pod: %s\n", volumeAttachedLabel(v))
-	state := v.SaveState
-	if state == "" {
-		state = "unknown"
+	fmt.Fprintf(out, "  Status: %s\n", volumeStatusLabel(v))
+	if len(v.UsedBy) > 0 {
+		fmt.Fprintln(out, "  Used by:")
+		for _, u := range v.UsedBy {
+			fmt.Fprintf(out, "    %s (%s)\n", orDash(u.PodName), orDash(u.State))
+		}
 	}
-	fmt.Fprintf(out, "  Last saved: %s (%s)\n", orDashPtr(v.HeadSavedAt), state)
+	fmt.Fprintf(out, "  Last saved: %s (%s)\n", orDashPtr(v.HeadSavedAt), saveStateLabel(v.SaveState))
 	if v.LastSaveError != nil && *v.LastSaveError != "" {
 		fmt.Fprintf(out, "  Last save failed: %s\n", *v.LastSaveError)
 	}
@@ -291,8 +316,10 @@ func volumeRm(args []string) error {
 	return runVolumeRm(volumeRmOptions{cred: cred, target: positional[0], out: os.Stdout})
 }
 
-// runVolumeRm deletes a volume and its whole history. Refused (409) while
-// attached.
+// runVolumeRm deletes a volume and its whole history. Refused (409) while a
+// pod's live box has it; otherwise every stopped pod that referenced it is
+// detached (never purged), printed so the caller knows which pods just lost
+// their volume.
 func runVolumeRm(opts volumeRmOptions) error {
 	out := opts.out
 	if out == nil {
@@ -305,10 +332,14 @@ func runVolumeRm(opts volumeRmOptions) error {
 		return err
 	}
 
-	if err := client.DeleteVolume(volumeID); err != nil {
+	res, err := client.DeleteVolume(volumeID)
+	if err != nil {
 		return fmt.Errorf("could not delete volume %q: %w", opts.target, err)
 	}
 
 	fmt.Fprintf(out, "✓ Deleted volume %q.\n", opts.target)
+	for _, p := range res.DetachedPods {
+		fmt.Fprintf(out, "  Detached from %s.\n", orDash(p.PodName))
+	}
 	return nil
 }
