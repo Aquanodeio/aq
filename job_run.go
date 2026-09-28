@@ -494,9 +494,9 @@ func runJobRun(opts jobRunOptions) error {
 	case opts.pinnedDeploymentID != 0:
 		fmt.Fprintf(out, "✓ Created job %q → run %s (pinned to %s, bills nothing)\n", job.Name, job.Run.ID, opts.onAlias)
 	case opts.image != "":
-		fmt.Fprintf(out, "✓ Created job %q → image %s, run %s %s\n", job.Name, opts.image, job.Run.ID, job.Run.Status)
+		fmt.Fprintf(out, "✓ Created job %q → image %s, run %s %s\n", job.Name, opts.image, job.Run.ID, jobStatusWord(job.Run.Status))
 	default:
-		fmt.Fprintf(out, "✓ Created job %q → v%d, run %s %s\n", job.Name, opts.version, job.Run.ID, job.Run.Status)
+		fmt.Fprintf(out, "✓ Created job %q → v%d, run %s %s\n", job.Name, opts.version, job.Run.ID, jobStatusWord(job.Run.Status))
 	}
 
 	if opts.detach {
@@ -547,10 +547,17 @@ func streamJobRunToCompletion(cred *config.Credential, jobID, runID string, out,
 
 	switch run.Status {
 	case "succeeded":
-		fmt.Fprintf(out, "✓ Run %s succeeded\n", run.ID)
+		fmt.Fprintf(out, "✓ Run %s %s\n", run.ID, jobStatusWord(run.Status))
 		return nil
 	case "failed", "unservable", "cancelled":
-		msg := fmt.Sprintf("run %s %s", run.ID, run.Status)
+		// "failed" is the owner's own code or runtime; "unservable" never
+		// ran the owner's workload at all -- that must never be left for the
+		// reader to infer from a bare status word, so only unservable
+		// carries the disclaimer. Billing is unaffected by this addendum.
+		msg := fmt.Sprintf("run %s: %s", run.ID, jobStatusWord(run.Status))
+		if run.Status == "unservable" {
+			msg += ". " + unservableDisclaimer
+		}
 		if run.Reason != "" {
 			msg += fmt.Sprintf(" (%s)", run.Reason)
 		}
@@ -559,7 +566,7 @@ func streamJobRunToCompletion(cred *config.Credential, jobID, runID string, out,
 		// The log stream ended (e.g. the box was reclaimed mid-run before a
 		// terminal status landed) but the run itself has not finished; say
 		// so rather than pretending this was a clean completion.
-		fmt.Fprintf(out, "Run %s is still %s; check `aq job logs %s` or `aq job ls`\n", run.ID, run.Status, jobID)
+		fmt.Fprintf(out, "Run %s is still %s; check `aq job logs %s` or `aq job ls`\n", run.ID, jobStatusWord(run.Status), jobID)
 		return nil
 	}
 }
