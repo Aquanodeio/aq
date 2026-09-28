@@ -19,7 +19,11 @@ import (
 type jobPullOptions struct {
 	cred   *config.Credential
 	target string // job id or name
-	runID  string // "" means resolve the latest run that reached a box
+	// runID is always resolved locally (latestRunWithABox) rather than
+	// taken from a flag: a job is 1:1 with its one Run now, so there is no
+	// other run a caller could mean. Left settable here only so tests can
+	// pin a fixture's run id without a ListRuns round trip.
+	runID  string
 	dest   string // "" means the default ./<job>-<runId>/
 	out    io.Writer
 	errOut io.Writer
@@ -29,31 +33,16 @@ type jobPullOptions struct {
 	httpGet func(url string) (*http.Response, error)
 }
 
-// jobPullFlags is every flag `aq job pull` accepts, registered in one place
-// so the top-level `aq --help` job: section can be checked against the real
-// flag set (see job_help_test.go's TestTopLevelHelpDocumentsEveryJobFlag,
-// the guard that exists because this exact kind of drift shipped before).
-type jobPullFlags struct {
-	run *string
-}
-
-func registerJobPullFlags(fs *flag.FlagSet) *jobPullFlags {
-	f := &jobPullFlags{}
-	f.run = fs.String("run", "", "run id to pull from (default: the latest run that reached a box)")
-	return f
-}
-
-// jobPull parses `aq job pull <job> [--run <runId>] [dest]` and wires the
-// real environment into doJobPull.
+// jobPull parses `aq job pull <job> [dest]` and wires the real environment
+// into doJobPull.
 func jobPull(args []string) error {
 	fs := flag.NewFlagSet("job pull", flag.ContinueOnError)
-	f := registerJobPullFlags(fs)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) == 0 || positional[0] == "" {
-		return errors.New("usage: aq job pull <job> [--run <runId>] [dest]")
+		return errors.New("usage: aq job pull <job> [dest]")
 	}
 	if len(positional) > 2 {
 		return fmt.Errorf("aq job pull takes at most a job and a destination directory, got %s", strings.Join(positional, " "))
@@ -72,7 +61,6 @@ func jobPull(args []string) error {
 	return doJobPull(jobPullOptions{
 		cred:   cred,
 		target: target,
-		runID:  strings.TrimSpace(*f.run),
 		dest:   dest,
 		out:    os.Stdout,
 		errOut: os.Stderr,

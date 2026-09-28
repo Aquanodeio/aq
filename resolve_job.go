@@ -65,3 +65,21 @@ func findJob(client *api.Client, jobID string) (*api.Job, error) {
 	}
 	return nil, fmt.Errorf("job %q not found", jobID)
 }
+
+// latestRunID resolves a job's most recent run id — the run `aq job
+// logs`/`aq job cancel` address, now that a job is 1:1 with its Run (see the
+// jobs-are-jobs spec). ListRuns
+// is already ordered newest-first (acceptedAt desc, orchestrator
+// jobs.controller.ts:464), so the first element is it — this still resolves
+// correctly for a pre-migration job carrying more than one run, picking the
+// latest exactly as `aq job pull`'s latestRunWithABox already does.
+func latestRunID(client *api.Client, jobID string) (string, error) {
+	runs, err := client.ListRuns(jobID)
+	if err != nil {
+		return "", fmt.Errorf("could not list runs: %w", err)
+	}
+	if len(runs) == 0 {
+		return "", errors.New("this job has no run yet")
+	}
+	return runs[0].ID, nil
+}

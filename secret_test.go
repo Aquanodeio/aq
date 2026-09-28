@@ -522,25 +522,25 @@ func TestSecretDispatchWithNoArgsListsSubcommands(t *testing.T) {
 	}
 }
 
-// --- `aq job create --secret` wiring ---------------------------------------
+// --- `aq job run --secret` wiring ---------------------------------------
 
 // TestCreateJobSendsSecretsOnTheWire: --secret is repeatable and appends to
-// CreateJobRequest.Secrets in the order given.
+// CreateBatchJobRequest.Secrets in the order given.
 func TestCreateJobSendsSecretsOnTheWire(t *testing.T) {
 	var body []byte
-	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := jobRunServer(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ = readAll(r)
-		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
+		writeCreatedJob(w, "job-1", "myenv")
 	})
 	defer srv.Close()
 
-	opts := baseCreateOpts(srv.URL)
+	opts := baseRunOpts(srv.URL)
 	opts.secrets = []string{"HF_TOKEN", "WANDB_KEY"}
-	if err := runJobCreate(opts); err != nil {
-		t.Fatalf("runJobCreate: %v", err)
+	if err := runJobRun(opts); err != nil {
+		t.Fatalf("runJobRun: %v", err)
 	}
 
-	var decoded api.CreateJobRequest
+	var decoded api.CreateBatchJobRequest
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("decode request body: %v", err)
 	}
@@ -550,33 +550,33 @@ func TestCreateJobSendsSecretsOnTheWire(t *testing.T) {
 }
 
 // TestCreateJobOmitsSecretsWhenNotPassed: no --secret at all must leave the
-// key off the wire entirely, not send an empty array -- CreateJobRequest.Secrets
+// key off the wire entirely, not send an empty array -- CreateBatchJobRequest.Secrets
 // carries `omitempty` for exactly this.
 func TestCreateJobOmitsSecretsWhenNotPassed(t *testing.T) {
 	var body []byte
-	srv := jobCreateServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := jobRunServer(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ = readAll(r)
-		writeData(w, map[string]any{"id": "ep-1", "name": "myenv", "versionId": 555})
+		writeCreatedJob(w, "job-1", "myenv")
 	})
 	defer srv.Close()
 
-	opts := baseCreateOpts(srv.URL)
-	if err := runJobCreate(opts); err != nil {
-		t.Fatalf("runJobCreate: %v", err)
+	opts := baseRunOpts(srv.URL)
+	if err := runJobRun(opts); err != nil {
+		t.Fatalf("runJobRun: %v", err)
 	}
 	if strings.Contains(string(body), "secrets") {
 		t.Fatalf("no --secret passed must omit the key entirely, got: %s", body)
 	}
 }
 
-// TestJobCreateParsesRepeatableSecretFlag exercises the actual flag-parsing
-// entry point, not just runJobCreate; --secret must accumulate rather than
+// TestJobRunParsesRepeatableSecretFlag exercises the actual flag-parsing
+// entry point, not just runJobRun; --secret must accumulate rather than
 // overwrite, same as ssh.go's -L.
-func TestJobCreateParsesRepeatableSecretFlag(t *testing.T) {
+func TestJobRunParsesRepeatableSecretFlag(t *testing.T) {
 	detachedSandbox(t)
 	// No server and no stored credential: this only proves the flags parsed
-	// and reached the login check, mirroring TestJobCreateNeedsNoCapFlag.
-	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--secret", "A", "--secret", "B"})
+	// and reached the login check.
+	err := jobRun([]string{jobTestSetupID, "3", "--secret", "A", "--secret", "B"})
 	if err == nil {
 		t.Fatal("expected an error (no stored credential in the sandbox)")
 	}

@@ -29,9 +29,7 @@ func TestTopLevelHelpDocumentsEveryJobFlag(t *testing.T) {
 		command  string
 		register func(*flag.FlagSet)
 	}{
-		{"aq job create", func(fs *flag.FlagSet) { registerJobCreateFlags(fs) }},
 		{"aq job run", func(fs *flag.FlagSet) { registerJobRunFlags(fs) }},
-		{"aq job pull", func(fs *flag.FlagSet) { registerJobPullFlags(fs) }},
 	} {
 		fs := flag.NewFlagSet(c.command, flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -100,8 +98,8 @@ func TestHelpSectionIsBoundedToItsOwnSection(t *testing.T) {
 	if documentsFlag(jobSection, "warn-after") {
 		t.Error("the job: section bled into the idle: section that follows it; helpSection is not bounding")
 	}
-	if !strings.Contains(jobSection, "aq job create") {
-		t.Error("the job: section does not contain `aq job create`; helpSection is reading the wrong text")
+	if !strings.Contains(jobSection, "aq job run") {
+		t.Error("the job: section does not contain `aq job run`; helpSection is reading the wrong text")
 	}
 	// A name that is only a PREFIX of a documented flag must not count as
 	// documented, or the guard cannot see a rename.

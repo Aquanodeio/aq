@@ -7,15 +7,16 @@ import (
 	"strconv"
 )
 
-// Job-and-runs jobs backing `aq job`, `aq run`, and `aq
-// runs`. An job is a stable, callable address in front of ONE setup
-// version — creating one is handing out a GPU budget (MaxInstances +
-// MaxInstances), which is why the CLI requires it rather than defaulting to
-// unbounded. The old per-job dollar cap is gone: it could not be translated
-// into runs, so it was never a control the owner could reason about.
+// Jobs and their Runs, backing `aq job` and `aq endpoint`. Per the
+// jobs-are-jobs spec, a BATCH job
+// (command entrypoint) is 1:1 with its one Run: `aq job run` creates both in
+// one call, and running it again always makes a NEW job via `aq job rerun`.
+// A SERVICE job (http/comfyui entrypoint, `aq endpoint`) is unaffected and
+// keeps its own scaling knobs (MaxInstances, MinInstances) on the Job type
+// below.
 //
 // Unlike setups.go's snake_case DTOs, these routes speak camelCase on the
-// wire — match the field names exactly (versionId, spendCapCents, ...), do
+// wire — match the field names exactly (versionId, gpuModels, ...), do
 // not "normalize" them to snake_case.
 
 // Job mirrors one row of GET /jobs.
@@ -66,17 +67,22 @@ func (c *Client) ListJobsByShape(shape string) ([]Job, error) {
 	return out, nil
 }
 
-// CreateJobRequest is the body of POST /jobs. MaxInstances and
-// MaxInstances is always sent — the CLI never lets it be omitted
-// (see jobCreate's validation), so there is no unbounded-by-default
-// path on the wire either.
+// CreateBatchJobRequest is the body of POST /jobs for a command (batch)
+// entrypoint, per the jobs-are-jobs spec:
+// creating a batch job creates its ONE Run in the same transaction, so there
+// is no separate "now start it" call any more, and no per-job scaling
+// knob to size — MaxInstances and MonthlySpendCapCents are GONE from this
+// request entirely, not merely left unset, because the backend 400s a batch
+// create that carries either key by name. Keeping them as accepted no-ops
+// would be worse than removing them: a struct field is a promise the wire
+// still means something for it, and it does not any more.
 //
 // PinnedDeploymentID pins the job to a box the customer already owns
 // (attached via `aq host add` + `aq attach`) instead of hardware Aquanode
 // rents. It carries `omitempty` deliberately: the zero value must never
 // reach the wire as a present-but-empty key, only as an absent one, the
 // server reads an absent key as "today's managed behaviour" and a present
-// zero/negative one as a malformed pin. jobCreate resolves this from a
+// zero/negative one as a malformed pin. jobRun resolves this from a
 // `--on <alias>` flag locally and refuses before ever building this request
 // unless the alias names a genuinely attached deployment.
 //
@@ -87,20 +93,16 @@ func (c *Client) ListJobsByShape(shape string) ([]Job, error) {
 // `"versionId":0` and trip the backend's both-or-neither check, which reads
 // 0 as "sent" rather than "absent". A version row id is never legitimately
 // 0, so `omitempty` is safe on the version-source path too.
-type CreateJobRequest struct {
-	Name         string        `json:"name"`
-	VersionID    int           `json:"versionId,omitempty"`
-	Image        *ImageSource  `json:"image,omitempty"`
-	Entrypoint   *Entrypoint   `json:"entrypoint,omitempty"`
-	Hardware     *Hardware     `json:"hardware,omitempty"`
-	Placement    *JobPlacement `json:"placement,omitempty"`
-	MaxInstances int           `json:"maxInstances"`
-	// Pointer + omitempty: optional means the key is ABSENT on the wire, never
-	// present-as-0. A zero budget would refuse every run.
-	MonthlySpendCapCents *int64 `json:"monthlySpendCapCents,omitempty"`
-	PinnedDeploymentID   int    `json:"pinnedDeploymentId,omitempty"`
+type CreateBatchJobRequest struct {
+	Name               string        `json:"name"`
+	VersionID          int           `json:"versionId,omitempty"`
+	Image              *ImageSource  `json:"image,omitempty"`
+	Entrypoint         *Entrypoint   `json:"entrypoint,omitempty"`
+	Hardware           *Hardware     `json:"hardware,omitempty"`
+	Placement          *JobPlacement `json:"placement,omitempty"`
+	PinnedDeploymentID int           `json:"pinnedDeploymentId,omitempty"`
 	// Secrets names `type: "env"` team secrets (POST /secrets/teams/:teamId,
-	// see internal/api/secrets.go) this job's Runs need injected at dispatch.
+	// see internal/api/secrets.go) this job's Run needs injected at dispatch.
 	// omitempty: absent means "none", the same convention every optional
 	// field on this request already follows; never sent as an empty array.
 	// A name with no matching live secret on the team is refused (400).
@@ -143,7 +145,7 @@ type ImageSource struct {
 // Entrypoint is a `kind: "command"` entrypoint, the only kind this CLI can
 // express. `http`/`comfyui` entrypoints carry a port, a body template or a
 // whole workflow_api.json graph with no CLI-typeable shape, so `aq job
-// create` only ever emits `command`. Argv comes verbatim from everything
+// run` only ever emits `command`. Argv comes verbatim from everything
 // after a bare `--` on the command line (see splitRemoteCommand), never
 // shell-parsed, matching the "no quoting gymnastics" the ticket asked for.
 // OutputPath is required and must be absolute: entrypoint.go's
@@ -177,11 +179,59 @@ type JobPlacement struct {
 	GPUOrder string `json:"gpuOrder,omitempty"`
 }
 
-// CreateJob makes a setup version callable, returning the created
-// job row.
-func (c *Client) CreateJob(req CreateJobRequest) (*Job, error) {
-	var out Job
+// BatchJob mirrors one element of `GET /jobs?shape=batch`, the object
+// `GET /jobs/:id` returns for a batch job, and the 201 body of `POST /jobs`
+// and `POST /jobs/:id/rerun` for a command entrypoint — the jobs-are-jobs
+// spec's batch wire shape.
+//
+// This is a SEPARATE type from Job, never a widened version of it: Job is
+// the service-shape row `aq endpoint` still reads (status, runUrl,
+// runningInstances, the scaling/schedule/token fields), and every one of
+// those is explicitly ABSENT from a batch row's body under the new
+// contract — a shared struct would silently decode zero values for fields
+// that were never sent, which reads exactly like a row that legitimately
+// has none. Run is ALWAYS present, never null: a batch job is 1:1 with the
+// one Run it was created with.
+type BatchJob struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Shape     string `json:"shape"`
+	CreatedAt string `json:"createdAt"`
+	Run       Run    `json:"run"`
+}
+
+// ListBatchJobs returns the caller's batch (command-entrypoint) jobs only —
+// GET /jobs?shape=batch. `aq job ls` must never show a service (endpoint)
+// row: the two read as unrelated concepts to a caller, same reasoning as
+// ListJobsByShape("service") for `aq endpoint list`.
+func (c *Client) ListBatchJobs() ([]BatchJob, error) {
+	var out []BatchJob
+	if err := c.getJSON("/jobs?shape=batch", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CreateBatchJob creates a batch job AND its one Run in a single call —
+// POST /jobs with a command entrypoint. Unlike the old create-then-run
+// (create)/(job runs) split, this is the only way to make a batch job at
+// all now: there is no follow-up call that starts it.
+func (c *Client) CreateBatchJob(req CreateBatchJobRequest) (*BatchJob, error) {
+	var out BatchJob
 	if err := c.postJSON("/jobs", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RerunJob makes a NEW job copying the source job's spec, plus its own new
+// Run — POST /jobs/:id/rerun. "Running it again" always means a new job
+// under this contract (jobs-are-jobs spec, "The contract" section); the
+// source job named here is never mutated.
+func (c *Client) RerunJob(jobID string) (*BatchJob, error) {
+	var out BatchJob
+	path := "/jobs/" + url.PathEscape(jobID) + "/rerun"
+	if err := c.postJSON(path, struct{}{}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -203,8 +253,8 @@ type HttpEntrypoint struct {
 }
 
 // CreateEndpointRequest is the body of POST /jobs for `aq endpoint create` —
-// the service-shaped sibling of CreateJobRequest. A deliberately separate
-// type rather than reusing CreateJobRequest's `Entrypoint *Entrypoint`
+// the service-shaped sibling of CreateBatchJobRequest. A deliberately separate
+// type rather than reusing CreateBatchJobRequest's `Entrypoint *Entrypoint`
 // field: that field's concrete type only ever carries a command entrypoint
 // (argv, outputPath — neither means anything on an http entrypoint), so
 // widening it to an interface would turn every existing command-create
@@ -273,22 +323,6 @@ func (c *Client) HardwareAvailability(diskGB int) (*HardwareAvailability, error)
 	return &out, nil
 }
 
-// RepointJobRequest is the body of POST /jobs/:id/repoint.
-type RepointJobRequest struct {
-	VersionID int `json:"versionId"`
-}
-
-// RepointJob switches a job to a different version — the same
-// run rolls it forward or back, it just depends which VersionID is passed.
-func (c *Client) RepointJob(jobID string, req RepointJobRequest) (*Job, error) {
-	var out Job
-	path := "/jobs/" + url.PathEscape(jobID) + "/repoint"
-	if err := c.postJSON(path, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // DeleteJob removes a job — DELETE /jobs/:id.
 func (c *Client) DeleteJob(jobID string) error {
 	path := "/jobs/" + url.PathEscape(jobID)
@@ -312,6 +346,38 @@ type Run struct {
 	StartedAt  string `json:"startedAt"`
 	FinishedAt string `json:"finishedAt"`
 	Phase      string `json:"phase"`
+	// CostCents is the billed cost of this run in US cents, computed
+	// server-side from the ledger (round(sum(billing_buckets_v2.amount_usd)
+	// * 100) over this run's attempts' deployments). nil means UNKNOWN --
+	// the run has no attempt with a deployment yet, or every such
+	// deployment is customer-owned (unmetered) -- never "free" or "$0.00".
+	// Clients render this number and never compute cost themselves.
+	CostCents *int64 `json:"costCents"`
+	// Attempts is the run's own history (run.service.ts serializeRunForOwner):
+	// a failover shows up here as more than one entry, each with its own
+	// provider, rate and window. `aq job ls` derives its GPU/duration
+	// columns from this. omitempty because the CALLER's view
+	// (serializeRunForCaller, what a run-token holder sees) never carries
+	// this key at all.
+	Attempts []RunAttempt `json:"attempts,omitempty"`
+}
+
+// RunAttempt is one entry of Run.Attempts. Only the fields `aq job ls` and a
+// future run-detail view need are named here; the owner view carries more
+// (checkpoint bookkeeping, stall verdicts) that no CLI surface renders yet —
+// an unlisted field simply decodes as absent, never breaking this struct.
+type RunAttempt struct {
+	ID       string `json:"id"`
+	Ordinal  int    `json:"ordinal"`
+	Provider string `json:"provider"`
+	// GPUModel and PriceCentsPerHour are nullable on the wire (an attempt
+	// that never got a box has neither yet), so both are pointers -- nil
+	// means UNKNOWN, never "free" or "no GPU".
+	GPUModel          *string `json:"gpuModel"`
+	PriceCentsPerHour *int64  `json:"priceCentsPerHour"`
+	PlacedAt          string  `json:"placedAt"`
+	StartedAt         *string `json:"startedAt"`
+	EndedAt           *string `json:"endedAt"`
 }
 
 // ListRuns returns a job's recent runs — GET /jobs/:id/runs.
@@ -322,68 +388,6 @@ func (c *Client) ListRuns(jobID string) ([]Run, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-// CreateRunRequest is the body of POST /jobs/:id/runs. Inputs is
-// always a non-nil map (possibly empty) — the CLI sends `{"inputs":{}}`
-// rather than omitting the field when the caller passes no --input file.
-// Wait and WaitSeconds are optional; when set, the server will try to return
-// a 200 with the full run object if it completes within the window.
-type CreateRunRequest struct {
-	Inputs      map[string]any `json:"inputs"`
-	Wait        bool           `json:"wait,omitempty"`
-	WaitSeconds int            `json:"waitSeconds,omitempty"`
-}
-
-// CreateRunResult is the data returned by POST /jobs/:id/runs (202 async response).
-type CreateRunResult struct {
-	RunID      string `json:"runId"`
-	Status     string `json:"status"`
-	AcceptedAt string `json:"acceptedAt"`
-}
-
-// CreateRunResponse can be either a 202 CreateRunResult or a 200 Run object.
-// It merges all possible fields; the presence of certain fields indicates which
-// response type was returned (RunID → 202 async, ID → 200 completed).
-type CreateRunResponse struct {
-	// 202 async response fields
-	RunID      string `json:"runId"`
-	AcceptedAt string `json:"acceptedAt"`
-	// 200 sync response fields (full Run object)
-	ID         string `json:"id"`
-	StartedAt  string `json:"startedAt"`
-	FinishedAt string `json:"finishedAt"`
-	OutputRef  string `json:"outputRef"`
-	// Both responses include Status and Reason
-	Status string `json:"status"`
-	Reason string `json:"reason"`
-	Phase  string `json:"phase"`
-}
-
-// IsAsync returns true if this is a 202 async response (still queued/running).
-func (r *CreateRunResponse) IsAsync() bool {
-	return r.RunID != "" && r.ID == ""
-}
-
-// RunID returns either the 202 runId or the 200 id, whichever is present.
-func (r *CreateRunResponse) GetRunID() string {
-	if r.RunID != "" {
-		return r.RunID
-	}
-	return r.ID
-}
-
-// CreateRun makes a run against a job. The response can be either
-// 202 (async, still running) or 200 (sync, completed within the wait window).
-// Use resp.IsAsync() to distinguish them, or resp.GetRunID() to get the id
-// in either case.
-func (c *Client) CreateRun(jobID string, req CreateRunRequest) (*CreateRunResponse, error) {
-	var out CreateRunResponse
-	path := "/jobs/" + url.PathEscape(jobID) + "/runs"
-	if err := c.postJSON(path, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }
 
 // GetRun fetches one run by id — GET /jobs/:id/runs/:runId.
