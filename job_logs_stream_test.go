@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Aquanodeio/aq/internal/config"
 )
@@ -107,5 +109,147 @@ func TestJobLogsStreamNon200FallsBackToPoll(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "falling back to polling") {
 		t.Fatalf("stderr should say the tail fell back to polling, got: %q", errOut.String())
+	}
+}
+
+// A server that keeps answering "unreachable" on the poll route forever must
+// never hang the follow loop once the run itself has actually gone terminal
+// (e.g. `aq job cancel` landing from another terminal while this one keeps
+// streaming). pollRunLogsFrom must ask the run directly and stop as soon as
+// it sees a terminal status, independent of what the log source ever says.
+func TestJobLogsFollowStopsWhenRunGoesTerminalDespitePersistentUnreachable(t *testing.T) {
+	var pollCount int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "job-1", "name": "myjob"}})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs/stream", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs", func(w http.ResponseWriter, r *http.Request) {
+		pollCount++
+		writeData(w, map[string]any{"chunk": "", "nextOffset": 0, "size": 0, "truncated": false, "source": "unreachable"})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"id": "run-1", "status": "cancelled", "reason": "cancelled by user"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runJobLogsFollow(jobLogsOptions{
+			cred:   cred,
+			jobRef: "myjob",
+			runID:  "run-1",
+			follow: true,
+			out:    &out,
+			errOut: &errOut,
+			sleep:  func(time.Duration) {},
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runJobLogsFollow: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runJobLogsFollow did not return within 5s: it outlived the terminal run")
+	}
+	if pollCount == 0 {
+		t.Fatal("expected the poll fallback to be hit at least once")
+	}
+	if !strings.Contains(errOut.String(), "can't reach the machine") {
+		t.Fatalf("stderr should still warn about unreachable, got: %q", errOut.String())
+	}
+}
+
+// The end-to-end shape of the bug: `aq job run` must exit non-zero within a
+// bounded time when the run it is streaming goes `cancelled` while the log
+// endpoint keeps answering `unreachable` forever. Before the fix,
+// streamJobRunToCompletion never reached waitForRunTerminal because
+// runJobLogsFollow (via pollRunLogsFrom) never returned.
+func TestStreamJobRunToCompletionExitsNonZeroWhenLogStaysUnreachablePastCancel(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "job-1", "name": "myjob"}})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs/stream", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"chunk": "", "nextOffset": 0, "size": 0, "truncated": false, "source": "unreachable"})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"id": "run-1", "status": "cancelled", "reason": "cancelled by user"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- streamJobRunToCompletion(cred, "job-1", "run-1", io.Discard, io.Discard, func(time.Duration) {}, 0)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a non-nil error: the run ended cancelled")
+		}
+		if !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("error should name the cancelled status, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("streamJobRunToCompletion did not return within 5s: the log follow outlived the terminal run")
+	}
+}
+
+// box_gone is a normal terminal end state (the batch box was already
+// released and never wrote an archived log), not a failure signal by
+// itself: the follow must stop on it exactly like archived, and let the
+// run's own status (not the log source) decide the exit code.
+func TestJobLogsFollowStopsOnBoxGone(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "job-1", "name": "myjob"}})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs/stream", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"chunk": "", "nextOffset": 0, "size": 0, "truncated": false, "source": "box_gone"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runJobLogsFollow(jobLogsOptions{
+			cred:   cred,
+			jobRef: "myjob",
+			runID:  "run-1",
+			follow: true,
+			out:    &out,
+			errOut: &errOut,
+			sleep:  func(time.Duration) {},
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runJobLogsFollow: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runJobLogsFollow did not return within 5s on box_gone")
 	}
 }

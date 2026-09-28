@@ -215,6 +215,15 @@ func parseTerminalFrame(raw []byte) (*api.RunLogChunk, error) {
 	return &chunk, nil
 }
 
+// runStatusCheckEvery bounds how long pollRunLogsFrom can go without
+// independently confirming the run is still non-terminal, even when the log
+// source never reports anything actionable on its own. Checking on every
+// poll would double the request rate for no benefit on the common path
+// (source normally progresses to archived/box_gone on its own); this still
+// catches a server stuck answering something else within a few poll
+// intervals.
+const runStatusCheckEvery = 5
+
 // pollRunLogsFrom is the fallback poll loop runJobLogsFollow hands off to
 // once the stream ends (error, non-200, or a terminal/end frame). It mirrors
 // runJobLogs's loop (job_logs.go:65-126), parameterized by a starting offset
@@ -250,9 +259,37 @@ func pollRunLogsFrom(client *api.Client, jobID string, opts jobLogsOptions, out,
 			fmt.Fprintln(errOut, "aq: this log got long enough that its oldest output was dropped; you are seeing the retained tail")
 		}
 
+		// box_gone means the run is terminal and there is no archived log to
+		// wait for — per the contract this is a normal end state for a
+		// released batch box, not a failure, so it stops the follow exactly
+		// like archived does.
 		if chunk.Source == "archived" || chunk.Source == "box_gone" {
 			return nil
 		}
+
+		// The log source alone must never be trusted to end a follow: a
+		// server that keeps answering "unreachable" (or anything short of
+		// archived/box_gone) past the point the run itself already went
+		// terminal — e.g. `aq job cancel` landing from another terminal —
+		// would otherwise hang this loop forever, independent of whatever is
+		// waiting on it downstream (`aq job run`'s exit code, `aq job logs
+		// -f`'s own return). Ask the run directly whenever the log says
+		// unreachable, and periodically regardless of source, so a terminal
+		// run always ends the follow even if the log endpoint never says so
+		// on its own.
+		if chunk.Source == "unreachable" || polls%runStatusCheckEvery == runStatusCheckEvery-1 {
+			if run, runErr := client.GetRun(jobID, opts.runID); runErr == nil && isTerminalRunStatus(run.Status) {
+				// One more read at the offset already held: the box may have
+				// finished archiving its log in the same window this
+				// discovered the run was terminal, and this is the last
+				// chance to show it before handing back to the caller.
+				if final, finalErr := client.GetRunLogs(jobID, opts.runID, offset, opts.attempt); finalErr == nil && final.Chunk != "" {
+					fmt.Fprint(out, final.Chunk)
+				}
+				return nil
+			}
+		}
+
 		if opts.maxPolls > 0 && polls+1 >= opts.maxPolls {
 			return nil
 		}
