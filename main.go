@@ -499,29 +499,31 @@ idle:
   --on / --off              Enable / disable idle auto-stop
 
 job:
-  Everything about jobs lives under "aq job", not at the top level. "aq run"
-  already means "push this directory to a box and run something on it" and
-  "aq logs" already tails a box; those are daily commands, and "aq run mybox"
-  and "aq run myjob" are the same string, so nothing could tell them apart.
+  A job is one execution: "aq job run" submits a command, it runs to
+  completion (succeeded/failed/unservable/cancelled), and running it again
+  makes a NEW job (aq job rerun), never a second run bolted onto the first.
+  Everything lives under "aq job", not at the top level — "aq run" already
+  means "push this directory to a box and run something on it" and "aq logs"
+  already tails a box; those are daily commands, and "aq run mybox" and
+  "aq run myjob" are the same string, so nothing could tell them apart.
 
-  aq job create <pod> <version>
-  aq job create --image <ref> -- <argv...>
-                              Make something runnable as a job: either a pod
-                              version you saved, or a container image you
-                              already have. An image-source job states its
+  aq job run <pod> <version> -- <argv...>
+  aq job run --image <ref> -- <argv...>
+                              Create a job AND start it in one call: either a
+                              pod version you saved, or a container image you
+                              already have. Prints the run id and streams its
+                              log until the run ends, exiting non-zero if it
+                              did not succeed. An image-source job states its
                               entrypoint after a bare "--".
 
   --name <name>             Job name (default: the source's own name)
-  --max-instances <n>       Maximum concurrent instances this job may run.
-                            Required: a job hands out a GPU budget, so it
-                            never defaults to unbounded
-  --monthly-cap-cents <n>   Monthly budget in cents; new runs stop once the
-                            month's spend reaches it
+  --detach                  Print the created job's id and exit immediately,
+                            instead of streaming its log to completion
   --on <alias>              Pin it to a box you already attached (aq attach
                             <alias>) instead of renting hardware; that box
                             bills nothing
   --secret <name>           Inject an "aq secret set --type env" secret into
-                            the job's Runs (repeatable)
+                            the job's Run (repeatable)
   --checkpoint-path <path>  Path ogre snapshots so a reclaimed or price-hopped
                             run can resume (repeatable). Optional here, but the
                             server refuses a job that names none
@@ -556,40 +558,29 @@ job:
                             1, 2, 4 or 8 (default: 1)
   --disk-gb <n>             Disk size in GB for an --image job (default: 100)
 
-  aq job point <name> <version>
-                              Repoint a job at a different version in its
-                              lineage (also how you roll back).
-  aq job rm <name>            Remove a job.
-  aq job run <job> [--input file]
-                              Start a run and print its run id. --input is a
-                              JSON file of the declared params.
-                              --wait  Block until the run finishes, up to
-                              --wait-seconds (default 30, capped at 120).
-                              --follow, -f  Stream the run's log until it ends.
-  aq job runs <job>           List a job's recent runs: id, status, phase and
-                              reason. "unservable" means Aquanode could not
+  aq job ls                   List your jobs: name, status, GPU, duration
+                              and cost. "UNSERVABLE" means Aquanode could not
                               get the run a machine at all — it does NOT mean
                               your own code failed.
-  aq job logs <job> <run-id> [-f] [--attempt N]
-                              Print a run's log. -f keeps printing as it is
-                              written. A run that moved to another machine has
-                              several attempts; --attempt picks one, and the
-                              default is the latest rather than all of them
-                              concatenated, which would put the timestamps out
-                              of order in the middle.
-  aq job cancel <job> <run-id>
-                              Stop a run. Billing stops when the machine is
-                              released.
-  aq job pull <job> [--run <runId>] [dest]
-                              Download a finished run's landed artifacts (its
+  aq job logs <job> [-f] [--attempt N]
+                              Print the job's run's log. -f keeps printing as
+                              it is written. A run that moved to another
+                              machine has several attempts; --attempt picks
+                              one, and the default is the latest rather than
+                              all of them concatenated, which would put the
+                              timestamps out of order in the middle.
+  aq job cancel <job>          Stop the job's run. Billing stops when the
+                              machine started only for it is released.
+  aq job pull <job> [dest]     Download the job's run's landed artifacts (its
                               log object and every declared output) into dest
                               (default: "./<job>-<runId>/"), one file per
                               artifact key. Re-running skips a file already
                               downloaded at the same size, so an interrupted
                               pull picks up where it left off.
-
-  --run <runId>              Pull this run instead of the latest one that
-                            actually reached a box (default)
+  aq job rerun <job>           Make a NEW job that reruns this one's spec
+                              (same source, hardware, secrets). Prints the
+                              new job's id; watch it with "aq job logs".
+  aq job rm <job>              Remove a job.
 
 endpoint:
   The service-shaped half of the Jobs vocabulary: an image with a port,

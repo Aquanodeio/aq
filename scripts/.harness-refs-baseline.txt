@@ -1,72 +1,73 @@
-# harness-refs baseline for aq, keyed <path>::<reason>.
-# See scripts/check-harness-refs.sh: a key listed here is an ACCEPTED
-# pre-existing reference; any match NOT listed fails the guard.
 #
-# Regenerated 2026-09-07 from main. The file had drifted far behind the
-# source: 13 references that had been in the tree for months were absent,
-# so the guard failed on every branch including main and enforced nothing.
-# Burning an entry down (rewriting the citation to be self-contained) is
 # always preferred over adding one. Never add a key for a reference the
+# Burning an entry down (rewriting the citation to be self-contained) is
 # current change introduces.
-attach.go::#878
+# harness-refs baseline for aq, keyed <path>::<reason>.
+# pre-existing reference; any match NOT listed fails the guard.
+# Regenerated 2026-09-07 from main. The file had drifted far behind the
+# See scripts/check-harness-refs.sh: a key listed here is an ACCEPTED
+# so the guard failed on every branch including main and enforced nothing.
+# source: 13 references that had been in the tree for months were absent,
 attach_test.go::#878
 attach_timeout_test.go::#4242
-browser.go::#209
+attach.go::#878
 browser_test.go::#209
+browser.go::#209
 CLAUDE.md::#970
-deploy.go::#207
-deploy.go::#208
-deploy.go::#209
-deploy.go::#234
-deploy.go::#235
 deploy_test.go::#208
 deploy_test.go::#209,#422
 deploy_test.go::#235
 deploy_test.go::#310
 deploy_test.go::#5151
+deploy.go::#207
+deploy.go::#208
+deploy.go::#209
+deploy.go::#234
+deploy.go::#235
+down_test.go::#204
 down.go::#209
 down.go::#422
-down_test.go::#204
 gpus_test.go::#868
-import.go::#970
 import_test.go::#970
+import.go::#970
 internal/api/control.go::#177
 internal/api/control.go::#180
 internal/api/control.go::#209
 internal/api/control.go::#235
 internal/api/control.go::#310
-internal/api/device.go::#209
 internal/api/device_test.go::#209
+internal/api/device.go::#209
 internal/api/import.go::#970
-internal/api/marketplace.go::#868
+internal/api/jobs_test.go::#1007
 internal/api/marketplace_test.go::#868
-login.go::#207
+internal/api/marketplace.go::#868
+job_run.go::#1157
 login_test.go::#1
 login_test.go::#1,#2
 login_test.go::#207
-probe.go::#234
+login.go::#207
 probe_test.go::#234
+probe.go::#234
 run_test.go::#779
 scripts/release-notes.sh::#422
-sshkey.go::#422
 sshkey_test.go::#422
-status.go::#209,#213
+sshkey.go::#422
 status_test.go::#204
 status_test.go::#209
 status_test.go::#213
 status_test.go::#4242
+status.go::#209,#213
 sync_code_exec_test.go::#779
 sync_code_test.go::#779
-up.go::#203
-up.go::#204
-up.go::#207
-up.go::#208
-up.go::#234
-up.go::#235
 up_test.go::#203
 up_test.go::#204
 up_test.go::#208
 up_test.go::#234
 up_test.go::#310
 up_test.go::#422
-internal/api/jobs_test.go::#1007
+up.go::#203
+up.go::#204
+up.go::#207
+up.go::#208
+up.go::#234
+up.go::#235

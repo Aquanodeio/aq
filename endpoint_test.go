@@ -198,11 +198,11 @@ func TestEndpointCreateRequiresImageLocally(t *testing.T) {
 	}
 }
 
-// `aq job create --port` is the ticket's other named refusal: a job that
+// `aq job run --port` is the ticket's other named refusal: a job that
 // serves HTTP is an endpoint, not a job, and the fix names the right command.
-func TestJobCreatePortFlagRefusesLocally(t *testing.T) {
+func TestJobRunPortFlagRefusesLocally(t *testing.T) {
 	detachedSandbox(t)
-	err := jobCreate([]string{jobTestSetupID, "3", "--max-instances", "1", "--port", "8080"})
+	err := jobRun([]string{jobTestSetupID, "3", "--port", "8080"})
 	if err == nil {
 		t.Fatal("expected an error")
 	}

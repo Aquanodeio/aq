@@ -12,7 +12,9 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// `aq job logs <job> <run-id> [-f]` — tail one run's log.
+// `aq job logs <job> [-f]` — tail a job's run's log. A job is 1:1 with its
+// one Run now (jobs-are-jobs spec),
+// so the run id is resolved automatically rather than typed.
 //
 // Byte-offset paging, advancing by the offset the SERVER returns rather than by
 // the length of what we printed. A capped read would otherwise make the
@@ -43,18 +45,27 @@ func jobLogs(args []string) error {
 		return fmt.Errorf("aq job logs: %w", err)
 	}
 	rest := fs.Args()
-	if len(rest) != 2 {
-		return errors.New("usage: aq job logs <job> <run-id> [-f] [--attempt N]")
+	if len(rest) != 1 || rest[0] == "" {
+		return errors.New("usage: aq job logs <job> [-f] [--attempt N]")
 	}
 
 	cred, err := requireLogin()
 	if err != nil {
 		return err
 	}
+	client := newControlClient(cred)
+	jobID, err := resolveJobID(client, rest[0])
+	if err != nil {
+		return err
+	}
+	runID, err := latestRunID(client, jobID)
+	if err != nil {
+		return err
+	}
 	return runJobLogsFollow(jobLogsOptions{
 		cred:    cred,
-		jobRef:  rest[0],
-		runID:   rest[1],
+		jobRef:  jobID,
+		runID:   runID,
 		follow:  *follow || *followLong,
 		attempt: *attempt,
 		out:     os.Stdout,
@@ -132,21 +143,31 @@ func runJobLogs(opts jobLogsOptions) error {
 	}
 }
 
-// `aq job cancel <job> <run-id>`.
+// `aq job cancel <job>` — stop a job's one Run. A job is 1:1 with its Run
+// now, so the run id is resolved automatically rather than typed.
 func jobCancel(args []string) error {
-	if len(args) != 2 {
-		return errors.New("usage: aq job cancel <job> <run-id>")
+	fs := flag.NewFlagSet("job cancel", flag.ContinueOnError)
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(positional) != 1 || positional[0] == "" {
+		return errors.New("usage: aq job cancel <job>")
 	}
 	cred, err := requireLogin()
 	if err != nil {
 		return err
 	}
 	client := newControlClient(cred)
-	jobID, err := resolveJobID(client, args[0])
+	jobID, err := resolveJobID(client, positional[0])
 	if err != nil {
 		return err
 	}
-	run, err := client.CancelRun(jobID, args[1])
+	runID, err := latestRunID(client, jobID)
+	if err != nil {
+		return err
+	}
+	run, err := client.CancelRun(jobID, runID)
 	if err != nil {
 		return fmt.Errorf("aq job cancel: %w", err)
 	}
