@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -32,6 +33,7 @@ type jobLogsOptions struct {
 
 	client   func(cred *config.Credential) *api.Client
 	sleep    func(time.Duration)
+	httpGet  func(string) (*http.Response, error)
 	maxPolls int // 0 = unlimited; tests bound it
 }
 
@@ -111,6 +113,20 @@ func runJobLogs(opts jobLogsOptions) error {
 			offset = chunk.NextOffset
 		}
 
+		// A finished attempt's log lives in object storage, and the server
+		// answers with WHERE (`source: archived`, a size, a logRef) and no
+		// bytes, by design: payloads never transit the orchestrator. Printing
+		// only `chunk` therefore showed nothing for every finished run while
+		// exiting 0, which reads as "the log is empty". Fetch it the same way
+		// `aq job pull` does, through the artifact key "log" (never logRef,
+		// which the download validator does not accept).
+		if offset == 0 && chunk.Chunk == "" && chunk.Source == "archived" && chunk.Size > 0 && opts.attempt == 0 {
+			if err := printArchivedLog(client, jobID, opts.runID, opts.httpGet, out); err != nil {
+				fmt.Fprintf(errOut, "aq: this run's log is archived but could not be fetched (%v); try `aq job pull %s`\n", err, opts.jobRef)
+			}
+			return nil
+		}
+
 		// Said ONCE, to stderr, and never as an empty log. "We could not read
 		// it" and "there is nothing to read" are different facts, and printing
 		// nothing would silently assert the second.
@@ -179,4 +195,26 @@ func jobCancel(args []string) error {
 	// uploading (jobs-are-jobs spec, "the box is released" section).
 	fmt.Fprintf(os.Stdout, "cancelling %s; its box is released once the run's outputs and log finish uploading\n", run.ID)
 	return nil
+}
+
+// printArchivedLog streams a finished run's archived log object to out,
+// minting a short-lived download URL for its artifact key first.
+func printArchivedLog(client *api.Client, jobID, runID string, httpGet func(string) (*http.Response, error), out io.Writer) error {
+	if httpGet == nil {
+		httpGet = http.Get
+	}
+	dl, err := client.DownloadRunArtifactURL(jobID, runID, "log")
+	if err != nil {
+		return err
+	}
+	resp, err := httpGet(dl.URL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	}
+	_, err = io.Copy(out, resp.Body)
+	return err
 }

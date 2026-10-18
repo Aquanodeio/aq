@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,5 +95,48 @@ func TestJobCancelRejectsARunIDArgument(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "usage: aq job cancel <job>") {
 		t.Fatalf("error should print the new one-positional usage, got: %v", err)
+	}
+}
+
+// A finished run's log comes back from the server as a POINTER (source
+// archived, a size, a logRef) with an empty chunk, the wire shape prod
+// sends. `aq job logs` must print the archived bytes, not exit 0 having
+// printed nothing.
+func TestJobLogsPrintsAnArchivedLog(t *testing.T) {
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, []map[string]any{{"id": "job-1", "name": "myjob"}})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/logs", func(w http.ResponseWriter, r *http.Request) {
+		writeData(w, map[string]any{"chunk": "", "nextOffset": 0, "size": 12, "truncated": false, "final": true,
+			"attemptOrdinal": 1, "source": "archived", "logRef": "runs/7/run-1/log"})
+	})
+	mux.HandleFunc("/jobs/job-1/runs/run-1/artifacts/download", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("key"); got != "log" {
+			t.Errorf("artifact key = %q, want \"log\"", got)
+		}
+		writeData(w, map[string]any{"url": srvURL + "/blob/log", "expiresAt": "2026-10-18T00:00:00Z", "attemptOrdinal": 1})
+	})
+	mux.HandleFunc("/blob/log", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("archived ok\n"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	srvURL = srv.URL
+
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	err := runJobLogs(jobLogsOptions{
+		cred:   &config.Credential{Token: "t", TeamID: "team-1", APIURL: srv.URL},
+		jobRef: "myjob",
+		runID:  "run-1",
+		out:    out,
+		errOut: errOut,
+	})
+	if err != nil {
+		t.Fatalf("runJobLogs: %v", err)
+	}
+	if out.String() != "archived ok\n" {
+		t.Fatalf("stdout = %q, want the archived log; stderr: %s", out.String(), errOut.String())
 	}
 }
