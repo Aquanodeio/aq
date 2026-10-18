@@ -198,7 +198,7 @@ func latestRunWithABox(client *api.Client, jobID string) (string, error) {
 			return r.ID, nil
 		}
 	}
-	return "", errors.New("no completed run yet to pull artifacts from; pass --run <runId> to pick one explicitly, or check `aq job runs`")
+	return "", errors.New("no completed run yet to pull artifacts from; check its status with `aq job ls` and pull again once it has succeeded or failed")
 }
 
 // safeArtifactPath joins dest with a server-supplied artifact key, refusing

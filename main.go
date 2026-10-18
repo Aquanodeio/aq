@@ -525,8 +525,8 @@ job:
   --secret <name>           Inject an "aq secret set --type env" secret into
                             the job's Run (repeatable)
   --checkpoint-path <path>  Path ogre snapshots so a reclaimed or price-hopped
-                            run can resume (repeatable). Optional here, but the
-                            server refuses a job that names none
+                            run can resume (repeatable). Optional: with none
+                            named, the platform checkpoints /workspace
   --checkpoint-exclude <path>
                             Path left out of the checkpoint snapshot, e.g. a
                             venv or a cache dir (repeatable)

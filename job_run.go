@@ -150,7 +150,7 @@ func registerJobRunFlags(fs *flag.FlagSet) *jobRunFlags {
 	f.diskGB = fs.Int("disk-gb", 100, "disk size in GB for an --image job")
 	f.outputPath = fs.String("output-path", "/outputs", "absolute path inside the box the command writes results into (used whenever a command is given after `--`)")
 	fs.Var(f.secrets, "secret", "name of a `type: env` team secret (`aq secret set --type env`) to inject into this job's Run (repeatable)")
-	fs.Var(f.checkpointPaths, "checkpoint-path", "path ogre snapshots so a reclaimed or price-hopped run can resume (repeatable); optional, but the server refuses a job with none named")
+	fs.Var(f.checkpointPaths, "checkpoint-path", "path ogre snapshots so a reclaimed or price-hopped run can resume (repeatable); optional: with none named, the platform checkpoints /workspace")
 	fs.Var(f.checkpointExclude, "checkpoint-exclude", "path excluded from the checkpoint snapshot, e.g. a venv or cache dir (repeatable)")
 	f.installRequirements = fs.Bool("install-requirements", false, "wrap the command (after --) to install a declared requirements.txt before running it: copies /inputs into /workspace, pip installs -q -r requirements.txt, then execs the command (shared wire contract with the console's same toggle)")
 	f.detach = fs.Bool("detach", false, "print the created job's id and exit immediately, instead of streaming its log until it finishes")
@@ -500,6 +500,10 @@ func runJobRun(opts jobRunOptions) error {
 	}
 
 	if opts.detach {
+		// The JOB id, not the run id printed above: every later command
+		// (`aq job ls|logs|pull|cancel|rerun`) takes a job, and a caller that
+		// scripts `--detach` keeps exactly the id this line gives it.
+		fmt.Fprintf(out, "job %s\nWatch it with `aq job logs %s`, fetch outputs with `aq job pull %s`.\n", job.ID, job.ID, job.ID)
 		return nil
 	}
 	return streamJobRunToCompletion(opts.cred, job.ID, job.Run.ID, out, errOut, opts.sleep, opts.maxWaitPolls)

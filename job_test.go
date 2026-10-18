@@ -894,3 +894,24 @@ func TestRunJobRunDetachNeverStreams(t *testing.T) {
 		t.Fatalf("want the created run id announced, got: %s", out.String())
 	}
 }
+
+// --detach promises the created JOB's id (its help text says so), and a
+// script keeps whatever it prints: the run id alone is useless to every
+// follow-up command, which all resolve a job.
+func TestJobRunDetachPrintsTheJobID(t *testing.T) {
+	srv := jobRunServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeCreatedJob(w, "job-7f3a", "bench")
+	})
+	defer srv.Close()
+
+	opts := baseImageRunOpts(srv.URL)
+	opts.argv = []string{"python", "b.py"}
+	out := &bytes.Buffer{}
+	opts.out = out
+	if err := runJobRun(opts); err != nil {
+		t.Fatalf("runJobRun: %v", err)
+	}
+	if !strings.Contains(out.String(), "job job-7f3a\n") {
+		t.Fatalf("detach output must carry the job id on its own line, got:\n%s", out.String())
+	}
+}
