@@ -1,0 +1,11 @@
+{
+  "name": "aquanode",
+  "description": "Run batch jobs on cloud GPUs with the aq CLI and bring the results back.",
+  "author": {
+    "name": "Aquanode"
+  },
+  "homepage": "https://www.aquanode.io",
+  "repository": "https://github.com/Aquanodeio/aq",
+  "license": "Apache-2.0",
+  "keywords": ["gpu", "jobs", "training", "fine-tuning", "batch-inference", "aquanode"]
+}

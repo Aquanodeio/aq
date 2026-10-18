@@ -1,0 +1,13 @@
+{
+  "name": "aquanode",
+  "owner": {
+    "name": "Aquanode"
+  },
+  "plugins": [
+    {
+      "name": "aquanode",
+      "source": "./",
+      "description": "Run batch jobs on cloud GPUs with the aq CLI and bring the results back."
+    }
+  ]
+}
