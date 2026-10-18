@@ -1,0 +1,9 @@
+{
+  "name": "aquanode/aquanode-gpu-jobs",
+  "description": "Run a batch job on a cloud GPU with Aquanode's `aq` CLI and bring the results back. Use when the user wants to run something on a GPU they do not have locally (H100, A100, L40S, RTX 4090 and others), for example fine-tuning or training a model, batch inference, transcription, embeddings, evals, benchmarks or rendering, from any Docker image and a command.",
+  "private": false,
+  "skills": [
+    "."
+  ],
+  "version": "0.1.0"
+}
