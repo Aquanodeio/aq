@@ -84,6 +84,28 @@ Or, with a Go toolchain (1.26+):
 go install github.com/Aquanodeio/aq@latest
 ```
 
+## Use it from an AI coding agent
+
+This repo ships an agent skill, [`aquanode-gpu-jobs`](skills/aquanode-gpu-jobs/SKILL.md),
+that teaches a coding agent to run a batch job on a cloud GPU with `aq` and bring
+the results back. The agent tells you the GPU and the price and waits for your
+yes before it starts anything.
+
+Claude Code:
+
+```
+/plugin marketplace add Aquanodeio/aq
+/plugin install aquanode@aquanode
+```
+
+Codex, Cursor, Gemini CLI, GitHub Copilot and other agents that read skills:
+
+```sh
+npx skills add Aquanodeio/aq
+```
+
+Then ask for what you want, e.g. "fine-tune this on an A100 and bring back the adapter".
+
 ## Quickstart — the one-command deploy
 
 ```sh
