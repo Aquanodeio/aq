@@ -36,23 +36,74 @@ func jobLs(args []string) error {
 	return nil
 }
 
+// jobStatusWord maps a Run's wire status to the display word both console
+// and aq must show, per "Addendum 2026-09-29" of the jobs-are-jobs spec: the
+// wire enum itself never changes, only what a human reads for it.
+// queued/placing/provisioning/restoring collapse to one word ("Starting")
+// because none of them means anything different to someone watching a job
+// start — the distinction only matters to the placement/reconciliation code.
+// An unrecognized status is passed through verbatim rather than guessed at:
+// a future wire value must never be silently mislabeled.
+func jobStatusWord(status string) string {
+	switch status {
+	case "queued", "placing", "provisioning", "restoring":
+		return "Starting"
+	case "running":
+		return "Running"
+	case "uploading":
+		return "Saving outputs"
+	case "succeeded":
+		return "Succeeded"
+	case "failed":
+		return "Failed"
+	case "cancelled":
+		return "Cancelled"
+	case "unservable":
+		return "Couldn't run"
+	default:
+		return status
+	}
+}
+
+// couldNotRunLegend is the exact line `aq job ls` prints once, after the
+// table, iff at least one displayed row's status is "Couldn't run" (never
+// per-row, never when no row qualifies): the addendum's own tooltip wording
+// ("Not your code: we could not get a machine to finish this job.") is for
+// console; this is the CLI's own phrasing of the same fact, given verbatim
+// by the addendum for this surface.
+const couldNotRunLegend = "Couldn't run: not your code, we could not get a machine to finish this job."
+
+// unservableDisclaimer is what `aq job run` appends to an unservable run's
+// final message: unlike "failed" (the owner's own code or runtime), an
+// unservable run never executed the owner's workload at all, and that
+// distinction must never be left for the reader to infer from the word
+// alone. Wording matches the addendum's own tooltip text.
+const unservableDisclaimer = "Not your code: we could not get a machine to finish this job."
+
 // printBatchJobs renders the table: name, status, GPU, duration, cost — the
 // jobs-are-jobs spec's console columns, plus ID for addressability, matching
-// every other list command in this CLI (`aq ls`, `aq endpoint list`).
+// every other list command in this CLI (`aq ls`, `aq endpoint list`). No
+// filter chips, no search: the addendum retires per-status filtering on this
+// list entirely, most-recent-first is the only ordering (the server already
+// returns it that way).
 func printBatchJobs(out io.Writer, list []api.BatchJob, now time.Time) {
 	if len(list) == 0 {
 		fmt.Fprintln(out, "No jobs yet. Run `aq job run --image <ref> -- <cmd>` to start one.")
 		return
 	}
 
-	fmt.Fprintf(out, "%-36s  %-24s  %-11s  %-14s  %-10s  %s\n", "ID", "NAME", "STATUS", "GPU", "DURATION", "COST")
+	fmt.Fprintf(out, "%-36s  %-24s  %-14s  %-14s  %-10s  %s\n", "ID", "NAME", "STATUS", "GPU", "DURATION", "COST")
+	anyCouldNotRun := false
 	for _, j := range list {
-		status := j.Run.Status
-		if status == "unservable" {
-			status = "UNSERVABLE"
+		word := jobStatusWord(j.Run.Status)
+		if word == "Couldn't run" {
+			anyCouldNotRun = true
 		}
-		fmt.Fprintf(out, "%-36s  %-24s  %-11s  %-14s  %-10s  %s\n",
-			j.ID, truncate(j.Name, 24), status, formatRunGPU(j.Run), formatRunDuration(j.Run, now), formatRunCostCents(j.Run.CostCents))
+		fmt.Fprintf(out, "%-36s  %-24s  %-14s  %-14s  %-10s  %s\n",
+			j.ID, truncate(j.Name, 24), word, formatRunGPU(j.Run), formatRunDuration(j.Run, now), formatRunCost(j.Run))
+	}
+	if anyCouldNotRun {
+		fmt.Fprintln(out, couldNotRunLegend)
 	}
 }
 
@@ -132,17 +183,47 @@ func formatShortDuration(d time.Duration) string {
 	}
 }
 
-// formatRunCostCents renders run.costCents, the server's own billed-cost
-// figure (round(sum(billing_buckets_v2.amount_usd) * 100), computed from the
+// runHasGPUModel reports whether any of a run's attempts ever recorded a
+// GPU model -- the signal that a real box was actually rented for this run,
+// as distinct from a run that never got far enough to record one.
+func runHasGPUModel(run api.Run) bool {
+	for _, a := range run.Attempts {
+		if a.GPUModel != nil && strings.TrimSpace(*a.GPUModel) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// formatRunCost renders run.costCents, the server's own billed-cost figure
+// (round(sum(billing_buckets_v2.amount_usd) * 100), computed from the
 // ledger). nil is UNKNOWN -- the run has no attempt with a deployment yet,
 // or every such deployment is customer-owned (unmetered) -- and renders as
-// "-", never "$0.00": this CLI never computes cost itself, it only renders
-// what the server sends.
-func formatRunCostCents(costCents *int64) string {
-	if costCents == nil {
+// "-", never "$0.00" or "<$0.01": this CLI never computes cost itself, it
+// only renders what the server sends.
+//
+// A real zero (exactly 0, not nil) needs a second signal to read correctly:
+// on its own it is ambiguous between "billed and rounded down to nothing"
+// and "never billed at all", and those must not look the same. costCents==0
+// with at least one attempt recording a GPU model means a real box ran and
+// billed less than half a cent, so it renders "<$0.01" (matching console's
+// own behaviour for the same case). costCents==0 with no GPU model recorded
+// anywhere is the degenerate case the spec does not actually expect to occur
+// for a metered run -- billing never fires without a deployment, and a
+// deployment always ends up with a recorded GPU model -- so it falls back to
+// "-" rather than asserting a number this CLI cannot back up.
+func formatRunCost(run api.Run) string {
+	if run.CostCents == nil {
 		return "-"
 	}
-	return formatCents(*costCents)
+	cents := *run.CostCents
+	if cents == 0 {
+		if runHasGPUModel(run) {
+			return "<$0.01"
+		}
+		return "-"
+	}
+	return formatCents(cents)
 }
 
 // formatCents renders a cent amount as a dollar figure, e.g. 150 -> "$1.50".

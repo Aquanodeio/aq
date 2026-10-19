@@ -847,13 +847,17 @@ func TestRunJobRunStreamsToCompletionOnSuccess(t *testing.T) {
 	if !strings.Contains(out.String(), "hello from the box") {
 		t.Fatalf("want the tailed log chunk printed, got: %s", out.String())
 	}
-	if !strings.Contains(out.String(), "succeeded") {
-		t.Fatalf("want the final status announced, got: %s", out.String())
+	if !strings.Contains(out.String(), "Succeeded") {
+		t.Fatalf("want the final status word announced, got: %s", out.String())
 	}
 }
 
 // TestRunJobRunExitsNonZeroOnFailure: "failed"/"unservable"/"cancelled" must
-// all surface as a non-nil error, which main.go's run() maps to exit 1.
+// all surface as a non-nil error, which main.go's run() maps to exit 1, and
+// the error text must carry the addendum's display word for the status (not
+// the raw wire value) -- unservable's message must also plainly say this was
+// not the owner's own code, while failed/cancelled must not carry that
+// disclaimer.
 func TestRunJobRunExitsNonZeroOnFailure(t *testing.T) {
 	for _, status := range []string{"failed", "unservable", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
@@ -867,8 +871,17 @@ func TestRunJobRunExitsNonZeroOnFailure(t *testing.T) {
 			if err == nil {
 				t.Fatalf("want a non-nil error for a %s run", status)
 			}
-			if !strings.Contains(err.Error(), status) {
-				t.Fatalf("error should name the status %q, got: %v", status, err)
+			word := jobStatusWord(status)
+			if !strings.Contains(err.Error(), word) {
+				t.Fatalf("error should name the status word %q, got: %v", word, err)
+			}
+			isUnservable := status == "unservable"
+			hasDisclaimer := strings.Contains(err.Error(), unservableDisclaimer)
+			if isUnservable && !hasDisclaimer {
+				t.Fatalf("unservable's error should carry the not-your-code disclaimer, got: %v", err)
+			}
+			if !isUnservable && hasDisclaimer {
+				t.Fatalf("%s must not carry the unservable disclaimer, got: %v", status, err)
 			}
 		})
 	}

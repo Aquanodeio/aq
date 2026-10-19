@@ -48,7 +48,7 @@ func TestPrintBatchJobsRendersGPUDurationAndCost(t *testing.T) {
 	printBatchJobs(&out, list, now)
 	got := out.String()
 
-	if !strings.Contains(got, "train-run") || !strings.Contains(got, "running") || !strings.Contains(got, "H100") {
+	if !strings.Contains(got, "train-run") || !strings.Contains(got, "Running") || !strings.Contains(got, "H100") {
 		t.Fatalf("want name/status/GPU rendered for the running job, got:\n%s", got)
 	}
 	if !strings.Contains(got, "30m0s") {
@@ -57,8 +57,8 @@ func TestPrintBatchJobsRendersGPUDurationAndCost(t *testing.T) {
 	if !strings.Contains(got, "$1.25") {
 		t.Fatalf("want run.costCents (125) rendered as $1.25, got:\n%s", got)
 	}
-	if !strings.Contains(got, "no-attempt-yet") || !strings.Contains(got, "queued") {
-		t.Fatalf("want the queued job's name and status rendered, got:\n%s", got)
+	if !strings.Contains(got, "no-attempt-yet") || !strings.Contains(got, "Starting") {
+		t.Fatalf("want the queued job's name and \"Starting\" status rendered, got:\n%s", got)
 	}
 	// The queued job's run.costCents is nil -- must render "-", never "$0.00".
 	lines := strings.Split(got, "\n")
@@ -69,15 +69,61 @@ func TestPrintBatchJobsRendersGPUDurationAndCost(t *testing.T) {
 	}
 }
 
-// TestPrintBatchJobsUnservableIsUppercased mirrors printRuns/printEndpoints'
-// own convention: "unservable" must read as visibly distinct, never blend
-// into an ordinary status word.
-func TestPrintBatchJobsUppercasesUnservable(t *testing.T) {
+// TestPrintBatchJobsUnservableRendersAsCouldNotRun: per the "failed means
+// YOUR code failed" addendum, "unservable" must read as "Couldn't run", and
+// the table must carry the one-line legend explaining that this was not the
+// owner's own code.
+func TestPrintBatchJobsUnservableRendersAsCouldNotRun(t *testing.T) {
 	list := []api.BatchJob{{ID: "job-1", Name: "x", Run: api.Run{ID: "run-1", Status: "unservable"}}}
 	var out bytes.Buffer
 	printBatchJobs(&out, list, time.Now())
-	if !strings.Contains(out.String(), "UNSERVABLE") {
-		t.Fatalf("want UNSERVABLE rendered, got: %s", out.String())
+	got := out.String()
+	if !strings.Contains(got, "Couldn't run") {
+		t.Fatalf("want \"Couldn't run\" rendered, got: %s", got)
+	}
+	if !strings.Contains(got, couldNotRunLegend) {
+		t.Fatalf("want the legend line printed when a row couldn't run, got: %s", got)
+	}
+}
+
+// TestPrintBatchJobsLegendOnlyWhenARowCouldntRun: the legend must never
+// appear when no displayed row is "Couldn't run" -- not even a blank line.
+func TestPrintBatchJobsLegendOnlyWhenARowCouldntRun(t *testing.T) {
+	list := []api.BatchJob{{ID: "job-1", Name: "x", Run: api.Run{ID: "run-1", Status: "succeeded"}}}
+	var out bytes.Buffer
+	printBatchJobs(&out, list, time.Now())
+	if strings.Contains(out.String(), couldNotRunLegend) {
+		t.Fatalf("did not want the legend line when no row couldn't run, got: %s", out.String())
+	}
+}
+
+// TestJobStatusWordMapsEveryWireStatus pins the addendum's full mapping,
+// table-driven, all 8 wire values.
+func TestJobStatusWordMapsEveryWireStatus(t *testing.T) {
+	cases := map[string]string{
+		"queued":       "Starting",
+		"placing":      "Starting",
+		"provisioning": "Starting",
+		"restoring":    "Starting",
+		"running":      "Running",
+		"uploading":    "Saving outputs",
+		"succeeded":    "Succeeded",
+		"failed":       "Failed",
+		"cancelled":    "Cancelled",
+		"unservable":   "Couldn't run",
+	}
+	for wire, want := range cases {
+		if got := jobStatusWord(wire); got != want {
+			t.Errorf("jobStatusWord(%q) = %q, want %q", wire, got, want)
+		}
+	}
+}
+
+// TestJobStatusWordPassesThroughUnknown: a status this CLI has never seen
+// must never be guessed at -- render it verbatim rather than mislabeling it.
+func TestJobStatusWordPassesThroughUnknown(t *testing.T) {
+	if got := jobStatusWord("some-future-status"); got != "some-future-status" {
+		t.Fatalf("jobStatusWord(unknown) = %q, want passthrough", got)
 	}
 }
 
@@ -106,22 +152,34 @@ func TestFormatRunDurationNeverStartedIsDash(t *testing.T) {
 	}
 }
 
-// TestFormatRunCostCentsNilIsDash: nil (UNKNOWN) must render "-", never
-// "$0.00" -- this CLI never computes a cost itself, it only renders what
-// the server's run.costCents sends.
-func TestFormatRunCostCentsNilIsDash(t *testing.T) {
-	if got := formatRunCostCents(nil); got != "-" {
-		t.Fatalf("formatRunCostCents(nil) = %q, want -", got)
-	}
-}
+// TestFormatRunCostTableDriven pins the cost-cell logic the addendum spells
+// out: null always "-" regardless of GPU model; a real zero renders "<$0.01"
+// only when a GPU model was actually recorded (proof a box really ran);
+// zero with no recorded GPU model falls back to "-" rather than asserting a
+// figure this CLI cannot back up; a normal positive cost formats as today.
+func TestFormatRunCostTableDriven(t *testing.T) {
+	withGPU := []api.RunAttempt{{Ordinal: 1, GPUModel: strPtr("H100")}}
+	noGPU := []api.RunAttempt{{Ordinal: 1, GPUModel: nil}}
 
-// TestFormatRunCostCentsRendersTheServersFigureVerbatim.
-func TestFormatRunCostCentsRendersTheServersFigureVerbatim(t *testing.T) {
-	if got := formatRunCostCents(i64Ptr(0)); got != "$0.00" {
-		t.Fatalf("formatRunCostCents(0) = %q, want $0.00 -- a real zero, distinct from nil/UNKNOWN", got)
+	cases := []struct {
+		name string
+		run  api.Run
+		want string
+	}{
+		{"nil costCents, no attempts", api.Run{CostCents: nil}, "-"},
+		{"nil costCents, with GPU model", api.Run{CostCents: nil, Attempts: withGPU}, "-"},
+		{"zero cost with GPU model", api.Run{CostCents: i64Ptr(0), Attempts: withGPU}, "<$0.01"},
+		{"zero cost with no GPU model", api.Run{CostCents: i64Ptr(0), Attempts: noGPU}, "-"},
+		{"zero cost with no attempts at all", api.Run{CostCents: i64Ptr(0)}, "-"},
+		{"positive cost", api.Run{CostCents: i64Ptr(1234), Attempts: withGPU}, "$12.34"},
+		{"positive cost with no attempts", api.Run{CostCents: i64Ptr(150)}, "$1.50"},
 	}
-	if got := formatRunCostCents(i64Ptr(1234)); got != "$12.34" {
-		t.Fatalf("formatRunCostCents(1234) = %q, want $12.34", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatRunCost(tc.run); got != tc.want {
+				t.Fatalf("formatRunCost(%+v) = %q, want %q", tc.run, got, tc.want)
+			}
+		})
 	}
 }
 
