@@ -38,6 +38,10 @@ import (
 // contract: if it can cause a box to be leased, it goes here.
 //
 // `up` and `deploy` do it unconditionally (api.Client.Up / api.Client.Deploy).
+// `up --when-available` is `up` and rides the same entry: it queues a box the
+// server rents later with nobody watching, which is the same spend. `watch`
+// and `queue` are NOT here: a watch only notifies, and `queue cancel` stops
+// spend.
 // `start` and `move` do it under the pod/environment/volume model: Start
 // brings a Stopped pod up on the cheapest matching offer, and Move stops the
 // pod then starts it again on a new one. `pods create` does too (it's a

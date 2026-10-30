@@ -170,6 +170,15 @@ func buildOfferSelection(client *api.Client, out io.Writer, f offerSelectFilter)
 		return api.OfferSelection{}, err
 	}
 
+	return offerSelectionFor(client, out, offer)
+}
+
+// offerSelectionFor turns an ALREADY-CHOSEN offer into an OfferSelection,
+// minting an SSH key if the caller has none. Split out of buildOfferSelection
+// so a caller that picks its offer by other rules (`aq up --when-available`
+// wants a sold-out row, with no price or availability filter) reuses the one
+// builder instead of writing a second.
+func offerSelectionFor(client *api.Client, out io.Writer, offer api.MarketplaceOffer) (api.OfferSelection, error) {
 	sshKeyID, err := ensureSSHKey(client, out)
 	if err != nil {
 		return api.OfferSelection{}, err
