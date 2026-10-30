@@ -109,6 +109,10 @@ func main() {
 		run(up(args))
 	case "deploy":
 		run(deploy(args))
+	case "watch":
+		run(watch(args))
+	case "queue":
+		run(queue(args))
 	case "import":
 		run(importCmd(args))
 	case "host":
@@ -184,9 +188,13 @@ func main() {
 //
 //	1   command failed
 //	12  no ogre build is published for this platform (`aq import`)
+//	13  the watch ended with no match (`aq watch --wait`, `aq watch wait`)
+//	14  --timeout elapsed while the watch is still armed (same commands)
 const (
 	exitFailure                = 1
 	exitNoOgreBuildForPlatform = 12
+	exitWatchNoMatch           = 13
+	exitWatchTimeout           = 14
 )
 
 // exitError carries a specific exit code out of a command. Anything that does
@@ -227,6 +235,8 @@ Commands:
   login         Pair this CLI to your Aquanode account (device login)
   up            Rent the cheapest matching GPU and bring up a working pod
   deploy        Restore a save onto a freshly-rented Aquanode GPU box
+  watch         Wait for a sold-out GPU: the server watches, you get told
+  queue         List or cancel boxes queued with "aq up --when-available"
   import        Capture a box you rent elsewhere into a new Aquanode volume
   host          Register a box you own or lease, and drive it with no account
   attach        Adopt a registered box into your Aquanode control plane
@@ -290,6 +300,18 @@ up flags:
   --comfyui          Also install ComfyUI
   --jupyter          Also install Torch + Jupyter instead
 
+  Wait for supply (rents unattended, so the price ceiling is mandatory):
+  --when-available   Instead of renting now, queue a bare box ON THE SERVER. It
+                     is rented the moment an offer is at or under --max-price.
+                     Needs --gpu (exact model name, see "aq gpus") and
+                     --max-price. Does not wait: it prints a queue id and
+                     exits. Refuses --comfyui, --jupyter, --auto-stop,
+                     --warn-after, --stop-after, --show-secrets and host:
+                     targets (a queued box is bare, with idle auto-stop off).
+                     --gpus is matched EXACTLY here, not "at least".
+  --expires-in <hours>  With --when-available: drop the request after this many
+                     hours (default 72, maximum 168)
+
 deploy flags:
   --name <name>      Set the deployment's display name (default: an
                      auto-generated one)
@@ -306,6 +328,48 @@ deploy flags:
   --comfyui          Relaunch ComfyUI on the restored data
   --jupyter          Relaunch Torch + Jupyter on the restored data instead
   --no-app           Restore only, do not relaunch an app
+
+watch:
+  A sold-out GPU: aq watch arms a watch ON THE SERVER, which re-checks the
+  market every 30 to 120 seconds and emails you once when a matching offer
+  appears. It survives a closed laptop. It rents nothing. To rent the moment
+  supply appears, use "aq up --when-available" instead.
+
+  aq watch --gpu <model> [flags]
+                             Arm a watch and print its id on stderr
+  aq watch list [--json]     List your active watches
+  aq watch wait <id> [--timeout <dur>] [--json]
+                             Block until that watch resolves
+  aq watch cancel <id>       Stop a watch
+
+  --gpu <model>       GPU model, spelled as "aq gpus" shows it (required). The
+                      server matches the name exactly; aq fixes the letter
+                      case from the live feed and warns when the name is not
+                      in it (it still arms: a sold-out model can leave the feed)
+  --gpus <n>          GPUs the offer must have (default 1). Matched EXACTLY,
+                      not "at least": a 2-GPU offer does not satisfy 1
+  --provider <name>   Only count offers from this provider (e.g. runpod)
+  --tier <tier>       Only count offers of this tier: datacenter or community
+  --max-price <n>     Only count offers at or below this hourly price (the
+                      WHOLE offer's price, not per-GPU; default: any price)
+  --expires-in <hours>  Give up after this many hours (default 72, maximum 168)
+  --wait              After arming, block until the watch resolves
+  --timeout <dur>     With --wait: stop waiting after this long, e.g. 30s or
+                      30m. The watch stays armed on the server
+  --json              Print the watch row as one JSON object on stdout (the
+                      only thing on stdout); the id is also on stderr
+
+  Waiting polls the one row every 15 seconds. A network error or a 5xx does not
+  end the wait (it is reported once, then once more on recovery); a 401, 403 or
+  404 does. Ctrl-C leaves the watch armed. Exit codes: 0 matched, 13 ended with
+  no match (expired or cancelled), 14 --timeout elapsed and the watch is still
+  armed: run "aq watch wait <id>" to pick it up.
+
+queue:
+  The boxes "aq up --when-available" has queued, waiting for supply.
+
+  aq queue list [--json]     id, GPU, count, provider, price ceiling, expiry
+  aq queue cancel <id>       Cancel a queued box. Nothing is rented for it
 
 import:
   Run ON a box you already rent somewhere else (RunPod, Vast, your own
@@ -732,7 +796,7 @@ Environment:
                   else aq's managed ~/.ssh/aquanode_ed25519)
   AQ_NO_BROWSER   Set to skip auto-opening the approval URL
   AQ_ALLOW_PROD   Set to 1 to allow "aq up"/"aq deploy"/"aq start"/"aq move" to
-                  rent hardware on a non-local host from a script or other
+                  rent hardware (also "aq up --when-available") on a non-local host from a script or other
                   non-interactive shell. Same effect as passing --prod.
                   Typing at a terminal needs neither.
 
@@ -741,6 +805,11 @@ Exit codes:
   12              "aq import": Aquanode publishes no ogre build for this
                   machine's OS/architecture, so aq cannot survey the box from
                   here. Retrying will not help
+  13              "aq watch --wait" / "aq watch wait": the watch ended with no
+                  match (it expired or was cancelled)
+  14              "aq watch --wait" / "aq watch wait": --timeout elapsed while
+                  the watch is still armed on the server. Not a failure of the
+                  watch: run "aq watch wait <id>" to pick it up
 `
 
 func usage() {

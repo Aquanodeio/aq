@@ -188,6 +188,38 @@ To run the same thing again, `aq job rerun <job>` makes a new job with the same
 image, command, GPUs and secrets. It prints the new job's id; watch it the same
 way.
 
+## If the GPU you want is sold out
+
+Do not poll `aq gpus` in a loop. Arm a watch on the server instead; it survives
+the shell and the laptop, and emails the user once when a match appears:
+
+```bash
+aq watch --gpu "H100" --max-price 3 --wait --timeout 20m   # id is printed on stderr
+echo "exit $?"
+```
+
+Pick a `--timeout` under your shell tool's limit, and when it exits 14 run
+`aq watch wait <id> --timeout 20m` again, in a loop, until it exits 0 or 13.
+Exit codes:
+
+- `0`: a matching offer appeared. Start the job now (step 4), still after the
+  user has agreed to the cost.
+- `13`: the watch ended with no match (it expired after 72 hours by default, or
+  was cancelled). Offer to arm another or pick other GPUs.
+- `14`: your `--timeout` elapsed. The watch is still armed on the server: this is
+  not a failure. Call `aq watch wait <id>` again.
+- `1`: a real error (not logged in, watch not found). Read the message.
+
+`--gpu` must be the exact model name from `aq gpus`, and `--gpus` is matched
+exactly (not "at least"). `--max-price` is the whole offer's hourly price.
+`aq watch list` shows active watches and `aq watch cancel <id>` stops one; cancel
+what the user no longer wants.
+
+`aq up --when-available --gpu <model> --max-price <n>` is different: it RENTS a
+bare box on its own when supply appears, with nobody watching. Only use it when
+the user has agreed to that spend, and tell them the queue id, and that
+`aq queue cancel <id>` stops it.
+
 ## More
 
 - GPU jobs on the CLI: https://docs.aquanode.io/docs/jobs/cli

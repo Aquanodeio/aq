@@ -51,6 +51,7 @@ they mean the same thing for every provider, and `--max-price` filters on
 - **`aq gpus`** — cheapest rate per GPU model across every provider at a glance; add a filter to see individual offers; works with no account
 - **`aq login`** — pair the CLI to your Aquanode account via device-login
 - **`aq up`** — rent the cheapest matching GPU, provision it, and bring up a working environment (ComfyUI, Jupyter, or custom snapshot) in one command
+- **`aq watch` / `aq queue`**: wait for a sold-out GPU on the server (a watch that tells you, or `aq up --when-available` that rents it for you) and manage what you queued
 - **`aq deploy`** — restore a snapshot onto a freshly-rented Aquanode GPU box
 - **`aq import`**: run on a box you already rent elsewhere and capture its data into a new Aquanode volume, ready to attach to a pod
 - **`aq start` / `aq stop` / `aq move`**: bring a pod up on any matching GPU, save its environment and volume and release the box, or move a running pod to a different GPU
@@ -144,6 +145,43 @@ stop paying node price for a box configured with one GPU's worth of CPU and RAM.
 On providers that sell per-GPU slices it picks a different box. `--max-price` is
 compared against the **whole offer's** price, not the per-GPU price.
 
+## When the GPU you want is sold out
+
+Two requests that live on the Aquanode server, so they keep working while your
+laptop sleeps. The server re-checks the market every 30 to 120 seconds.
+
+```sh
+aq watch --gpu H100 --max-price 3          # arm a watch: you get an email when a match appears
+aq watch --gpu H100 --wait --timeout 25m   # arm it and block on it
+aq watch list                              # active watches
+aq watch wait 12 --timeout 25m             # reattach to a watch by id
+aq watch cancel 12
+
+aq up --when-available --gpu H100 --max-price 3   # queue a bare box; it is RENTED when supply appears
+aq queue list
+aq queue cancel 3
+```
+
+- `--gpu` is the model name exactly as `aq gpus` spells it. `aq watch` fixes the
+  letter case from the live feed and warns (but still arms) when the name is not
+  in it.
+- `--gpus N` is matched **exactly**, not "at least": a 2-GPU offer does not
+  satisfy a watch for 1.
+- `--max-price` is the **whole offer's** hourly price, not per-GPU. On
+  `--when-available` it is required: the box is rented with nobody watching, so
+  the ceiling is a mandatory spend rail. A queued box is a bare box with idle
+  auto-stop off, so `--comfyui`, `--jupyter`, `--auto-stop`, `--warn-after`,
+  `--stop-after`, `--show-secrets` and `host:` targets are refused. `--name` is
+  allowed.
+- `aq up --when-available` goes through the same production guard as any `aq up`:
+  from a script or agent it needs `--prod` (or `AQ_ALLOW_PROD=1`).
+- Waiting polls the one watch row every 15 seconds. A network error or 5xx does
+  not end the wait; a 401, 403 or 404 does. Ctrl-C leaves the watch armed.
+
+Exit codes for `aq watch --wait` and `aq watch wait`: **0** matched, **13** the
+watch ended with no match (expired or cancelled), **14** `--timeout` elapsed and
+the watch is still armed (run `aq watch wait <id>` to pick it up; this is not a
+failure). With `--json`, stdout is exactly one JSON object, the watch row.
 
 ## Run your local code on the box
 

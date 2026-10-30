@@ -30,7 +30,12 @@ import (
 // <provider_address>/<preset_id>"). It is `.optional()` on the zod schema
 // but effectively REQUIRED by createDeployment (400s without it), so a
 // caller building this from a real offer must always send it.
+//
+// Name is the deployment's display name on the raw deploy path
+// (deployment.controller.ts reads `resource.name`). It is omitted when unset
+// and only `aq up --when-available --name` sets it; a pod offer never does.
 type ResourceSpec struct {
+	Name              string `json:"name,omitempty"`
 	CPU               int    `json:"cpu"`
 	Memory            string `json:"memory"`
 	Storage           string `json:"storage"`

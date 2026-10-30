@@ -64,12 +64,25 @@ func up(args []string) error {
 	autoStop := fs.Bool("auto-stop", false, "Enable idle auto-stop on this deployment (off by default)")
 	warnAfter := fs.String("warn-after", "", "With --auto-stop: warn after this much idle time, e.g. 30m")
 	stopAfter := fs.String("stop-after", "", "With --auto-stop: auto-stop after this much idle time, e.g. 1h")
+	whenAvailable := fs.Bool("when-available", false, "Queue a bare box on the server and rent it when an offer at or under --max-price appears (needs --gpu and --max-price)")
+	expiresIn := fs.Float64("expires-in", 0, "With --when-available: drop the request after this many hours (server default 72, maximum 168)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) > 1 {
 		return fmt.Errorf("expected at most one target, got %s", strings.Join(positional, ", "))
+	}
+	if isFlagSet(fs, "expires-in") && !*whenAvailable {
+		return errors.New("--expires-in only applies with --when-available")
+	}
+	if *whenAvailable {
+		return upWhenAvailable(fs, positional, upWhenAvailableArgs{
+			comfyui: *comfyui, jupyter: *jupyter, autoStop: *autoStop, showSecrets: *showSecrets,
+			warnAfter: *warnAfter, stopAfter: *stopAfter,
+			gpu: *gpu, gpus: *gpus, maxPrice: *maxPrice, provider: *provider, name: *name,
+			expiresIn: *expiresIn,
+		})
 	}
 
 	if *comfyui && *jupyter {
