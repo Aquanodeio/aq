@@ -71,7 +71,7 @@ type watchFlags struct {
 
 func registerWatchFlags(fs *flag.FlagSet) *watchFlags {
 	f := &watchFlags{}
-	f.gpu = fs.String("gpu", "", "GPU model to wait for, spelled as `aq gpus` shows it (required)")
+	f.gpu = fs.String("gpu", "", "GPU model to wait for, spelled as \"aq gpus\" shows it (required)")
 	f.gpus = fs.Int("gpus", 1, "GPUs the offer must have. Matched EXACTLY, not \"at least\"")
 	f.provider = fs.String("provider", "", "Only count offers from this provider (e.g. runpod)")
 	f.tier = fs.String("tier", "", "Only count offers of this tier: datacenter or community")
