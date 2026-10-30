@@ -36,6 +36,7 @@ type AvailabilityWatch struct {
 	MatchedPricePerHour *float64 `json:"matchedPricePerHour"`
 	CreatedAt           string   `json:"createdAt"`
 	ResolvedAt          *string  `json:"resolvedAt"`
+	IncludeUnreported   bool     `json:"includeUnreported"`
 
 	Raw json.RawMessage `json:"-"`
 }
@@ -62,6 +63,8 @@ type ArmWatchRequest struct {
 	ProviderScope   string   `json:"providerScope,omitempty"`
 	Tier            string   `json:"tier,omitempty"`
 	ExpiresInHours  *float64 `json:"expiresInHours,omitempty"`
+	// IncludeUnreported is sent only when true; the key is absent otherwise.
+	IncludeUnreported bool `json:"includeUnreported,omitempty"`
 }
 
 // ArmAvailabilityWatch arms a notify-when-available watch.

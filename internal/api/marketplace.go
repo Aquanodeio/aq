@@ -61,6 +61,13 @@ type MarketplaceOffer struct {
 	CpuCoresPerGpu float64 `json:"cpuCoresPerGpu"`
 	RamPerGpu      float64 `json:"ramPerGpu"`
 	ProviderName   string  `json:"providerName"`
+	// AvailabilityLevel/AvailabilityReason say how much the provider reports
+	// about stock (a provider that publishes none carries level UNKNOWN and
+	// reason provider_never_reports). Both are optional on the wire, so they
+	// are pointers: an absent key stays absent in `aq gpus --json` instead of
+	// turning into "".
+	AvailabilityLevel  *string `json:"availabilityLevel,omitempty"`
+	AvailabilityReason *string `json:"availabilityReason,omitempty"`
 }
 
 // NewPublic returns a Client for the marketplace and any other unauthenticated

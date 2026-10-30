@@ -210,6 +210,13 @@ Exit codes:
   not a failure. Call `aq watch wait <id>` again.
 - `1`: a real error (not logged in, watch not found). Read the message.
 
+Some providers (AWS today) publish no stock at all, so a plain watch can never
+fire on them. Add `--include-unreported` to also fire when nothing says the
+offer is sold out. That match means worth trying, not known to be free: a launch
+after it can still be refused for capacity, so expect to retry. Such a watch
+sends no email; the exit code of `--wait` / `aq watch wait <id>` is the only
+delivery.
+
 `--gpu` must be the exact model name from `aq gpus`, and `--gpus` is matched
 exactly (not "at least"). `--max-price` is the whole offer's hourly price.
 `aq watch list` shows active watches and `aq watch cancel <id>` stops one; cancel
