@@ -593,3 +593,32 @@ func TestParseGPUsOptionsSummaryOnlyWhenNoFlagGiven(t *testing.T) {
 		}
 	}
 }
+
+func TestRunGPUsJSONCarriesAvailabilityFieldsOnlyWhenTheFeedSentThem(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":[
+{"gpuShortName":"H100","provider":"aws","price":6.5,"gpuCount":1,"available":0,"availabilityLevel":"UNKNOWN","availabilityReason":"provider_never_reports"},
+{"gpuShortName":"A100","provider":"runpod","price":1.2,"gpuCount":1,"available":3}]}`))
+	}))
+	defer srv.Close()
+	var out, errOut bytes.Buffer
+	if err := runGPUs(gpusOptions{apiURL: srv.URL, jsonOut: true, out: &out, errOut: &errOut}); err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("%v: %s", err, out.String())
+	}
+	for _, r := range rows {
+		_, hasL := r["availabilityLevel"]
+		_, hasR := r["availabilityReason"]
+		if r["provider"] == "aws" {
+			if r["availabilityLevel"] != "UNKNOWN" || r["availabilityReason"] != "provider_never_reports" {
+				t.Errorf("aws row lost its availability fields: %v", r)
+			}
+		} else if hasL || hasR {
+			t.Errorf("a row without the keys must print neither, got %v", r)
+		}
+	}
+}

@@ -167,6 +167,11 @@ aq queue cancel 3
   in it.
 - `--gpus N` is matched **exactly**, not "at least": a 2-GPU offer does not
   satisfy a watch for 1.
+- `--include-unreported` also fires on a provider that reports no stock at all
+  (AWS today), when nothing says the offer is sold out. A match means worth
+  trying, not known to be free, and a launch after it can still be refused for
+  capacity. No email is sent for such a watch: read the result with `--wait` or
+  `aq watch wait <id>`.
 - `--max-price` is the **whole offer's** hourly price, not per-GPU. On
   `--when-available` it is required: the box is rented with nobody watching, so
   the ceiling is a mandatory spend rail. A queued box is a bare box with idle

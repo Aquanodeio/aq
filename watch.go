@@ -58,15 +58,16 @@ func watch(args []string) error {
 // watchFlags is every flag bare `aq watch` accepts, registered in one place so
 // the top-level help can be checked against the real flag set.
 type watchFlags struct {
-	gpu       *string
-	gpus      *int
-	provider  *string
-	tier      *string
-	maxPrice  *float64
-	expiresIn *float64
-	wait      *bool
-	timeout   *time.Duration
-	jsonOut   *bool
+	gpu        *string
+	gpus       *int
+	provider   *string
+	tier       *string
+	maxPrice   *float64
+	expiresIn  *float64
+	unreported *bool
+	wait       *bool
+	timeout    *time.Duration
+	jsonOut    *bool
 }
 
 func registerWatchFlags(fs *flag.FlagSet) *watchFlags {
@@ -77,6 +78,7 @@ func registerWatchFlags(fs *flag.FlagSet) *watchFlags {
 	f.tier = fs.String("tier", "", "Only count offers of this tier: datacenter or community")
 	f.maxPrice = fs.Float64("max-price", 0, "Only count offers at or below this hourly price (the WHOLE offer's price, not per-GPU)")
 	f.expiresIn = fs.Float64("expires-in", 0, "Give up after this many hours (server default 72, maximum 168)")
+	f.unreported = fs.Bool("include-unreported", false, "Also fire on a provider that reports no stock at all, when nothing says the offer is sold out. That means worth trying, not known to be free. No email is sent: read the result with --wait or `aq watch wait`")
 	f.wait = fs.Bool("wait", false, "After arming, block until the watch resolves (exit 0 match, 13 ended unmatched, 14 --timeout)")
 	f.timeout = fs.Duration("timeout", 0, "With --wait: stop waiting after this long, e.g. 30s or 30m. The watch stays armed")
 	f.jsonOut = fs.Bool("json", false, "Print the watch row as one JSON object on stdout")
@@ -93,6 +95,7 @@ type watchOptions struct {
 	tier         string
 	maxPrice     *float64
 	expiresIn    *float64
+	unreported   bool
 	wait         bool
 	timeout      time.Duration
 	jsonOut      bool
@@ -114,13 +117,14 @@ func watchArm(args []string) error {
 	}
 
 	opts := watchOptions{
-		gpuModel: strings.TrimSpace(*f.gpu),
-		gpuCount: *f.gpus,
-		provider: strings.ToLower(strings.TrimSpace(*f.provider)),
-		tier:     strings.ToLower(strings.TrimSpace(*f.tier)),
-		wait:     *f.wait,
-		timeout:  *f.timeout,
-		jsonOut:  *f.jsonOut,
+		gpuModel:   strings.TrimSpace(*f.gpu),
+		gpuCount:   *f.gpus,
+		provider:   strings.ToLower(strings.TrimSpace(*f.provider)),
+		tier:       strings.ToLower(strings.TrimSpace(*f.tier)),
+		unreported: *f.unreported,
+		wait:       *f.wait,
+		timeout:    *f.timeout,
+		jsonOut:    *f.jsonOut,
 	}
 	if isFlagSet(fs, "max-price") {
 		opts.maxPrice = f.maxPrice
@@ -210,12 +214,13 @@ func runWatch(opts watchOptions) error {
 	}
 
 	req := api.ArmWatchRequest{
-		GPUModel:        model,
-		GPUCount:        opts.gpuCount,
-		MaxPricePerHour: opts.maxPrice,
-		ProviderScope:   opts.provider,
-		Tier:            opts.tier,
-		ExpiresInHours:  opts.expiresIn,
+		GPUModel:          model,
+		GPUCount:          opts.gpuCount,
+		MaxPricePerHour:   opts.maxPrice,
+		ProviderScope:     opts.provider,
+		Tier:              opts.tier,
+		ExpiresInHours:    opts.expiresIn,
+		IncludeUnreported: opts.unreported,
 	}
 	row, err := client.ArmAvailabilityWatch(req)
 	if err != nil {
@@ -294,6 +299,10 @@ func printArmed(out io.Writer, row *api.AvailabilityWatch) {
 		price = "at or under $" + formatPrice(*row.MaxPricePerHour) + "/hr for the whole offer"
 	}
 	fmt.Fprintf(out, "Watch %d armed: %dx %s, %s, %s. Expires %s.\n", row.ID, row.GPUCount, row.GPUModel, scope, price, formatWhen(row.ExpiresAt))
+	if row.IncludeUnreported {
+		fmt.Fprintf(out, "This watch also fires on providers that report no stock, so a match means worth trying, not known to be free. No email is sent: read the result with --wait or: aq watch wait %d\n", row.ID)
+		return
+	}
 	fmt.Fprintf(out, "The server emails you when an offer matches. Check it with: aq watch wait %d\n", row.ID)
 }
 

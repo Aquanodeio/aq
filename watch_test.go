@@ -579,3 +579,28 @@ func TestWatchHelpDocumentsEveryFlagAndExitCode(t *testing.T) {
 		t.Errorf("exit codes drifted from the documented 13/14")
 	}
 }
+
+func TestWatchIncludeUnreportedIsSentOnlyWhenSet(t *testing.T) {
+	s := &watchServer{feed: []map[string]any{feedOffer("H100", "aws", 1, 2.5)}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+
+	opts := newWatchOpts(srv.URL)
+	opts.unreported = true
+	if err := runWatch(opts); err != nil {
+		t.Fatalf("runWatch: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(s.armBody, &body)
+	if body["includeUnreported"] != true {
+		t.Errorf("includeUnreported must be true on the wire, got %s", s.armBody)
+	}
+
+	s.armBody = nil
+	if err := runWatch(newWatchOpts(srv.URL)); err != nil {
+		t.Fatalf("runWatch: %v", err)
+	}
+	if strings.Contains(string(s.armBody), "includeUnreported") {
+		t.Errorf("without the flag the key must be ABSENT, got %s", s.armBody)
+	}
+}

@@ -353,6 +353,10 @@ watch:
   --max-price <n>     Only count offers at or below this hourly price (the
                       WHOLE offer's price, not per-GPU; default: any price)
   --expires-in <hours>  Give up after this many hours (default 72, maximum 168)
+  --include-unreported  Also fire on a provider that reports no stock at all,
+                      when nothing says the offer is sold out. That means worth
+                      trying, not known to be free. No email is sent: read the
+                      result with --wait or "aq watch wait"
   --wait              After arming, block until the watch resolves
   --timeout <dur>     With --wait: stop waiting after this long, e.g. 30s or
                       30m. The watch stays armed on the server
