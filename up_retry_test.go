@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -97,7 +98,7 @@ func TestRetryUntilUpRetriesCodelessConflictThenRents(t *testing.T) {
 	if calls != 4 {
 		t.Errorf("want 4 POSTs, got %d", calls)
 	}
-	if !strings.Contains(out, "Refused (attempt 1") || !strings.Contains(out, "Deployment #77 created") {
+	if !strings.Contains(out, "Waiting for supply (attempt 1") || !strings.Contains(out, "Deployment #77 created") {
 		t.Errorf("missing refusal line or rent line:\n%s", out)
 	}
 	if strings.Contains(out, noOfferMatches) {
@@ -108,7 +109,7 @@ func TestRetryUntilUpRetriesCodelessConflictThenRents(t *testing.T) {
 func TestRetryUntilUpReportsOnFirstRefusalThenOnCadence(t *testing.T) {
 	s := &retryServer{script: []func(http.ResponseWriter){refuse409, refuse409, refuse409, refuse409, refuse409, rented}}
 	_, out, _ := runRetry(t, s, nil)
-	if n := strings.Count(out, "Refused (attempt"); n < 2 || n >= 5 {
+	if n := strings.Count(out, "Waiting for supply (attempt"); n < 2 || n >= 5 {
 		t.Errorf("want a line on the first refusal and then only on the cadence, got %d:\n%s", n, out)
 	}
 }
@@ -168,6 +169,82 @@ func TestRetryForEndsWithNoOfferMatches(t *testing.T) {
 	}
 }
 
+// refusal409 is the exact body the orchestrator sends for a try-only refusal:
+// a codeless 409 whose data carries only the refusal.
+func refusal409(reason, message string) func(w http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"success":false,"error":` + strconv.Quote(message) + `,"data":{"refusal":"` + reason + `"},"timestamp":"2026-11-02T00:00:00.000Z"}`))
+	}
+}
+
+func TestRetryTreatsEveryRefusalAsAWaitAndNamesIt(t *testing.T) {
+	msgs := map[string]string{
+		"no_capacity": `No box is free right now matching gpu ~ "H100", provider = aws. Nothing was rented. Keep trying.`,
+		"quota":       `Our provider quota blocks this offer matching gpu ~ "H100", provider = aws. Nothing was rented. Waiting will not clear it.`,
+		"disabled":    `Renting this provider is switched off matching gpu ~ "H100", provider = aws. Nothing was rented. Waiting will not clear it.`,
+	}
+	for reason, msg := range msgs {
+		t.Run(reason, func(t *testing.T) {
+			s := &retryServer{script: []func(http.ResponseWriter){refusal409(reason, msg), refusal409(reason, msg), rented}}
+			err, out, calls := runRetry(t, s, func(o *upOptions) { o.retryFor = 25 * time.Minute })
+			if err != nil || calls != 3 {
+				t.Fatalf("a %s refusal must be waited on: calls=%d err=%v\n%s", reason, calls, err, out)
+			}
+			want := "Waiting for supply (attempt 1, "
+			if !strings.Contains(out, want) || !strings.Contains(out, ", reason="+reason+"): "+msg+" Trying every 1ms for up to 25m0s; Ctrl-C to stop.\n") {
+				t.Errorf("wait line off the contract:\n%s", out)
+			}
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "Waiting for supply") && strings.Contains(line, "..") {
+					t.Errorf("double period: %s", line)
+				}
+			}
+		})
+	}
+}
+
+func TestWaitLineWithoutRetryForSaysUntilABoxIsUp(t *testing.T) {
+	s := &retryServer{script: []func(http.ResponseWriter){refusal409("no_capacity", "No box is free right now. Nothing was rented. Keep trying."), rented}}
+	_, out, _ := runRetry(t, s, nil)
+	if !strings.Contains(out, " Trying every 1ms until a box is up; Ctrl-C to stop.\n") {
+		t.Errorf("want the unbounded wording:\n%s", out)
+	}
+}
+
+func TestWaitLineOmitsReasonWhenServerNamesNone(t *testing.T) {
+	s := &retryServer{script: []func(http.ResponseWriter){refuse409, rented}}
+	_, out, _ := runRetry(t, s, nil)
+	if strings.Contains(out, "reason=") {
+		t.Errorf("an old server names no reason, so none is printed:\n%s", out)
+	}
+	if !strings.Contains(out, "elapsed): no matching offer. Trying every") {
+		t.Errorf("a message without a period gets exactly one:\n%s", out)
+	}
+}
+
+func TestBoundedEndNamesTheReason(t *testing.T) {
+	msg := "No box is free right now. Nothing was rented. Keep trying."
+	s := &retryServer{script: []func(http.ResponseWriter){refusal409("no_capacity", msg)}}
+	err, _, _ := runRetry(t, s, func(o *upOptions) { o.retryFor = 5 * time.Minute })
+	if err == nil {
+		t.Fatal("want a bounded end")
+	}
+	got := err.Error()
+	if !strings.HasPrefix(got, "no offer matches after ") || !strings.Contains(got, ", reason=no_capacity (last answer: "+msg+"); nothing was rented") {
+		t.Errorf("bounded end off the contract: %s", got)
+	}
+}
+
+func TestBoundedEndOmitsReasonWhenServerNamesNone(t *testing.T) {
+	s := &retryServer{script: []func(http.ResponseWriter){refuse409}}
+	err, _, _ := runRetry(t, s, func(o *upOptions) { o.retryFor = 5 * time.Minute })
+	if err == nil || strings.Contains(err.Error(), "reason=") || !strings.Contains(err.Error(), " (last answer: no matching offer); nothing was rented") {
+		t.Errorf("want no reason on the end: %v", err)
+	}
+}
+
 func TestRetryForDoesNotClaimNoOfferWhenLastAnswerWasCouldNotLook(t *testing.T) {
 	s := &retryServer{script: []func(http.ResponseWriter){couldNotLook}}
 	err, _, _ := runRetry(t, s, func(o *upOptions) { o.retryFor = 5 * time.Minute })
@@ -177,9 +254,13 @@ func TestRetryForDoesNotClaimNoOfferWhenLastAnswerWasCouldNotLook(t *testing.T) 
 }
 
 func TestRetryUntilUpInterruptDuringWaitStopsCleanly(t *testing.T) {
-	s := &retryServer{script: []func(http.ResponseWriter){refuse409}}
 	intr := make(chan os.Signal, 1)
-	intr <- os.Interrupt
+	// The signal lands after the refusal is answered, so it hits the wait and
+	// never races the in-flight request (a pre-loaded signal won that race at random).
+	s := &retryServer{script: []func(http.ResponseWriter){func(w http.ResponseWriter) {
+		refuse409(w)
+		go func() { time.Sleep(200 * time.Millisecond); intr <- os.Interrupt }()
+	}}}
 	err, out, calls := runRetry(t, s, func(o *upOptions) { o.retryGap = time.Hour; o.interrupt = intr })
 	if err == nil || calls != 1 || !strings.Contains(out, "Nothing was rented") {
 		t.Fatalf("want one POST then a clean stop message: calls=%d err=%v\n%s", calls, err, out)
