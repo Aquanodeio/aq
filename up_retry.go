@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/Aquanodeio/aq/internal/api"
@@ -75,6 +76,41 @@ func isCodelessConflict(err error) bool {
 	return body.Code == ""
 }
 
+// refusalReason is the `data.refusal` the server names for a try-only refusal
+// (no_capacity, quota, disabled), or "" when the body carries none. An old
+// server sends no data, so absent stays absent and is never guessed.
+func refusalReason(err error) string {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || len(apiErr.Data) == 0 {
+		return ""
+	}
+	var body struct {
+		Refusal string `json:"refusal"`
+	}
+	if json.Unmarshal(apiErr.Data, &body) != nil {
+		return ""
+	}
+	return body.Refusal
+}
+
+// reasonSuffix renders ", reason=<refusal>" for the wait line and the bounded
+// end; empty when the server named none.
+func reasonSuffix(refusal string) string {
+	if refusal == "" {
+		return ""
+	}
+	return ", reason=" + refusal
+}
+
+// endSentence makes sure a server message ends its sentence exactly once, so
+// the text appended after it never follows a missing or a doubled period.
+func endSentence(msg string) string {
+	if msg == "" || strings.HasSuffix(msg, ".") || strings.HasSuffix(msg, "!") || strings.HasSuffix(msg, "?") {
+		return msg
+	}
+	return msg + "."
+}
+
 func isCouldNotLook(err error) bool {
 	var apiErr *api.APIError
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusServiceUnavailable
@@ -137,14 +173,18 @@ func upWithRetry(client *api.Client, opts upOptions, req api.UpRequest) (*api.Up
 		elapsed := opts.now().Sub(start)
 		if opts.retryFor > 0 && elapsed+gap > opts.retryFor {
 			if refused {
-				return nil, &exitError{code: exitFailure, err: fmt.Errorf("%s after %d attempts over %s (last answer: %s); nothing was rented", noOfferMatches, attempts, roundElapsed(elapsed), a.err.Error())}
+				return nil, &exitError{code: exitFailure, err: fmt.Errorf("%s after %d attempts over %s%s (last answer: %s); nothing was rented", noOfferMatches, attempts, roundElapsed(elapsed), reasonSuffix(refusalReason(a.err)), a.err.Error())}
 			}
 			return nil, fmt.Errorf("gave up after %d attempts over %s and the last answer was that the server could not look (%s); nothing is known to be rented", attempts, roundElapsed(elapsed), a.err.Error())
 		}
 		if lastReport.IsZero() || opts.now().Sub(lastReport) >= every {
 			lastReport = opts.now()
 			if refused {
-				fmt.Fprintf(opts.errOut, "Refused (attempt %d, %s elapsed): %s. Trying again every %s until a box is up; Ctrl-C to stop.\n", attempts, roundElapsed(elapsed), a.err.Error(), gap)
+				bound := "until a box is up"
+				if opts.retryFor > 0 {
+					bound = "for up to " + opts.retryFor.String()
+				}
+				fmt.Fprintf(opts.errOut, "Waiting for supply (attempt %d, %s elapsed%s): %s Trying every %s %s; Ctrl-C to stop.\n", attempts, roundElapsed(elapsed), reasonSuffix(refusalReason(a.err)), endSentence(a.err.Error()), gap, bound)
 			} else {
 				fmt.Fprintf(opts.errOut, "Warning: the server could not look at supply (attempt %d, %s elapsed): %s. Trying again every %s.\n", attempts, roundElapsed(elapsed), a.err.Error(), gap)
 			}
