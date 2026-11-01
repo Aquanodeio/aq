@@ -157,6 +157,7 @@ aq watch list                              # active watches
 aq watch wait 12 --timeout 25m             # reattach to a watch by id
 aq watch cancel 12
 
+aq up --retry-until-up --retry-for 25m --gpu H100   # ask every 30s from this terminal
 aq up --when-available --gpu H100 --max-price 3   # queue a bare box; it is RENTED when supply appears
 aq queue list
 aq queue cancel 3
@@ -167,11 +168,6 @@ aq queue cancel 3
   in it.
 - `--gpus N` is matched **exactly**, not "at least": a 2-GPU offer does not
   satisfy a watch for 1.
-- `--include-unreported` also fires on a provider that reports no stock at all
-  (AWS today), when nothing says the offer is sold out. A match means worth
-  trying, not known to be free, and a launch after it can still be refused for
-  capacity. No email is sent for such a watch: read the result with `--wait` or
-  `aq watch wait <id>`.
 - `--max-price` is the **whole offer's** hourly price, not per-GPU. On
   `--when-available` it is required: the box is rented with nobody watching, so
   the ceiling is a mandatory spend rail. A queued box is a bare box with idle
@@ -180,6 +176,14 @@ aq queue cancel 3
   allowed.
 - `aq up --when-available` goes through the same production guard as any `aq up`:
   from a script or agent it needs `--prod` (or `AQ_ALLOW_PROD=1`).
+- `aq up --retry-until-up` is the in-terminal alternative: when the server
+  refuses with a plain 409 (no offer matches), it asks again every 30 seconds
+  until a box is up or you press Ctrl-C, whatever the provider. It prints a line
+  on the first refusal and then one every 10 minutes. `--retry-for 25m` bounds it
+  and ends with a line saying `no offer matches`, with nothing rented. A 402 or a
+  refusal that carries a code stops at once, a 503 warns and keeps going, and
+  it cannot be combined with `--when-available`. It stops while the machine
+  sleeps; use `--when-available` for a request that outlives the terminal.
 - Waiting polls the one watch row every 15 seconds. A network error or 5xx does
   not end the wait; a 401, 403 or 404 does. Ctrl-C leaves the watch armed.
 

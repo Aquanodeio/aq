@@ -200,7 +200,9 @@ func nonJSONError(status int, raw []byte) error {
 	case http.StatusBadGateway:
 		return fmt.Errorf("the Aquanode server is temporarily unreachable (HTTP 502 Bad Gateway), please retry in a moment")
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("the Aquanode server is temporarily unavailable (HTTP 503 Service Unavailable), please retry in a moment")
+		// An APIError, so a caller that retries a could-not-look answer can tell a
+		// gateway 503 from a network failure whose outcome is unknown.
+		return &APIError{Status: status, Message: "the Aquanode server is temporarily unavailable (HTTP 503 Service Unavailable), please retry in a moment"}
 	case http.StatusGatewayTimeout:
 		return fmt.Errorf("the Aquanode server took too long to respond (HTTP 504 Gateway Timeout), please retry in a moment")
 	}
