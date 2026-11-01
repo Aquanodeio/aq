@@ -40,6 +40,15 @@ type upOptions struct {
 	// probe reports whether the published app URL is actually serving. Tests
 	// inject a deterministic stub; runUp defaults it to httpAppReady (#234).
 	probe func(string) bool
+	// retryUntilUp keeps asking while the server refuses with a code-less 409
+	// (see up_retry.go); retryFor bounds it (0 = until a box is up or Ctrl-C).
+	retryUntilUp bool
+	retryFor     time.Duration
+	// retryGap, retryReportEvery and interrupt are test seams; zero values use
+	// the 30s gap, the 10 minute report cadence and a real Ctrl-C.
+	retryGap         time.Duration
+	retryReportEvery time.Duration
+	interrupt        <-chan os.Signal
 }
 
 // up parses flags and wires the real environment into runUp.
@@ -64,6 +73,8 @@ func up(args []string) error {
 	autoStop := fs.Bool("auto-stop", false, "Enable idle auto-stop on this deployment (off by default)")
 	warnAfter := fs.String("warn-after", "", "With --auto-stop: warn after this much idle time, e.g. 30m")
 	stopAfter := fs.String("stop-after", "", "With --auto-stop: auto-stop after this much idle time, e.g. 1h")
+	retryUntilUp := fs.Bool("retry-until-up", false, "If no offer matches, retry every 30s until a box is up or Ctrl-C")
+	retryFor := fs.Duration("retry-for", 0, "With --retry-until-up: stop retrying after this long, e.g. 25m")
 	whenAvailable := fs.Bool("when-available", false, "Queue a bare box on the server and rent it when an offer at or under --max-price appears (needs --gpu and --max-price)")
 	expiresIn := fs.Float64("expires-in", 0, "With --when-available: drop the request after this many hours (server default 72, maximum 168)")
 	positional, err := parseInterspersed(fs, args)
@@ -75,6 +86,9 @@ func up(args []string) error {
 	}
 	if isFlagSet(fs, "expires-in") && !*whenAvailable {
 		return errors.New("--expires-in only applies with --when-available")
+	}
+	if err := validateRetryFlags(fs, *retryUntilUp, *retryFor, *whenAvailable, len(positional) > 0); err != nil {
+		return err
 	}
 	if *whenAvailable {
 		return upWhenAvailable(fs, positional, upWhenAvailableArgs{
@@ -127,18 +141,20 @@ func up(args []string) error {
 	}
 
 	return runUp(upOptions{
-		cred:        cred,
-		template:    template,
-		name:        strings.TrimSpace(*name),
-		gpuModel:    *gpu,
-		gpuCount:    *gpus,
-		maxPrice:    *maxPrice,
-		provider:    *provider,
-		showSecrets: *showSecrets,
-		idlePolicy:  idlePolicy,
-		out:         os.Stdout,
-		errOut:      os.Stderr,
-		now:         time.Now,
+		cred:         cred,
+		template:     template,
+		name:         strings.TrimSpace(*name),
+		gpuModel:     *gpu,
+		gpuCount:     *gpus,
+		maxPrice:     *maxPrice,
+		provider:     *provider,
+		showSecrets:  *showSecrets,
+		idlePolicy:   idlePolicy,
+		retryUntilUp: *retryUntilUp,
+		retryFor:     *retryFor,
+		out:          os.Stdout,
+		errOut:       os.Stderr,
+		now:          time.Now,
 	})
 }
 
@@ -241,7 +257,7 @@ func runUp(opts upOptions) error {
 	} else {
 		fmt.Fprintln(opts.out, "Renting the cheapest matching GPU...")
 	}
-	res, err := client.Up(api.UpRequest{
+	res, err := upWithRetry(client, opts, api.UpRequest{
 		Template:   opts.template,
 		SSHKeyID:   sshKeyID,
 		Name:       opts.name,
@@ -252,6 +268,10 @@ func runUp(opts upOptions) error {
 		IdlePolicy: opts.idlePolicy,
 	})
 	if err != nil {
+		var ee *exitError
+		if errors.As(err, &ee) {
+			return err
+		}
 		return fmt.Errorf("could not start deployment: %w", err)
 	}
 	fmt.Fprintf(opts.out, "Deployment #%d created. Provisioning (this can take a few minutes)...\n", res.DeploymentID)

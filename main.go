@@ -300,6 +300,15 @@ up flags:
   --comfyui          Also install ComfyUI
   --jupyter          Also install Torch + Jupyter instead
 
+  Retry in this terminal (rents only when a box is up, nothing queued):
+  --retry-until-up   When no offer matches (the server refuses with a plain 409),
+                     ask again every 30s until a box is up or you press Ctrl-C.
+                     A line prints on the first refusal, then every 10 minutes.
+                     A 402 or a refusal that carries a code stops at once; a
+                     503 warns and keeps going. Not with --when-available.
+  --retry-for <duration>  With --retry-until-up: stop after this long, ending
+                     with a line saying "no offer matches". Nothing is rented.
+
   Wait for supply (rents unattended, so the price ceiling is mandatory):
   --when-available   Instead of renting now, queue a bare box ON THE SERVER. It
                      is rented the moment an offer is at or under --max-price.
@@ -353,10 +362,6 @@ watch:
   --max-price <n>     Only count offers at or below this hourly price (the
                       WHOLE offer's price, not per-GPU; default: any price)
   --expires-in <hours>  Give up after this many hours (default 72, maximum 168)
-  --include-unreported  Also fire on a provider that reports no stock at all,
-                      when nothing says the offer is sold out. That means worth
-                      trying, not known to be free. No email is sent: read the
-                      result with --wait or "aq watch wait"
   --wait              After arming, block until the watch resolves
   --timeout <dur>     With --wait: stop waiting after this long, e.g. 30s or
                       30m. The watch stays armed on the server
