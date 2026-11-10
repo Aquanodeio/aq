@@ -35,13 +35,20 @@ func (c *Client) ConnectorProviders() ([]ConnectorProvider, error) {
 }
 
 // MjolnirLocalDownloadURL fetches GET /artifacts/mjolnir-local/download-url:
-// the same contract as the ogre route (a presigned goreleaser tar.gz, the
+// the same contract as the ogre route (the version arrives as `tag`) (a presigned goreleaser tar.gz, the
 // ARCHIVE's sha256, 404 for a platform with no build).
 func (c *Client) MjolnirLocalDownloadURL(goos, goarch string) (*OgreDownloadURLResult, error) {
-	var out OgreDownloadURLResult
+	var out struct {
+		OgreDownloadURLResult
+		Tag string `json:"tag"`
+	}
 	path := "/artifacts/mjolnir-local/download-url?os=" + url.QueryEscape(goos) + "&arch=" + url.QueryEscape(goarch)
 	if err := c.getJSON(path, &out); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	res := out.OgreDownloadURLResult
+	if res.Version == "" {
+		res.Version = out.Tag
+	}
+	return &res, nil
 }

@@ -200,6 +200,9 @@ func accountsAdd(args []string) error {
 
 func runAccountsAdd(d accountsAddDeps, provider, label string) error {
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "aws" {
+		return errors.New("aws is not supported in local mode")
+	}
 	list, err := d.providers()
 	if err != nil {
 		return fmt.Errorf("could not fetch the provider list from Aquanode: %w", err)

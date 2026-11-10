@@ -124,6 +124,14 @@ func TestAccountsAddKeepsNothingWhenVerificationFails(t *testing.T) {
 	}
 }
 
+func TestAccountsAddRefusesAWS(t *testing.T) {
+	sandboxConfigDir(t)
+	err := runAccountsAdd(fixtureAddDeps(&bytes.Buffer{}, nil), "aws", "")
+	if err == nil || err.Error() != "aws is not supported in local mode" {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestAccountsAddRefusesAProviderTheServerDoesNotList(t *testing.T) {
 	sandboxConfigDir(t)
 	err := runAccountsAdd(fixtureAddDeps(&bytes.Buffer{}, nil), "nope", "")
