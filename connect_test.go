@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -171,7 +172,7 @@ func mjolnirLocalServer(t *testing.T, archive []byte, status int) *httptest.Serv
 			fmt.Fprint(w, `{"success":false,"error":"no mjolnir-local build for this platform"}`)
 			return
 		}
-		fmt.Fprintf(w, `{"success":true,"data":{"url":"http://%s/archive","sha256":%q,"version":"v9.9.9","asset":"mjolnir-local_Test.tar.gz"}}`,
+		fmt.Fprintf(w, `{"success":true,"data":{"url":"http://%s/archive","sha256":%q,"tag":"v9.9.9","asset":"mjolnir-local_Test.tar.gz"}}`,
 			r.Host, hex.EncodeToString(sum[:]))
 	})
 	mux.HandleFunc("/archive", func(w http.ResponseWriter, _ *http.Request) { w.Write(archive) })
@@ -278,7 +279,7 @@ func TestConnectRunsTheStubAndHandsItA0600SessionFile(t *testing.T) {
 	if !strings.Contains(pr.String(), "session-file-mode 600") {
 		t.Fatalf("the executor saw a session file that was not 0600:\n%s", pr.String())
 	}
-	sessionPath := filepath.Join(cfg, connectorSessionFile)
+	sessionPath := filepath.Join(cfg, connectorSessionFileName())
 	if info, err := os.Stat(sessionPath); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("session file while running: %v %v", info, err)
 	}
@@ -339,6 +340,89 @@ func TestConnectorOffline409MapsToExit11(t *testing.T) {
 	}
 	if !strings.Contains(usageText, "  11 ") || !strings.Contains(usageText, "connector_offline") {
 		t.Fatal("aq --help must document exit 11")
+	}
+}
+
+// A 503 "not published yet" is a plain failure (exit 1, not the platform
+// refusal 12): the server's own message reaches the user and aq does not retry.
+func TestEnsureMjolnirLocal503ReportsTheServerMessageWithoutRetry(t *testing.T) {
+	isolateExecutorInstall(t)
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"success":false,"error":"The local executor is not published yet."}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := ensureMjolnirLocal(api.New(srv.URL), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "The local executor is not published yet.") {
+		t.Fatalf("want the server message, got %v", err)
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		t.Fatalf("a 503 must exit 1 (no specific code), got exit %d", ee.code)
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("a 503 must not be retried, server saw %d requests", n)
+	}
+}
+
+// writeSecretFile over a pre-existing world-readable file must end 0600 with the
+// new content: the credential is never left readable because the path existed.
+func TestWriteSecretFileTightensAPreExisting0644File(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret.json")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSecretFile(path, connectSession{APIURL: "http://x", APIKey: "aq_sk_new"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("want 0600 after rewrite, got %v %v", info, err)
+	}
+	if body, _ := os.ReadFile(path); !strings.Contains(string(body), "aq_sk_new") {
+		t.Fatalf("content not replaced: %s", body)
+	}
+}
+
+// A literal 409 envelope body, decoded by the real client, maps to exit 11. The
+// code arrives inside data exactly as the orchestrator writes it; nothing here
+// hand-builds the APIError.
+func TestConnectorOfflineRealEnvelopeDecodesToExit11(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"success":false,"error":"No connector is online for RunPod.","data":{"code":"connector_offline"}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := api.New(srv.URL).MjolnirLocalDownloadURL("linux", "amd64")
+	got := asConnectorOffline(err)
+	var ee *exitError
+	if !errors.As(got, &ee) || ee.code != exitConnectorOffline {
+		t.Fatalf("want exit 11 from a real 409 envelope, got %v", got)
+	}
+	if !strings.Contains(got.Error(), "No connector is online for RunPod.") {
+		t.Fatalf("server message lost: %q", got.Error())
+	}
+}
+
+// The executor route's version may arrive as `version` (the ogre contract) or
+// `tag`; both fill Version. The shared fixture sends `tag`, this covers the other.
+func TestMjolnirLocalDownloadURLAcceptsVersionKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"success":true,"data":{"url":"u","sha256":"s","version":"v1.2.3","asset":"a"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	res, err := api.New(srv.URL).MjolnirLocalDownloadURL("linux", "amd64")
+	if err != nil || res.Version != "v1.2.3" {
+		t.Fatalf("got %+v, %v", res, err)
 	}
 }
 
