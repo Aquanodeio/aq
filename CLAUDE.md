@@ -1,6 +1,6 @@
 # aq — Aquanode CLI
 
-Go CLI (`login|up|deploy|status|ssh|down|logout|whoami|version|help`). No external deps in `go.mod` — keep it that way unless there's no other way (e.g. prefer shelling out to `ssh-keygen` over pulling in `x/crypto` for key generation).
+Go CLI (`gpus|login|up|deploy|watch|queue|import|host|attach|release|ssh|push|run|logs|ls|status|save|sync-now|start|stop|move|autostop|env|volume|pods|idle|job|endpoint|accounts|connect|secret|down|logout|whoami|version|help`). No external deps in `go.mod` — keep it that way unless there's no other way (e.g. prefer shelling out to `ssh-keygen` over pulling in `x/crypto` for key generation).
 
 ## Critical gotchas
 
