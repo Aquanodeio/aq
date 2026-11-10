@@ -558,7 +558,7 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 		return "", ogreDownloadURLError(err)
 	}
 
-	if err := downloadAndInstall(meta.URL, meta.SHA256, meta.Asset, dest); err != nil {
+	if err := downloadAndInstall(meta.URL, meta.SHA256, meta.Asset, dest, ogreArchiveMember); err != nil {
 		return "", fmt.Errorf("could not fetch ogre: %w", err)
 	}
 	// EXEC the thing we just installed, before anything downstream depends on
@@ -578,13 +578,20 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 // to succeed. `ogre version` prints a line and exits 0 without a daemon, a
 // config file, GPUs or network, so it is safe to run on any laptop.
 func verifyOgreRuns(path string) error {
+	return verifyBinaryRuns(path, "ogre")
+}
+
+// verifyBinaryRuns is verifyOgreRuns for any downloaded helper whose `version`
+// verb needs no daemon, config or network (ogre, mjolnir). name only labels
+// the refusal.
+func verifyBinaryRuns(path, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), ogreVersionTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, path, "version")
 	outBytes, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("installed ogre at %s does not run (%v): %s", path, err, strings.TrimSpace(string(outBytes)))
+		return fmt.Errorf("installed %s at %s does not run (%v): %s", name, path, err, strings.TrimSpace(string(outBytes)))
 	}
 	return nil
 }
@@ -622,9 +629,9 @@ func ogreDownloadURLError(err error) error {
 	return fmt.Errorf("could not reach Aquanode to get an ogre download URL; check your network connection: %w", err)
 }
 
-// downloadAndInstall downloads the ogre release ARCHIVE at url, refuses it
-// unless its sha256 matches wantSHA256 exactly, and installs the `ogre` member
-// extracted from it at dest.
+// downloadAndInstall downloads the release ARCHIVE at url, refuses it unless
+// its sha256 matches wantSHA256 exactly, and installs the member of it named by
+// members (first match wins; `ogre` for ogre, `mjolnir` for the executor) at dest.
 //
 // The archive/binary distinction is the whole point. What the server serves is
 // a goreleaser tar.gz (asset names it, e.g. ogre_Darwin_arm64.tar.gz) and what
@@ -636,7 +643,7 @@ func ogreDownloadURLError(err error) error {
 // Verification order is deliberate: the archive is checksummed BEFORE a single
 // byte of it is decompressed, so nothing untrusted is ever fed to the tar
 // reader.
-func downloadAndInstall(url, wantSHA256, asset, dest string) error {
+func downloadAndInstall(url, wantSHA256, asset, dest string, members ...string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(dest), err)
 	}
@@ -650,7 +657,7 @@ func downloadAndInstall(url, wantSHA256, asset, dest string) error {
 		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(dest), ".ogre-download-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".aq-download-*")
 	if err != nil {
 		return err
 	}
@@ -671,7 +678,7 @@ func downloadAndInstall(url, wantSHA256, asset, dest string) error {
 		return fmt.Errorf("checksum mismatch: expected %s, got %s (refusing to run an unverified binary)", wantSHA256, got)
 	}
 
-	binPath, err := extractOgreFromTarball(tmpPath, asset)
+	binPath, err := extractTarMember(tmpPath, asset, members...)
 	if err != nil {
 		return err
 	}
@@ -681,7 +688,7 @@ func downloadAndInstall(url, wantSHA256, asset, dest string) error {
 		return err
 	}
 	if err := os.Rename(binPath, dest); err != nil {
-		return fmt.Errorf("install ogre to %s: %w", dest, err)
+		return fmt.Errorf("install %s to %s: %w", filepath.Base(dest), dest, err)
 	}
 	return nil
 }
@@ -698,8 +705,22 @@ const ogreArchiveMember = "ogre"
 // refusal, not a best effort: a wrong member name, a member outside the archive
 // root, or no `ogre` at all. asset is used only to name the archive in errors.
 func extractOgreFromTarball(archivePath, asset string) (string, error) {
+	return extractTarMember(archivePath, asset, ogreArchiveMember)
+}
+
+// extractTarMember is extractOgreFromTarball for any flat goreleaser archive:
+// it extracts the first regular member whose name is one of names.
+func extractTarMember(archivePath, asset string, names ...string) (string, error) {
 	if asset == "" {
-		asset = "the ogre release archive"
+		asset = "the release archive"
+	}
+	want := func(name string) bool {
+		for _, n := range names {
+			if name == n {
+				return true
+			}
+		}
+		return false
 	}
 
 	f, err := os.Open(archivePath)
@@ -726,11 +747,11 @@ func extractOgreFromTarball(archivePath, asset string) (string, error) {
 		// Match on the base name and refuse anything with a path in it: a
 		// member called ../../something would otherwise write outside the
 		// install directory. goreleaser archives are flat.
-		if hdr.Typeflag != tar.TypeReg || filepath.Base(hdr.Name) != ogreArchiveMember || strings.Contains(hdr.Name, "/") {
+		if hdr.Typeflag != tar.TypeReg || !want(filepath.Base(hdr.Name)) || strings.Contains(hdr.Name, "/") {
 			continue
 		}
 
-		outFile, err := os.CreateTemp(filepath.Dir(archivePath), ".ogre-extract-*")
+		outFile, err := os.CreateTemp(filepath.Dir(archivePath), ".aq-extract-*")
 		if err != nil {
 			return "", err
 		}
@@ -738,7 +759,7 @@ func extractOgreFromTarball(archivePath, asset string) (string, error) {
 		if _, err := io.Copy(outFile, tr); err != nil {
 			outFile.Close()
 			os.Remove(outPath)
-			return "", fmt.Errorf("extracting %s from %s: %w", ogreArchiveMember, asset, err)
+			return "", fmt.Errorf("extracting %s from %s: %w", hdr.Name, asset, err)
 		}
 		if err := outFile.Close(); err != nil {
 			os.Remove(outPath)
@@ -747,5 +768,5 @@ func extractOgreFromTarball(archivePath, asset string) (string, error) {
 		return outPath, nil
 	}
 
-	return "", fmt.Errorf("%s contains no %q member: refusing to install anything else from it", asset, ogreArchiveMember)
+	return "", fmt.Errorf("%s contains no %q member: refusing to install anything else from it", asset, strings.Join(names, "/"))
 }
