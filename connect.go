@@ -31,10 +31,17 @@ const (
 	mjolnirBinName = "mjolnir"
 	// The archive member is `mjolnir`; `mjolnir-local` is the release target's
 	// name, accepted so a build that kept it still installs.
-	mjolnirAltMember     = "mjolnir-local"
-	connectorSessionFile = "connector-session.json"
-	connectStopGrace     = 10 * time.Second
+	mjolnirAltMember = "mjolnir-local"
+	connectStopGrace = 10 * time.Second
 )
+
+// connectorSessionFileName is per process (pid suffix): two concurrent
+// `aq connect` runs must not share one file, or the second overwrites the first
+// and a Ctrl-C on either removes the file the other re-reads on a 401
+// re-register. Each process removes only its own.
+func connectorSessionFileName() string {
+	return fmt.Sprintf("connector-session-%d.json", os.Getpid())
+}
 
 // mjolnirLocalDownloadError mirrors ogreDownloadURLError for the executor: a
 // 404 is the platform refusal (exit 12, permanent), anything else is blamed on
@@ -173,7 +180,7 @@ func runConnect(ctx context.Context, o connectOptions) error {
 	if err != nil {
 		return err
 	}
-	sessionPath := filepath.Join(dir, connectorSessionFile)
+	sessionPath := filepath.Join(dir, connectorSessionFileName())
 	if err := writeSecretFile(sessionPath, connectSession{APIURL: o.apiURL, APIKey: o.cred.Token, TeamID: o.cred.TeamID}); err != nil {
 		return fmt.Errorf("write the session file: %w", err)
 	}
