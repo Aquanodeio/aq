@@ -11,8 +11,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -165,6 +167,10 @@ func main() {
 		run(job(args))
 	case "endpoint":
 		run(endpoint(args))
+	case "accounts":
+		run(accountsCmd(args))
+	case "connect":
+		run(connectCmd(args))
 	case "secret":
 		run(secret(args))
 	case "down":
@@ -187,11 +193,14 @@ func main() {
 // retries forever.
 //
 //	1   command failed
+//	11  the server has no online connector for the provider (`aq up`, `aq start`,
+//	    `aq move`, jobs): start `aq connect` and retry
 //	12  no ogre build is published for this platform (`aq import`)
 //	13  the watch ended with no match (`aq watch --wait`, `aq watch wait`)
 //	14  --timeout elapsed while the watch is still armed (same commands)
 const (
 	exitFailure                = 1
+	exitConnectorOffline       = 11
 	exitNoOgreBuildForPlatform = 12
 	exitWatchNoMatch           = 13
 	exitWatchTimeout           = 14
@@ -211,12 +220,35 @@ func (e *exitError) Unwrap() error { return e.err }
 // own documented code when it carries one.
 func run(err error) {
 	if err != nil {
+		err = asConnectorOffline(err)
 		fmt.Fprintf(os.Stderr, "aq: %v\n", err)
 		var exitErr *exitError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.code)
 		}
 		os.Exit(exitFailure)
+	}
+}
+
+// asConnectorOffline maps the server's 409 `connector_offline` (a general-line
+// create with no online connector for the offer's provider) to its own exit
+// code, the server's message, and the one thing the user can do. Anything else
+// is returned unchanged. Doing it in run covers every verb that can create a
+// box without each one repeating the check.
+func asConnectorOffline(err error) error {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict || len(apiErr.Data) == 0 {
+		return err
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(apiErr.Data, &body) != nil || body.Code != "connector_offline" {
+		return err
+	}
+	return &exitError{
+		code: exitConnectorOffline,
+		err:  fmt.Errorf("%s\n    Start `aq connect` in another terminal, then run this again", apiErr.Message),
 	}
 }
 
@@ -259,6 +291,8 @@ Commands:
   idle          View or change a DEPLOYMENT's idle-auto-stop thresholds
   job           Create, run, inspect and cancel GPU jobs
   endpoint      Create, list and inspect callable HTTP endpoints
+  accounts      Store your own provider keys on this machine: add, ls, rm
+  connect       Run the local executor that uses those keys for the general console
   secret        Manage team secrets: env vars and registry credentials a job
                 can reference by name, never sent to the CLI as plaintext
   down          Tear down a deployment outright, nothing saved
@@ -266,6 +300,17 @@ Commands:
   whoami        Show the current login state
   version       Print the aq version
   help          Show this help
+
+accounts / connect (the general console, on your own provider accounts):
+  aq accounts add <provider> [--label <name>]
+                      Prompt (no echo) for the provider's key fields, save them
+                      to <config dir>/accounts.json (0600) and verify them with
+                      the local executor. A key that fails verification is not kept.
+  aq accounts ls      Provider, label, fingerprint and verified-at. Never a key.
+  aq accounts rm <provider>
+  aq connect          Download or update the local executor, start it with your
+                      stored accounts, and stream what it does. Ctrl-C ends the
+                      session. Exit 12: no executor build for this OS/arch.
 
 gpus:
   aq gpus                     Browse every live GPU offer across all providers,
@@ -811,6 +856,9 @@ Environment:
 
 Exit codes:
   1               The command failed
+  11              A create on the general console found no online connector
+                  for the provider (the server's 409 connector_offline): start
+                  "aq connect" on the machine that holds the key, then retry
   12              "aq import": Aquanode publishes no ogre build for this
                   machine's OS/architecture, so aq cannot survey the box from
                   here. Retrying will not help

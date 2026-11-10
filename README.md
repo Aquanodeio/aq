@@ -60,6 +60,7 @@ they mean the same thing for every provider, and `--max-price` filters on
 - **`aq status <name|id>`** — check a deployment's status, provisioning state, HTTPS URL, and credentials
 - **`aq down <name|id>`**: tear down a deployment outright, nothing saved
 - **`aq logout` / `aq whoami`** — manage authentication state
+- **`aq accounts add|ls|rm <provider>` / `aq connect`** — the general console on your own provider accounts: keys stay in a 0600 file on this machine, `aq connect` runs the local executor that uses them (Ctrl-C ends it). A create with no connector online exits 11
 
 ## Install
 

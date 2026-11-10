@@ -92,6 +92,8 @@ var nonMutatingCommands = map[string]bool{
 	"logs":   true,
 	"pods":   true,
 	"whoami": true,
+	// `accounts` edits local key files; its one API call is a read.
+	"accounts": true,
 	// `calls` is GONE — it was a top-level verb and is now `aq job runs`.
 	// `job` is deliberately NOT listed in its place: this allowlist keys on the
 	// top-level verb, and `job` covers create/rm/run/cancel, which all mutate.
