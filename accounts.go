@@ -394,11 +394,24 @@ func promptFromTerminal(label string, secret bool) (string, error) {
 		}
 	}
 	defer restore()
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, err := stdinLines().ReadString('\n')
 	if err != nil && (err != io.EOF || line == "") {
 		return "", fmt.Errorf("read %s: %w", label, err)
 	}
 	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// stdinReader is ONE buffered reader over stdin for the whole process. A fresh
+// bufio.Reader per prompt read ahead past its own line, so on piped input every
+// prompt after the first saw EOF and a two-field provider (DataCrunch: client id,
+// then secret) could not be added from a script.
+var stdinReader *bufio.Reader
+
+func stdinLines() *bufio.Reader {
+	if stdinReader == nil {
+		stdinReader = bufio.NewReader(os.Stdin)
+	}
+	return stdinReader
 }
 
 func isTerminal(f *os.File) bool {
