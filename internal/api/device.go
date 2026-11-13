@@ -91,6 +91,7 @@ type DevicePoll struct {
 	Token    string   `json:"token"`
 	Scopes   []string `json:"scopes"`
 	TeamID   string   `json:"teamId"`
+	TeamName string   `json:"teamName"`
 	KeyName  string   `json:"keyName"`
 }
 

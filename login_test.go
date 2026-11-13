@@ -48,11 +48,12 @@ func (d *deviceServer) handler() http.Handler {
 		switch d.finalStatus {
 		case "approved":
 			writeData(w, map[string]any{
-				"status":  "approved",
-				"token":   "aq_sk_test_token",
-				"scopes":  []string{"full"},
-				"teamId":  "team-xyz",
-				"keyName": "aq CLI · testbox",
+				"status":   "approved",
+				"token":    "aq_sk_test_token",
+				"scopes":   []string{"full"},
+				"teamId":   "team-xyz",
+				"teamName": "General console",
+				"keyName":  "aq CLI · testbox",
 			})
 		case "denied":
 			writeData(w, map[string]any{"status": "denied"})
@@ -107,6 +108,12 @@ func TestRunLoginApprovedPersistsCredential(t *testing.T) {
 	}
 	if cred == nil || cred.Token != "aq_sk_test_token" {
 		t.Fatalf("credential not saved correctly: %+v", cred)
+	}
+	if !strings.Contains(out.String(), "(team General console, team-xyz)") {
+		t.Errorf("output missing team name; got:\n%s", out.String())
+	}
+	if cred.TeamName != "General console" {
+		t.Errorf("team name not persisted: %+v", cred)
 	}
 	if cred.TeamID != "team-xyz" || cred.APIURL != srv.URL {
 		t.Errorf("credential fields wrong: %+v", cred)

@@ -21,11 +21,14 @@ const DefaultAPIURL = "https://server.aquanode.io/api/v1"
 
 // Credential is the persisted result of `aq login`.
 type Credential struct {
-	APIURL  string   `json:"apiUrl"`
-	Token   string   `json:"token"`
-	TeamID  string   `json:"teamId,omitempty"`
-	KeyName string   `json:"keyName,omitempty"`
-	Scopes  []string `json:"scopes,omitempty"`
+	APIURL string `json:"apiUrl"`
+	Token  string `json:"token"`
+	TeamID string `json:"teamId,omitempty"`
+	// TeamName is the display name of TeamID at pairing time; empty for a
+	// credential saved before the server sent it.
+	TeamName string   `json:"teamName,omitempty"`
+	KeyName  string   `json:"keyName,omitempty"`
+	Scopes   []string `json:"scopes,omitempty"`
 }
 
 // APIURLOverride returns AQ_API_URL when it is set, else "".

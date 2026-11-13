@@ -132,11 +132,12 @@ func runLogin(opts loginOptions) error {
 			continue
 		case "approved":
 			cred := &config.Credential{
-				APIURL:  opts.apiURL,
-				Token:   poll.Token,
-				TeamID:  poll.TeamID,
-				KeyName: poll.KeyName,
-				Scopes:  poll.Scopes,
+				APIURL:   opts.apiURL,
+				Token:    poll.Token,
+				TeamID:   poll.TeamID,
+				TeamName: poll.TeamName,
+				KeyName:  poll.KeyName,
+				Scopes:   poll.Scopes,
 			}
 			if err := config.Save(cred); err != nil {
 				return fmt.Errorf("login approved but saving the credential failed: %w", err)
@@ -145,7 +146,7 @@ func runLogin(opts loginOptions) error {
 			if label == "" {
 				label = "this CLI"
 			}
-			fmt.Fprintf(opts.out, "\n✓ Connected as %s.\n", label)
+			fmt.Fprintf(opts.out, "\n✓ Connected as %s%s.\n", label, teamSuffix(poll.TeamName, poll.TeamID))
 			fmt.Fprintln(opts.out, "You can close the browser tab. Run `aq whoami` to confirm.")
 			return nil
 		case "denied":
@@ -219,9 +220,21 @@ func whoami(args []string) error {
 		label = "this CLI"
 	}
 	fmt.Printf("Logged in as %s", label)
-	if cred.TeamID != "" {
-		fmt.Printf(" (team %s)", cred.TeamID)
-	}
+	fmt.Print(teamSuffix(cred.TeamName, cred.TeamID))
 	fmt.Println()
 	return nil
+}
+
+// teamSuffix renders " (team NAME, ID)", falling back to the bare id when the
+// server sent no name, and to nothing when there is no team at all.
+func teamSuffix(name, id string) string {
+	switch {
+	case name != "" && id != "":
+		return fmt.Sprintf(" (team %s, %s)", name, id)
+	case name != "":
+		return fmt.Sprintf(" (team %s)", name)
+	case id != "":
+		return fmt.Sprintf(" (team %s)", id)
+	}
+	return ""
 }
