@@ -78,7 +78,7 @@ type ImportCapture struct {
 }
 
 // ImportDataRole is one captured ComfyUI data path and its role ("models",
-// "input", "output", "user" or "extra_models").
+// "input", "output", "user" or "models/<type>").
 type ImportDataRole struct {
 	Role string `json:"role"`
 	Path string `json:"path"`
