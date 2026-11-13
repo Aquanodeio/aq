@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Aquanodeio/aq/internal/api"
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
@@ -158,5 +160,55 @@ func TestResolveAPIURLLetsTheEnvOverrideWin(t *testing.T) {
 	}
 	if got := resolveAPIURL(nil); got != config.DefaultAPIURL {
 		t.Fatalf("a nil credential must not panic, got %q", got)
+	}
+}
+
+// TestResolveDeploymentByNameMatchesPodName is the #1379 regression: a pod's
+// deployment carries a generated name, so `aq ssh <pod name>` must resolve via
+// GET /setups' attachedDeploymentId. Row shapes are captured from prod
+// (2026-11-14: deployment 4103 "supply-watch-fire" with setup_id 01501926-...,
+// setup "A6000 box"), with the status set to ACTIVE and attachedDeploymentId
+// filled in, since no live row existed at capture time.
+func TestResolveDeploymentByNameMatchesPodName(t *testing.T) {
+	const setupID = "01501926-b73d-4804-b4f6-ca33bd5f82ad"
+	deployments := []map[string]any{
+		{"id": 4103, "name": "supply-watch-fire", "status": "ACTIVE", "setup_id": setupID},
+		{"id": 4104, "name": "A6000 box", "status": "ACTIVE", "setup_id": nil},
+		{"id": 4105, "name": "unrelated", "status": "ACTIVE", "setup_id": nil},
+		{"id": 4106, "name": "old-run", "status": "CLOSED", "setup_id": "closed-setup"},
+	}
+	setups := []map[string]any{
+		{"id": setupID, "name": "A6000 box", "status": "ready", "attachedDeploymentId": 4103},
+		{"id": "stopped-setup", "name": "stopped-pod", "status": "ready", "attachedDeploymentId": nil},
+		{"id": "closed-setup", "name": "closed-pod", "status": "ready", "attachedDeploymentId": 4106},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployments", func(w http.ResponseWriter, r *http.Request) { writeData(w, deployments) })
+	mux.HandleFunc("/setups", func(w http.ResponseWriter, r *http.Request) { writeData(w, setups) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	client := api.NewAuthed(srv.URL, "aq_sk_test", "team-1")
+
+	// The pod name and a different deployment's own name both match: ambiguous.
+	_, err := resolveDeploymentByName(client, "a6000 BOX")
+	var amb *ambiguousNameError
+	if !errors.As(err, &amb) || len(amb.matches) != 2 {
+		t.Fatalf("want ambiguity of 2, got err=%v", err)
+	}
+
+	// Without the colliding deployment name, the pod name alone resolves.
+	deployments = deployments[:1]
+	if id, err := resolveDeploymentByName(client, "A6000 box"); err != nil || id != 4103 {
+		t.Fatalf("pod name: got id=%d err=%v, want 4103", id, err)
+	}
+	// A stopped pod and a pod whose deployment is closed never resolve.
+	for _, n := range []string{"stopped-pod", "closed-pod"} {
+		if id, err := resolveDeploymentByName(client, n); err == nil {
+			t.Errorf("%q resolved to %d, want no match", n, id)
+		}
+	}
+	// Today's deployment-name match still works.
+	if id, err := resolveDeploymentByName(client, "supply-watch-fire"); err != nil || id != 4103 {
+		t.Fatalf("deployment name: got id=%d err=%v, want 4103", id, err)
 	}
 }

@@ -168,7 +168,8 @@ func parseDeploymentTarget(args []string, verb string) (string, error) {
 //
 //	""        → the team's single live deployment (`aq ssh` with nothing else up)
 //	numeric   → the deployment id itself
-//	name      → the --name given to `aq up`/`aq deploy`, matched case-insensitively
+//	name      → the --name given to `aq up`/`aq deploy`, or a running pod's name,
+//	            matched case-insensitively
 //	otherwise → a project id (the UUID in the console URL), resolved via the API
 //
 // So a user who pastes a project id gets the box they meant instead of a cryptic
@@ -237,22 +238,48 @@ func (e *ambiguousNameError) Error() string {
 	return b.String()
 }
 
-// resolveDeploymentByName matches a display name against the team's live
-// deployments, case-insensitively.
+// resolveDeploymentByName matches a name against the team's live deployments,
+// case-insensitively, on EITHER the deployment's own name (the --name given to
+// `aq up`) OR the name of the pod it is running (`aq pods` / the console).
 //
-// Deployment names carry no server-side uniqueness constraint, so a name
-// matching several boxes is an error listing the candidates rather than a
-// silent pick — silently picking would let `aq down staging` terminate the
-// wrong box.
+// The two differ on every pod-created box: the pod keeps the name the user
+// typed while its deployment gets a generated one, so matching deployment
+// names alone made `aq ssh <pod name>` 404 on a running pod (#1379). The pod
+// name comes from GET /setups, whose attachedDeploymentId is the deployment
+// currently running the pod (nil once Stopped or closed, so a stopped pod
+// never resolves).
+//
+// Names carry no server-side uniqueness constraint, so several distinct
+// deployments matching (by either name) is an error listing the candidates
+// rather than a silent pick: silently picking would let `aq down staging`
+// terminate the wrong box.
 func resolveDeploymentByName(client *api.Client, name string) (int, error) {
 	live, err := liveDeployments(client)
 	if err != nil {
 		return 0, err
 	}
 	var matches []api.Deployment
+	seen := map[int]bool{}
 	for _, d := range live {
 		if strings.EqualFold(strings.TrimSpace(d.Name), name) {
 			matches = append(matches, d)
+			seen[d.ID] = true
+		}
+	}
+	// A /setups failure must not break the deployment-name match that already
+	// worked, so it only costs the pod-name half: the caller then falls through
+	// to the project lookup exactly as before this lookup existed.
+	if setups, err := client.ListSetups(); err == nil {
+		for _, st := range setups {
+			if st.AttachedDeploymentID == nil || !strings.EqualFold(strings.TrimSpace(st.Name), name) {
+				continue
+			}
+			for _, d := range live {
+				if d.ID == *st.AttachedDeploymentID && !seen[d.ID] {
+					matches = append(matches, d)
+					seen[d.ID] = true
+				}
+			}
 		}
 	}
 	switch len(matches) {
