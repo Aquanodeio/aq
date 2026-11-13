@@ -603,14 +603,31 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 		return "", err
 	}
 	dest := filepath.Join(dir, "ogre")
-	if info, err := os.Stat(dest); err == nil && info.Mode()&0o111 != 0 {
-		return dest, nil
-	}
+	sidecar := dest + ".installed"
 
-	fmt.Fprintln(out, "No `ogre` on PATH, fetching it from Aquanode...")
+	// A cached binary is only as current as the release the orchestrator serves
+	// NOW: reusing it on existence alone left a returning user on an old ogre
+	// forever, after the pin moved. Ask what is served and reinstall unless the
+	// sidecar says that exact release is what is installed. The ask failing is
+	// loud, like a fresh install: an import needs the orchestrator anyway, and a
+	// possibly-stale ogre is the wrong default.
+	cached := false
+	if info, err := os.Stat(dest); err == nil && info.Mode()&0o111 != 0 {
+		cached = true
+	}
+	if !cached {
+		fmt.Fprintln(out, "No `ogre` on PATH, fetching it from Aquanode...")
+	}
 	meta, err := client.OgreDownloadURL(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return "", ogreDownloadURLError(err)
+	}
+	release := ogreReleaseKey(meta)
+	if cached {
+		if got, err := os.ReadFile(sidecar); err == nil && release != "" && strings.TrimSpace(string(got)) == release {
+			return dest, nil
+		}
+		fmt.Fprintf(out, "Cached ogre is not the release Aquanode serves (%s), fetching it...\n", meta.Version)
 	}
 
 	if err := downloadAndInstall(meta.URL, meta.SHA256, meta.Asset, dest, ogreArchiveMember); err != nil {
@@ -625,8 +642,21 @@ func ensureOgreBinary(client *api.Client, out io.Writer) (string, error) {
 	if err := verifyOgreRuns(dest); err != nil {
 		return "", err
 	}
+	if err := os.WriteFile(sidecar, []byte(release+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("could not record the installed ogre release: %w", err)
+	}
 	fmt.Fprintf(out, "Installed ogre %s to %s\n", meta.Version, dest)
 	return dest, nil
+}
+
+// ogreReleaseKey identifies the served release: the archive's sha256, which
+// changes with every build, else the version string. Empty means the server
+// said neither, so nothing can prove a cached binary current.
+func ogreReleaseKey(meta *api.OgreDownloadURLResult) string {
+	if meta.SHA256 != "" {
+		return meta.SHA256
+	}
+	return meta.Version
 }
 
 // verifyOgreRuns executes the installed binary's cheapest verb and requires it

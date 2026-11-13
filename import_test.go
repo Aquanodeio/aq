@@ -1027,3 +1027,77 @@ func TestPickComfyUIInstall(t *testing.T) {
 		t.Fatal("an out-of-range choice must cancel, not pick something")
 	}
 }
+
+// A cached ogre is reused only when the sidecar names the release the
+// orchestrator serves now; a stale or missing sidecar reinstalls it.
+func TestEnsureOgreBinaryRefreshesAStaleCachedBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /bin/sh")
+	}
+	const fresh = "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'ogre fresh'; exit 0; fi\nexit 9\n"
+	const old = "#!/bin/sh\necho old\n"
+	archive := ogreTarball(t, "ogre", []byte(fresh))
+	sum := sha256.Sum256(archive)
+	release := hex.EncodeToString(sum[:])
+
+	for name, sidecar := range map[string]*string{"stale": strPtr("deadbeef\n"), "missing": nil} {
+		t.Run(name, func(t *testing.T) {
+			dest := isolateOgreInstall(t)
+			srv, _ := ogreArtifactServer(t, archive, "ogre_Linux_x86_64.tar.gz")
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dest, []byte(old), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if sidecar != nil {
+				if err := os.WriteFile(dest+".installed", []byte(*sidecar), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := ensureOgreBinary(api.New(srv.URL), &bytes.Buffer{}); err != nil {
+				t.Fatalf("ensureOgreBinary: %v", err)
+			}
+			ran, _ := exec.Command(dest, "version").CombinedOutput()
+			if !strings.Contains(string(ran), "ogre fresh") {
+				t.Fatalf("the cached binary was not replaced, ran: %q", ran)
+			}
+			got, _ := os.ReadFile(dest + ".installed")
+			if strings.TrimSpace(string(got)) != release {
+				t.Fatalf("sidecar = %q, want the served release %q", got, release)
+			}
+		})
+	}
+}
+
+func TestEnsureOgreBinaryReusesACachedBinaryWhoseSidecarMatches(t *testing.T) {
+	archive := ogreTarball(t, "ogre", []byte("#!/bin/sh\necho new\n"))
+	sum := sha256.Sum256(archive)
+	dest := isolateOgreInstall(t)
+
+	var downloads int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/artifacts/ogre/download-url", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":true,"data":{"url":"http://%s/archive","sha256":%q,"version":"v1","asset":"ogre_Linux_x86_64.tar.gz"}}`, r.Host, hex.EncodeToString(sum[:]))
+	})
+	mux.HandleFunc("/archive", func(w http.ResponseWriter, _ *http.Request) { downloads++ })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte("#!/bin/sh\necho cached\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest+".installed", []byte(hex.EncodeToString(sum[:])+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureOgreBinary(api.New(srv.URL), &bytes.Buffer{}); err != nil {
+		t.Fatalf("ensureOgreBinary: %v", err)
+	}
+	if downloads != 0 {
+		t.Fatalf("a current cached ogre was downloaded again (%d times)", downloads)
+	}
+}
