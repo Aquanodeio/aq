@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,8 +35,12 @@ type importOptions struct {
 	dryRun   bool
 	includes []string
 	excludes []string
-	name     string
-	yes      bool
+	// comfyUIDir is the user's explicit choice among several ComfyUI installs
+	// found on the box (`--comfyui-dir`). Empty lets ogre choose, and when it
+	// cannot, aq asks.
+	comfyUIDir string
+	name       string
+	yes        bool
 	// resumeVolumeID, when set, skips survey/confirm/start entirely and
 	// resumes a previously started (but not completed) import for this
 	// volume id: re-mint credentials, re-run capture into the SAME
@@ -69,6 +74,7 @@ func importCmd(args []string) error {
 	var includes, excludes stringList
 	fs.Var(&includes, "include", "Add a path to capture (repeatable)")
 	fs.Var(&excludes, "exclude", "Drop a detected path from capture (repeatable)")
+	comfyUIDir := fs.String("comfyui-dir", "", "Which ComfyUI install to import when the box has several")
 	name := fs.String("name", "", "Name the resulting volume (default: derived from the box's hostname)")
 	yes := fs.Bool("yes", false, "Skip the interactive confirmation")
 	resume := fs.String("resume", "", "Resume a previously started import for this volume id (re-mints credentials; restic dedups what already landed)")
@@ -86,6 +92,7 @@ func importCmd(args []string) error {
 		dryRun:         *dryRun,
 		includes:       includes,
 		excludes:       excludes,
+		comfyUIDir:     strings.TrimSpace(*comfyUIDir),
 		name:           strings.TrimSpace(*name),
 		yes:            *yes,
 		resumeVolumeID: strings.TrimSpace(*resume),
@@ -122,9 +129,24 @@ func runImport(opts importOptions) error {
 	// 1. Survey — no network, no write. This is what makes the rest of the
 	// flow honest: the user sees exactly what will and won't be captured
 	// before anything leaves the box.
-	obs, err := runOgreSurvey(ogrePath, opts.includes, opts.excludes, opts.errOut)
+	obs, err := runOgreSurvey(ogrePath, opts.includes, opts.excludes, opts.comfyUIDir, opts.errOut)
 	if err != nil {
 		return err
+	}
+
+	// Several ComfyUI installs and none running: any pick is a guess about which
+	// holds the user's models, so ask, then survey again with the answer so the
+	// report below describes exactly what will be captured.
+	if c := obs.ComfyUI; c != nil && c.Ambiguous && opts.comfyUIDir == "" {
+		chosen, err := askComfyUIInstall(opts, c.Installs)
+		if err != nil {
+			return err
+		}
+		opts.comfyUIDir = chosen
+		obs, err = runOgreSurvey(ogrePath, opts.includes, opts.excludes, opts.comfyUIDir, opts.errOut)
+		if err != nil {
+			return err
+		}
 	}
 
 	printSurvey(opts.out, obs)
@@ -193,7 +215,7 @@ func runImport(opts importOptions) error {
 	// someone else's hardware. If the capture below fails or is interrupted,
 	// `aq import --resume <volume-id>` re-derives everything it needs from
 	// POST /volumes/import/credentials instead (runImportResume below).
-	captured, err := runOgreCapture(ogrePath, start.Credentials.Endpoint, start.Credentials.Bucket, start.Credentials.Region, start.StoragePrefix, start.ResticBackupID, obs.Capture.MountPath, opts.includes, opts.excludes, env, opts.errOut)
+	captured, err := runOgreCapture(ogrePath, start.Credentials.Endpoint, start.Credentials.Bucket, start.Credentials.Region, start.StoragePrefix, start.ResticBackupID, obs.Capture.MountPath, opts.includes, opts.excludes, opts.comfyUIDir, env, opts.errOut)
 	if err != nil {
 		return fmt.Errorf("volume %s exists but the capture failed, resume it with `aq import --resume %s` once fixed (restic dedups what already landed): %w", start.VolumeID, start.VolumeID, err)
 	}
@@ -216,6 +238,36 @@ func runImport(opts importOptions) error {
 	printImportWarnings(opts.out, complete.Warnings)
 
 	return nil
+}
+
+// askComfyUIInstall resolves an ambiguous ComfyUI search. A person at a
+// terminal picks from the list; anything else (a script, --yes, no TTY) is
+// refused with the flag that settles it, because guessing which install holds
+// the user's models imports the wrong data without a word.
+func askComfyUIInstall(opts importOptions, installs []api.ImportComfyUIInstall) (string, error) {
+	if !opts.yes && isInteractiveStdin() {
+		return pickComfyUIInstall(bufio.NewReader(os.Stdin), opts.out, installs)
+	}
+	dirs := make([]string, 0, len(installs))
+	for _, in := range installs {
+		dirs = append(dirs, in.Dir)
+	}
+	return "", fmt.Errorf("several ComfyUI installs found (%s) and none is running; re-run with --comfyui-dir <path> to pick the one to import", strings.Join(dirs, ", "))
+}
+
+// pickComfyUIInstall lists the installs and reads a 1-based choice.
+func pickComfyUIInstall(in *bufio.Reader, out io.Writer, installs []api.ImportComfyUIInstall) (string, error) {
+	fmt.Fprintln(out, "\nSeveral ComfyUI installs were found and none is running. Which one holds the models and work to import?")
+	for i, c := range installs {
+		fmt.Fprintf(out, "  %d) %s\n", i+1, c.Dir)
+	}
+	fmt.Fprintf(out, "Choose [1-%d]: ", len(installs))
+	line, _ := in.ReadString('\n')
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 1 || n > len(installs) {
+		return "", errors.New("import cancelled: no ComfyUI install chosen")
+	}
+	return installs[n-1].Dir, nil
 }
 
 // printSurvey renders the pre-capture report as three blocks — what will be
@@ -382,7 +434,7 @@ func runImportResume(client *api.Client, opts importOptions) error {
 		env = append(env, "AWS_DEFAULT_REGION="+refreshed.Credentials.Region)
 	}
 
-	captured, err := runOgreCapture(ogrePath, refreshed.Credentials.Endpoint, refreshed.Credentials.Bucket, refreshed.Credentials.Region, refreshed.StoragePrefix, refreshed.ResticBackupID, "", opts.includes, opts.excludes, env, opts.errOut)
+	captured, err := runOgreCapture(ogrePath, refreshed.Credentials.Endpoint, refreshed.Credentials.Bucket, refreshed.Credentials.Region, refreshed.StoragePrefix, refreshed.ResticBackupID, "", opts.includes, opts.excludes, opts.comfyUIDir, env, opts.errOut)
 	if err != nil {
 		return fmt.Errorf("resume capture failed; re-run `aq import --resume %s` again once fixed: %w", opts.resumeVolumeID, err)
 	}
@@ -446,10 +498,13 @@ type ogreCaptureOutput struct {
 	Observation      api.ImportObservation `json:"observation"`
 }
 
-// surveyPathArgs renders --include/--exclude flags for either ogre capture
-// invocation, forwarded verbatim in the order given.
-func surveyPathArgs(includes, excludes []string) []string {
+// surveyPathArgs renders --include/--exclude/--comfyui-dir flags for either
+// ogre capture invocation, forwarded verbatim in the order given.
+func surveyPathArgs(includes, excludes []string, comfyUIDir string) []string {
 	var args []string
+	if comfyUIDir != "" {
+		args = append(args, "--comfyui-dir", comfyUIDir)
+	}
 	for _, p := range includes {
 		args = append(args, "--include", p)
 	}
@@ -462,8 +517,8 @@ func surveyPathArgs(includes, excludes []string) []string {
 // runOgreSurvey runs the network-free, write-free survey pass and decodes its
 // observation. ogre's human progress goes to stderr per the contract, so it's
 // streamed straight through rather than captured.
-func runOgreSurvey(ogrePath string, includes, excludes []string, errOut io.Writer) (api.ImportObservation, error) {
-	args := append([]string{"capture", "--json", "--survey-only"}, surveyPathArgs(includes, excludes)...)
+func runOgreSurvey(ogrePath string, includes, excludes []string, comfyUIDir string, errOut io.Writer) (api.ImportObservation, error) {
+	args := append([]string{"capture", "--json", "--survey-only"}, surveyPathArgs(includes, excludes, comfyUIDir)...)
 	cmd := exec.Command(ogrePath, args...)
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = io.MultiWriter(errOut, &stderrBuf)
@@ -489,12 +544,12 @@ func runOgreSurvey(ogrePath string, includes, excludes []string, errOut io.Write
 // Credentials arrive via env, never argv — argv is world-readable through
 // /proc on any multi-user box, which is exactly the kind of box `aq import`
 // runs on. ogre's human progress goes to stderr, streamed straight through.
-func runOgreCapture(ogrePath, endpoint, bucket, region, prefix, backupID, mountPath string, includes, excludes []string, env []string, errOut io.Writer) (ogreCaptureOutput, error) {
+func runOgreCapture(ogrePath, endpoint, bucket, region, prefix, backupID, mountPath string, includes, excludes []string, comfyUIDir string, env []string, errOut io.Writer) (ogreCaptureOutput, error) {
 	args := []string{"capture", "--json", "--endpoint", endpoint, "--bucket", bucket, "--prefix", prefix, "--backup-id", backupID}
 	if region != "" {
 		args = append(args, "--region", region)
 	}
-	args = append(args, surveyPathArgs(includes, excludes)...)
+	args = append(args, surveyPathArgs(includes, excludes, comfyUIDir)...)
 	if mountPath != "" {
 		args = append(args, "--mount-path", mountPath)
 	}

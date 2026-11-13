@@ -71,6 +71,32 @@ type ImportCapture struct {
 	MountPath string   `json:"mount_path"`
 	Paths     []string `json:"paths"`
 	Excludes  []string `json:"excludes"`
+	// DataRoles names the role of each captured path of a ComfyUI install kept
+	// outside the standard dir; ogre also writes them into the snapshot as tags.
+	// Omitted when empty so a box without one forwards the wire it always did.
+	DataRoles []ImportDataRole `json:"data_roles,omitempty"`
+}
+
+// ImportDataRole is one captured ComfyUI data path and its role ("models",
+// "input", "output", "user" or "extra_models").
+type ImportDataRole struct {
+	Role string `json:"role"`
+	Path string `json:"path"`
+}
+
+// ImportComfyUI is ogre's account of the ComfyUI installs it found. Ambiguous
+// means several were found with none running and no explicit choice, so nothing
+// from any of them is in the capture set until the user picks one.
+type ImportComfyUI struct {
+	Installs  []ImportComfyUIInstall `json:"installs"`
+	Selected  string                 `json:"selected"`
+	Ambiguous bool                   `json:"ambiguous"`
+}
+
+// ImportComfyUIInstall is one ComfyUI install found on the box.
+type ImportComfyUIInstall struct {
+	Dir     string `json:"dir"`
+	Running bool   `json:"running"`
 }
 
 // ImportCaptureEntry is one path counted into the "capturing" survey block.
@@ -172,6 +198,8 @@ type ImportObservation struct {
 	Capture  ImportCapture  `json:"capture"`
 	Survey   ImportSurvey   `json:"survey"`
 	Manifest ImportManifest `json:"manifest"`
+	// ComfyUI is nil (and omitted) when ogre found no ComfyUI.
+	ComfyUI *ImportComfyUI `json:"comfyui,omitempty"`
 }
 
 // ImportCredentials are scoped, time-limited write credentials for the new
