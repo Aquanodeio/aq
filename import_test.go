@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -253,7 +254,7 @@ func TestRunOgreSurveySurfacesOgresFinalErrorLineCleanly(t *testing.T) {
 	ogrePath := writeStubOgreHardError(t, finalLine)
 
 	var errOut bytes.Buffer
-	_, err := runOgreSurvey(ogrePath, []string{"/mnt/data"}, nil, &errOut)
+	_, err := runOgreSurvey(ogrePath, []string{"/mnt/data"}, nil, "", &errOut)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -275,7 +276,7 @@ func TestRunOgreSurveyForwardsIncludeExclude(t *testing.T) {
 	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
 	ogrePath, argsFile, _ := writeStubOgre(t, surveyJSON, "{}")
 
-	_, err := runOgreSurvey(ogrePath, []string{"/mnt/data", "/srv/env"}, []string{"/opt/venv/lib"}, &bytes.Buffer{})
+	_, err := runOgreSurvey(ogrePath, []string{"/mnt/data", "/srv/env"}, []string{"/opt/venv/lib"}, "", &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runOgreSurvey: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestCheckObservationSchemaRejectsUnknownSchema(t *testing.T) {
 	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
 	ogrePath, _, _ := writeStubOgre(t, surveyJSON, "{}")
 
-	_, err := runOgreSurvey(ogrePath, nil, nil, &bytes.Buffer{})
+	_, err := runOgreSurvey(ogrePath, nil, nil, "", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "schema") {
 		t.Fatalf("expected a schema-rejection error, got: %v", err)
 	}
@@ -324,7 +325,7 @@ func TestRunOgreCapturePassesCredentialsViaEnvNotArgv(t *testing.T) {
 		"AWS_SECRET_ACCESS_KEY=another-secret",
 	}
 
-	res, err := runOgreCapture(ogrePath, "https://s3.example.com", "aquanode-storage", "us-east-1", "team-1/ws-abc", "setup-1", "/workspace", nil, nil, env, &bytes.Buffer{})
+	res, err := runOgreCapture(ogrePath, "https://s3.example.com", "aquanode-storage", "us-east-1", "team-1/ws-abc", "setup-1", "/workspace", nil, nil, "", env, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runOgreCapture: %v", err)
 	}
@@ -948,5 +949,155 @@ func TestExtractOgreFromTarballRefusesAnArchiveWithoutOgre(t *testing.T) {
 		t.Fatal("expected a refusal for an archive with no ogre member")
 	} else if !strings.Contains(err.Error(), "ogre_Darwin_arm64.tar.gz") {
 		t.Fatalf("refusal must name the archive, got: %v", err)
+	}
+}
+
+func ambiguousComfyObservation() api.ImportObservation {
+	obs := sampleObservation()
+	obs.ComfyUI = &api.ImportComfyUI{
+		Installs:  []api.ImportComfyUIInstall{{Dir: "/srv/ComfyUI"}, {Dir: "/workspace/ComfyUI"}},
+		Ambiguous: true,
+	}
+	return obs
+}
+
+// TestRunImportAmbiguousComfyUIRefusesWithoutAChoice checks two installs with
+// none running are never guessed between: a non-interactive import names the
+// flag that settles it and starts nothing.
+func TestRunImportAmbiguousComfyUIRefusesWithoutAChoice(t *testing.T) {
+	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, ambiguousComfyObservation()))
+	ogrePath, _, _ := writeStubOgre(t, surveyJSON, "{}")
+
+	server := &importServer{}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	err := runImport(testImportOptions(cred, ogrePath, &out, &errOut))
+	if err == nil || !strings.Contains(err.Error(), "--comfyui-dir") {
+		t.Fatalf("err = %v, want a refusal naming --comfyui-dir", err)
+	}
+	if server.startCalls != 0 {
+		t.Fatal("an unresolved ComfyUI choice must not start the import")
+	}
+}
+
+// TestRunImportForwardsComfyUIDirToSurveyAndCapture checks the explicit choice
+// reaches both ogre invocations.
+func TestRunImportForwardsComfyUIDirToSurveyAndCapture(t *testing.T) {
+	obs := sampleObservation()
+	surveyJSON := fmt.Sprintf(`{"observation": %s}`, marshalObservation(t, obs))
+	captureJSON := fmt.Sprintf(`{"ogre_snapshot_id":"imp_1","restic_snapshot_id":"r1","path":"/workspace","size":1,"observation":%s}`, marshalObservation(t, obs))
+	ogrePath, argsFile, _ := writeStubOgre(t, surveyJSON, captureJSON)
+
+	server := &importServer{}
+	srv := httptest.NewServer(server.handler())
+	defer srv.Close()
+
+	cred := &config.Credential{APIURL: srv.URL, Token: "aq_sk_test", TeamID: "team-1"}
+	var out, errOut bytes.Buffer
+	opts := testImportOptions(cred, ogrePath, &out, &errOut)
+	opts.comfyUIDir = "/srv/ComfyUI"
+	if err := runImport(opts); err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+	// The stub keeps only the LAST invocation's argv: the capture, which must
+	// carry the flag (the survey is checked by the args test below).
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "--comfyui-dir\n/srv/ComfyUI") {
+		t.Errorf("capture args missing --comfyui-dir; got %q", raw)
+	}
+	if got := surveyPathArgs(nil, nil, "/srv/ComfyUI"); len(got) != 2 || got[0] != "--comfyui-dir" || got[1] != "/srv/ComfyUI" {
+		t.Errorf("surveyPathArgs = %v", got)
+	}
+}
+
+func TestPickComfyUIInstall(t *testing.T) {
+	installs := ambiguousComfyObservation().ComfyUI.Installs
+	var out bytes.Buffer
+	got, err := pickComfyUIInstall(bufio.NewReader(strings.NewReader("2\n")), &out, installs)
+	if err != nil || got != "/workspace/ComfyUI" {
+		t.Fatalf("pick 2 = %q, %v", got, err)
+	}
+	if _, err := pickComfyUIInstall(bufio.NewReader(strings.NewReader("9\n")), &out, installs); err == nil {
+		t.Fatal("an out-of-range choice must cancel, not pick something")
+	}
+}
+
+// A cached ogre is reused only when the sidecar names the release the
+// orchestrator serves now; a stale or missing sidecar reinstalls it.
+func TestEnsureOgreBinaryRefreshesAStaleCachedBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /bin/sh")
+	}
+	const fresh = "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'ogre fresh'; exit 0; fi\nexit 9\n"
+	const old = "#!/bin/sh\necho old\n"
+	archive := ogreTarball(t, "ogre", []byte(fresh))
+	sum := sha256.Sum256(archive)
+	release := hex.EncodeToString(sum[:])
+
+	for name, sidecar := range map[string]*string{"stale": strPtr("deadbeef\n"), "missing": nil} {
+		t.Run(name, func(t *testing.T) {
+			dest := isolateOgreInstall(t)
+			srv, _ := ogreArtifactServer(t, archive, "ogre_Linux_x86_64.tar.gz")
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dest, []byte(old), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if sidecar != nil {
+				if err := os.WriteFile(dest+".installed", []byte(*sidecar), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := ensureOgreBinary(api.New(srv.URL), &bytes.Buffer{}); err != nil {
+				t.Fatalf("ensureOgreBinary: %v", err)
+			}
+			ran, _ := exec.Command(dest, "version").CombinedOutput()
+			if !strings.Contains(string(ran), "ogre fresh") {
+				t.Fatalf("the cached binary was not replaced, ran: %q", ran)
+			}
+			got, _ := os.ReadFile(dest + ".installed")
+			if strings.TrimSpace(string(got)) != release {
+				t.Fatalf("sidecar = %q, want the served release %q", got, release)
+			}
+		})
+	}
+}
+
+func TestEnsureOgreBinaryReusesACachedBinaryWhoseSidecarMatches(t *testing.T) {
+	archive := ogreTarball(t, "ogre", []byte("#!/bin/sh\necho new\n"))
+	sum := sha256.Sum256(archive)
+	dest := isolateOgreInstall(t)
+
+	var downloads int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/artifacts/ogre/download-url", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":true,"data":{"url":"http://%s/archive","sha256":%q,"version":"v1","asset":"ogre_Linux_x86_64.tar.gz"}}`, r.Host, hex.EncodeToString(sum[:]))
+	})
+	mux.HandleFunc("/archive", func(w http.ResponseWriter, _ *http.Request) { downloads++ })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte("#!/bin/sh\necho cached\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest+".installed", []byte(hex.EncodeToString(sum[:])+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureOgreBinary(api.New(srv.URL), &bytes.Buffer{}); err != nil {
+		t.Fatalf("ensureOgreBinary: %v", err)
+	}
+	if downloads != 0 {
+		t.Fatalf("a current cached ogre was downloaded again (%d times)", downloads)
 	}
 }
