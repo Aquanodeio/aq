@@ -75,7 +75,8 @@ that isn't writable). Then:
 
 ```sh
 aq version   # confirm the install
-aq login     # pair the CLI to your Aquanode account
+aq gpus      # browse live GPU offers across every provider (no account needed)
+aq login     # when you are ready to rent: pair the CLI to your Aquanode account
 ```
 
 Overrides: `AQ_VERSION` pins a release tag, `AQ_BIN_DIR` sets the install dir.
@@ -111,8 +112,17 @@ Then ask for what you want, e.g. "fine-tune this on an A100 and bring back the a
 ## Quickstart — the one-command deploy
 
 ```sh
-aq login                          # pair this CLI to your Aquanode account (device-login)
+aq gpus                           # browse live GPU offers (no account needed)
+aq login                          # pair this CLI to your Aquanode account, when you are ready to rent
+
+# Rent on Aquanode credits:
 aq up --comfyui --name my-box     # rent a GPU, provision it, bring up a working env
+
+# Or bring your own provider account: subscribe the $20/month multi-cloud
+# seat at https://console.aquanode.io/billing, then:
+aq accounts add <provider>        # store that provider's key (keys stay on this machine)
+aq up --comfyui --name my-box     # rent through your own provider account
+
 # → HTTPS URL printed when it's ready
 aq ssh my-box                     # get a shell on it
 aq down my-box                    # tear it down and stop billing

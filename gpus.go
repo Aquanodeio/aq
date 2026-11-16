@@ -359,9 +359,11 @@ func printSummaryDrilldown(errOut io.Writer, offers []api.MarketplaceOffer) {
 		len(offers), models)
 }
 
-// printGPUsSignupPointer prints a one-line next step, never a gate — `aq
-// gpus` itself needs no account, and this is the only place that says what
-// comes after browsing.
+// printGPUsSignupPointer prints the next steps, never a gate: `aq gpus`
+// itself needs no account, and this is the only place that says what comes
+// after browsing. Credits path: login, then up. BYO path: subscribe the
+// multi-cloud seat at the console Billing page, add the provider key, up.
 func printGPUsSignupPointer(errOut io.Writer) {
-	fmt.Fprintln(errOut, "ready to rent one? `aq login` pairs an account, then `aq up --gpu <model>` deploys.")
+	fmt.Fprintln(errOut, "ready to rent one? on Aquanode credits: `aq login`, then `aq up --gpu <model>`.")
+	fmt.Fprintln(errOut, "on your own provider accounts: subscribe the $20/month multi-cloud seat at https://console.aquanode.io/billing, then `aq accounts add <provider>`, then `aq up`.")
 }

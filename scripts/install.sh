@@ -12,7 +12,8 @@
 #      falling back to ~/.local/bin if that dir is not writable.
 #
 # aq is a laptop CLI — there is no service to supervise. After install, run
-# `aq version` to confirm, then `aq login` to pair it to your account.
+# `aq version` to confirm, then `aq gpus` to browse the live GPU feed
+# (no account needed); `aq login` waits until you are ready to rent.
 #
 # Environment overrides (all optional):
 #   AQ_VERSION       pin a release tag (e.g. v0.1.0); default = latest published
@@ -181,4 +182,5 @@ if "${BIN_DIR}/aq" version >/dev/null 2>&1; then
 else
   info "done — aq ${tag} installed at ${BIN_DIR}/aq."
 fi
-info "next: run 'aq login' to pair this CLI to your Aquanode account."
+info "next: run 'aq gpus' to browse live GPU offers across every provider (no account needed)."
+info "when you are ready to rent: 'aq login' pairs this CLI to your Aquanode account, then 'aq up --gpu <model>' deploys."
