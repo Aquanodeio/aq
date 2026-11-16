@@ -52,7 +52,7 @@ func (d *deviceServer) handler() http.Handler {
 				"token":    "aq_sk_test_token",
 				"scopes":   []string{"full"},
 				"teamId":   "team-xyz",
-				"teamName": "General console",
+				"teamName": "Multi-cloud console",
 				"keyName":  "aq CLI · testbox",
 			})
 		case "denied":
@@ -109,10 +109,10 @@ func TestRunLoginApprovedPersistsCredential(t *testing.T) {
 	if cred == nil || cred.Token != "aq_sk_test_token" {
 		t.Fatalf("credential not saved correctly: %+v", cred)
 	}
-	if !strings.Contains(out.String(), "(team General console, team-xyz)") {
+	if !strings.Contains(out.String(), "(team Multi-cloud console, team-xyz)") {
 		t.Errorf("output missing team name; got:\n%s", out.String())
 	}
-	if cred.TeamName != "General console" {
+	if cred.TeamName != "Multi-cloud console" {
 		t.Errorf("team name not persisted: %+v", cred)
 	}
 	if cred.TeamID != "team-xyz" || cred.APIURL != srv.URL {

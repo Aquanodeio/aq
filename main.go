@@ -230,7 +230,7 @@ func run(err error) {
 	}
 }
 
-// asConnectorOffline maps the server's 409 `connector_offline` (a general-line
+// asConnectorOffline maps the server's 409 `connector_offline` (a multi-cloud console
 // create with no online connector for the offer's provider) to its own exit
 // code, the server's message, and the one thing the user can do. Anything else
 // is returned unchanged. Doing it in run covers every verb that can create a
@@ -292,7 +292,7 @@ Commands:
   job           Create, run, inspect and cancel GPU jobs
   endpoint      Create, list and inspect callable HTTP endpoints
   accounts      Store your own provider keys on this machine: add, ls, rm
-  connect       Run the local executor that uses those keys for the general console
+  connect       Run the local executor that uses those keys for the multi-cloud console
   secret        Manage team secrets: env vars and registry credentials a job
                 can reference by name, never sent to the CLI as plaintext
   down          Tear down a deployment outright, nothing saved
@@ -301,7 +301,7 @@ Commands:
   version       Print the aq version
   help          Show this help
 
-accounts / connect (the general console, on your own provider accounts):
+accounts / connect (the multi-cloud console, on your own provider accounts):
   aq accounts add <provider> [--label <name>]
                       Prompt (no echo) for the provider's key fields, save them
                       to <config dir>/accounts.json (0600) and verify them with
@@ -856,7 +856,7 @@ Environment:
 
 Exit codes:
   1               The command failed
-  11              A create on the general console found no online connector
+  11              A create on the multi-cloud console found no online connector
                   for the provider (the server's 409 connector_offline): start
                   "aq connect" on the machine that holds the key, then retry
   12              "aq import": Aquanode publishes no ogre build for this
