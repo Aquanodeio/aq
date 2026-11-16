@@ -154,7 +154,7 @@ func connectCmd(args []string) error {
 	})
 }
 
-const connectHelp = `aq connect: run the local executor so the general console can use your own
+const connectHelp = `aq connect: run the local executor so the multi-cloud console can use your own
 provider accounts. Keep it running in a terminal while you use the console or
 "aq up". Add accounts first with "aq accounts add <provider>". Ctrl-C ends the
 session. Exit 12: no executor build for this OS/architecture.`

@@ -22,9 +22,8 @@ import (
 	"github.com/Aquanodeio/aq/internal/config"
 )
 
-// The general console runs provider calls on THIS machine with the user's own
-// keys (spec 2026-11-10-general-console-connected-accounts-design.md, section
-// 6). Two files live in the aq config dir, both 0600:
+// The multi-cloud console runs provider calls on THIS machine with the user's own
+// keys. Two files live in the aq config dir, both 0600:
 //
 //	accounts.json       { "runpod": { "RUNPOD_API_KEY": "...", "label": "work" } }
 //	                    exactly the shape `mjolnir local --accounts-file` reads:
