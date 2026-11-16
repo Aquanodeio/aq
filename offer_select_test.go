@@ -90,3 +90,22 @@ func TestOfferToResourceSpecOmitsLocationIDWhenTheOfferHasNone(t *testing.T) {
 		t.Errorf("resource.location_id must be absent when the offer has none; got %+v", got)
 	}
 }
+
+// #1423: the documented example "RTX 4090" must match the feed's own spelling
+// "RTX4090" (and any case/hyphen variant), in both the cheapest-offer picker and
+// the `aq gpus` filter.
+func TestGPUFilterIgnoresCaseSpacesAndHyphens(t *testing.T) {
+	offers := []api.MarketplaceOffer{
+		{GPUShortName: "RTX4090", GPUCount: 1, Provider: "vastai", Price: 0.4},
+		{GPUShortName: "H100", GPUCount: 1, Provider: "vastai", Price: 2},
+	}
+	for _, name := range []string{"RTX 4090", "rtx-4090", "RTX4090", "4090"} {
+		got, err := selectCheapestOffer(offers, offerSelectFilter{gpuModel: name})
+		if err != nil || got.GPUShortName != "RTX4090" {
+			t.Errorf("selectCheapestOffer(%q) = %+v, %v; want the RTX4090 offer", name, got, err)
+		}
+		if n := len(filterOffers(offers, gpusOptions{gpu: name})); n != 1 {
+			t.Errorf("filterOffers(%q) matched %d offers, want 1", name, n)
+		}
+	}
+}

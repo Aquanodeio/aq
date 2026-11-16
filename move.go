@@ -34,7 +34,7 @@ type moveOptions struct {
 // data intact, never mid-air between two boxes.
 func move(args []string) error {
 	fs := flag.NewFlagSet("move", flag.ContinueOnError)
-	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
+	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX4090\"; case, spaces and hyphens ignored)")
 	maxPrice := fs.Float64("max-price", 0, "Only move onto GPUs at or below this hourly price (the whole offer's price, not per-GPU)")
 	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")

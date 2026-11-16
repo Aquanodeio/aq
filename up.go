@@ -64,7 +64,7 @@ func up(args []string) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	comfyui := fs.Bool("comfyui", false, "Also install ComfyUI on the box (no app is installed by default)")
 	jupyter := fs.Bool("jupyter", false, "Also install Torch + Jupyter on the box instead")
-	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
+	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX4090\"; case, spaces and hyphens ignored)")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
