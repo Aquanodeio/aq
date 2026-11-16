@@ -32,6 +32,20 @@ type offerSelectFilter struct {
 	provider string
 }
 
+// gpuIdentity is the case-, space- and hyphen-insensitive identity every
+// client-side GPU name comparison uses, so "RTX 4090", "rtx-4090" and the
+// feed's own "RTX4090" are one name (#1423). The server canonicalizes the same
+// way at write; the feed spelling is what gets stored.
+func gpuIdentity(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // selectCheapestOffer filters the live marketplace by f and returns the
 // cheapest matching offer by TOTAL hourly price, matching `aq up`/`aq
 // deploy`'s own --max-price convention ("the WHOLE offer's price, not
@@ -39,12 +53,12 @@ type offerSelectFilter struct {
 // here is billed the total. --gpus matches "at least this many", the same
 // semantics `aq up`'s own flag documents.
 func selectCheapestOffer(offers []api.MarketplaceOffer, f offerSelectFilter) (api.MarketplaceOffer, error) {
-	gpu := strings.ToLower(strings.TrimSpace(f.gpuModel))
+	gpu := gpuIdentity(f.gpuModel)
 	provider := strings.ToLower(strings.TrimSpace(f.provider))
 
 	var matches []api.MarketplaceOffer
 	for _, o := range offers {
-		if gpu != "" && !strings.Contains(strings.ToLower(o.GPUShortName), gpu) {
+		if gpu != "" && !strings.Contains(gpuIdentity(o.GPUShortName), gpu) {
 			continue
 		}
 		if provider != "" && strings.ToLower(o.Provider) != provider {

@@ -243,11 +243,11 @@ func runGPUs(opts gpusOptions) error {
 // Each is independent and optional; an unset filter matches everything.
 func filterOffers(offers []api.MarketplaceOffer, opts gpusOptions) []api.MarketplaceOffer {
 	var out []api.MarketplaceOffer
-	gpu := strings.ToLower(strings.TrimSpace(opts.gpu))
+	gpu := gpuIdentity(opts.gpu)
 	provider := strings.ToLower(strings.TrimSpace(opts.provider))
 	region := strings.ToLower(strings.TrimSpace(opts.region))
 	for _, o := range offers {
-		if gpu != "" && !strings.Contains(strings.ToLower(o.GPUShortName), gpu) {
+		if gpu != "" && !strings.Contains(gpuIdentity(o.GPUShortName), gpu) {
 			continue
 		}
 		if opts.hasMaxPri && perGPUHourlyRate(o) > opts.maxPrice {

@@ -330,7 +330,7 @@ gpus:
 up flags:
   --name <name>      Set the deployment's display name (default: an
                      auto-generated one)
-  --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
+  --gpu <model>      Filter to a GPU model (substring, e.g. "RTX4090"; case, spaces and hyphens ignored)
   --gpus <n>         How many GPUs the box should have (default 1, max 8).
                      Only offers with at least this many are considered.
   --max-price <n>    Only rent GPUs at or below this hourly price
@@ -370,7 +370,7 @@ deploy flags:
   --name <name>      Set the deployment's display name (default: an
                      auto-generated one)
   --snapshot <id>    Save to deploy (id from aq / the console, e.g. ext-42)
-  --gpu <model>      Filter to a GPU model (substring, e.g. "RTX 4090")
+  --gpu <model>      Filter to a GPU model (substring, e.g. "RTX4090"; case, spaces and hyphens ignored)
   --gpus <n>         How many GPUs the box should have (default 1, max 8).
                      Only offers with at least this many are considered.
   --max-price <n>    Only rent GPUs at or below this hourly price

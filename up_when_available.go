@@ -93,7 +93,7 @@ func pickQueueTemplate(offers []api.MarketplaceOffer, gpu string, gpuCount int, 
 	gpu = strings.TrimSpace(gpu)
 	var named []api.MarketplaceOffer
 	for _, o := range offers {
-		if strings.EqualFold(o.GPUShortName, gpu) {
+		if gpuIdentity(o.GPUShortName) == gpuIdentity(gpu) {
 			named = append(named, o)
 		}
 	}

@@ -44,7 +44,7 @@ func podsCreate(args []string) error {
 	version := fs.Int("version", 0, "Use this environment version number instead of the latest")
 	volume := fs.String("volume", "", "Attach an existing volume by name or id instead of creating a new one")
 	noVolume := fs.Bool("no-volume", false, "Run with no volume at all; nothing under /workspace is kept (D4)")
-	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
+	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX4090\"; case, spaces and hyphens ignored)")
 	maxPrice := fs.Float64("max-price", 0, "Only start on GPUs at or below this hourly price (the whole offer's price, not per-GPU)")
 	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")

@@ -253,7 +253,7 @@ func runWatch(opts watchOptions) error {
 func feedSpelling(offers []api.MarketplaceOffer, want string) (string, bool) {
 	want = strings.TrimSpace(want)
 	for _, o := range offers {
-		if strings.EqualFold(o.GPUShortName, want) {
+		if gpuIdentity(o.GPUShortName) == gpuIdentity(want) {
 			return o.GPUShortName, true
 		}
 	}

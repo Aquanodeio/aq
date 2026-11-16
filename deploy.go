@@ -49,7 +49,7 @@ func deploy(args []string) error {
 	comfyui := fs.Bool("comfyui", false, "Relaunch ComfyUI on the restored data (default app if you don't pick one)")
 	jupyter := fs.Bool("jupyter", false, "Relaunch Torch + Jupyter on the restored data instead")
 	noApp := fs.Bool("no-app", false, "Restore only, do not relaunch an app")
-	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX 4090\")")
+	gpu := fs.String("gpu", "", "Filter to a GPU model (substring, e.g. \"RTX4090\"; case, spaces and hyphens ignored)")
 	maxPrice := fs.Float64("max-price", 0, "Only rent GPUs at or below this hourly price")
 	gpus := fs.Int("gpus", 0, "How many GPUs the box should have (default: 1)")
 	provider := fs.String("provider", "", "Restrict to a single provider (e.g. massecompute)")
