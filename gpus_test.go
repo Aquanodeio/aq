@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -620,5 +621,41 @@ func TestRunGPUsJSONCarriesAvailabilityFieldsOnlyWhenTheFeedSentThem(t *testing.
 		} else if hasL || hasR {
 			t.Errorf("a row without the keys must print neither, got %v", r)
 		}
+	}
+}
+
+// #1438: the summary headline prefers an offer that POSITIVELY confirms
+// supply over the raw cheapest pick. An could-not-look UNKNOWN row (akash's
+// free-capacity figure) at a lower price must not headline a price a
+// confirmed-stock offer beats, and when NO offer of the model confirms supply
+// the cheapest overall still headlines so the GPU stays named.
+func TestSummarizeByModelPrefersConfirmedSupplyForHeadline(t *testing.T) {
+	unknown := "UNKNOWN"
+	offers := []api.MarketplaceOffer{
+		// Cheapest overall, but could-not-look: must NOT headline.
+		{GPUShortName: "RTX5090", GPUCount: 1, Provider: "akash", Price: 0.67, Available: 0, AvailabilityLevel: &unknown},
+		// Confirmed supply, slightly dearer: the headline.
+		{GPUShortName: "RTX5090", GPUCount: 1, Provider: "vastai", Price: 0.71, Available: 4},
+	}
+	// Caller's contract: sorted cheapest-per-GPU-first.
+	sort.SliceStable(offers, func(i, j int) bool { return offers[i].Price < offers[j].Price })
+
+	rows := summarizeByModel(offers)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].provider != "vastai" || rows[0].cheapest != 0.71 {
+		t.Errorf("headline = %s at %v; want vastai at 0.71 (confirmed supply outranks the cheaper unconfirmed akash row)", rows[0].provider, rows[0].cheapest)
+	}
+
+	// No confirmed offer at all: the model still headlines from the cheapest
+	// row rather than vanishing.
+	offers[1].Available = 0
+	rows = summarizeByModel(offers)
+	if len(rows) != 1 || rows[0].provider != "akash" {
+		t.Fatalf("unconfirmed-only model lost its row (%+v); the GPU must stay named", rows)
+	}
+	if rows[0].cheapest != 0.67 {
+		t.Errorf("cheapest = %v, want 0.67 (the cheapest overall when nothing is confirmed)", rows[0].cheapest)
 	}
 }

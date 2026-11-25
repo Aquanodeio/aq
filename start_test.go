@@ -14,7 +14,10 @@ import (
 // stubMarketplaceOffer registers a single-offer /marketplace fixture, for
 // tests that exercise buildOfferSelection's client-side cheapest-offer pick
 // (start.go/move.go) rather than posting a filter for the orchestrator to
-// resolve.
+// resolve. "available": 1 matches the real wire: the orchestrator's admission
+// gate (hasCapacitySignal) never publishes a row with no availability signal
+// at all, so a signal-less stub no longer represents a reachable feed row
+// (#1438's rent-now guard refuses exactly that shape).
 func stubMarketplaceOffer(mux *http.ServeMux, gpuModel, provider string) {
 	mux.HandleFunc("/marketplace", func(w http.ResponseWriter, r *http.Request) {
 		writeData(w, []map[string]any{
@@ -25,6 +28,7 @@ func stubMarketplaceOffer(mux *http.ServeMux, gpuModel, provider string) {
 				"availableCpu":     8,
 				"availableMemory":  map[string]any{"value": 32, "unit": "GB"},
 				"availableStorage": map[string]any{"value": 200, "unit": "GB"},
+				"available":        1,
 				"price":            1.0,
 				"region":           "US-EAST-1",
 				"provider":         provider,
