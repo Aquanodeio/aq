@@ -109,3 +109,49 @@ func TestGPUFilterIgnoresCaseSpacesAndHyphens(t *testing.T) {
 		}
 	}
 }
+
+// #1438: the rent-now path (start/move via buildOfferSelection's pick) must
+// prefer confirmed supply and refuse an unconfirmed-only match, never rent
+// against an offer the feed cannot vouch for.
+func TestOfferPickPrefersConfirmedSupply(t *testing.T) {
+	unknown := "UNKNOWN"
+	offers := []api.MarketplaceOffer{
+		{GPUShortName: "RTX5090", GPUCount: 1, Provider: "akash", Price: 0.67, Available: 0, AvailabilityLevel: &unknown},
+		{GPUShortName: "RTX5090", GPUCount: 1, Provider: "vastai", Price: 0.71, Available: 4},
+	}
+	matches := matchingOffers(offers, offerSelectFilter{gpuModel: "RTX5090"})
+	if len(matches) != 2 || matches[0].Provider != "akash" {
+		t.Fatalf("matches = %+v; want both, cheapest (akash) first", matches)
+	}
+
+	// The immediate-rent pick: cheapest positive, not the raw cheapest.
+	picked := api.MarketplaceOffer{}
+	found := false
+	for _, m := range matches {
+		if positivelyAvailable(m) {
+			picked, found = m, true
+			break
+		}
+	}
+	if !found || picked.Provider != "vastai" {
+		t.Errorf("rent pick = %+v; want vastai (confirmed supply outranks the cheaper unconfirmed akash row)", picked)
+	}
+}
+
+func TestOfferPickRefusesUnconfirmedOnlyMatches(t *testing.T) {
+	unknown := "UNKNOWN"
+	offers := []api.MarketplaceOffer{
+		{GPUShortName: "M4000", GPUCount: 1, Provider: "akash", Price: 0.05, Available: 0, AvailabilityLevel: &unknown},
+	}
+	matches := matchingOffers(offers, offerSelectFilter{gpuModel: "M4000"})
+	for _, m := range matches {
+		if positivelyAvailable(m) {
+			t.Fatalf("unconfirmed-only match %s read as positively available", m.Provider)
+		}
+	}
+	// The caller (buildOfferSelection) refuses here before anything billable;
+	// selectCheapestOffer itself still resolves the row for the queue-seeder.
+	if _, err := selectCheapestOffer(offers, offerSelectFilter{gpuModel: "M4000"}); err != nil {
+		t.Errorf("selectCheapestOffer must still resolve an unconfirmed row for pickQueueTemplate: %v", err)
+	}
+}

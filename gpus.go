@@ -281,6 +281,27 @@ func printOffers(out io.Writer, offers []api.MarketplaceOffer) {
 	tw.Flush()
 }
 
+// positivelyAvailable reports whether an offer POSITIVELY confirms supply: a
+// real measured count, or a qualitative LOW/MEDIUM/HIGH level. An explicit
+// UNKNOWN (a provider that could not look -- akash's free-capacity figure is
+// not a bid signal, workspace ticket #1438) and an absent level are both
+// refused. This mirrors the console's isPositivelyAvailable /
+// orchestrator's isPositivelyAvailable; it gates only the summary view's
+// headline pick below, never the row listing.
+func positivelyAvailable(o api.MarketplaceOffer) bool {
+	if o.Available > 0 {
+		return true
+	}
+	if o.AvailabilityLevel == nil {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(*o.AvailabilityLevel)) {
+	case "LOW", "MEDIUM", "HIGH":
+		return true
+	}
+	return false
+}
+
 // gpuModelSummary is one row of the no-argument view: a GPU model and the
 // shape of the market for it. Built only from offers that already passed
 // every filter, so it can never show a model the detailed view would hide.
@@ -300,12 +321,21 @@ type gpuModelSummary struct {
 // cheapest, and makes the returned slice come out cheapest-model-first
 // without a second sort.
 //
+// The headline "FROM $" pick prefers an offer that POSITIVELY confirms
+// supply (positivelyAvailable), falling back to the cheapest overall only
+// when no offer of the model does -- the model row still renders (a GPU out
+// of supply stays named), but an could-not-look UNKNOWN offer must never
+// headline a price a confirmed-stock offer beats, or the summary steers
+// every reader toward the one listing most likely to fail at rent time
+// (#1438: akash rtx5090 won the headline while its deploys died "no bids").
+//
 // This is a display collapse and nothing else — no filter, no --json path,
 // and no --limit path goes through here, so no caller can lose an offer to
 // it. See the no-argument gate in gpus().
 func summarizeByModel(offers []api.MarketplaceOffer) []gpuModelSummary {
 	var rows []gpuModelSummary
 	index := map[string]int{}
+	positiveIdx := map[string]bool{}
 	seenProvider := map[string]map[string]bool{}
 	for _, o := range offers {
 		key := strings.ToLower(strings.TrimSpace(o.GPUShortName))
@@ -322,6 +352,15 @@ func summarizeByModel(offers []api.MarketplaceOffer) []gpuModelSummary {
 			i = len(rows) - 1
 			index[key] = i
 			seenProvider[key] = map[string]bool{}
+		}
+		// A positively-available offer outranks the cheapest overall one for
+		// the headline, even at a higher price. Given the sort, the FIRST
+		// positive offer seen is the model's cheapest positive one.
+		if !positiveIdx[key] && positivelyAvailable(o) {
+			rows[i].cheapest = perGPUHourlyRate(o)
+			rows[i].provider = o.Provider
+			rows[i].region = o.Region
+			positiveIdx[key] = true
 		}
 		rows[i].offers++
 		p := strings.ToLower(strings.TrimSpace(o.Provider))

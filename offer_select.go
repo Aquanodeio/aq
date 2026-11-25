@@ -46,13 +46,11 @@ func gpuIdentity(name string) string {
 	return b.String()
 }
 
-// selectCheapestOffer filters the live marketplace by f and returns the
-// cheapest matching offer by TOTAL hourly price, matching `aq up`/`aq
-// deploy`'s own --max-price convention ("the WHOLE offer's price, not
-// per-GPU"), not `aq gpus`'s per-GPU-rate convention, since a caller renting
-// here is billed the total. --gpus matches "at least this many", the same
-// semantics `aq up`'s own flag documents.
-func selectCheapestOffer(offers []api.MarketplaceOffer, f offerSelectFilter) (api.MarketplaceOffer, error) {
+// matchingOffers filters the live marketplace by f and returns the matches
+// sorted cheapest-TOTAL-first. Extracted from selectCheapestOffer so
+// buildOfferSelection can prefer confirmed supply over the raw cheapest pick
+// without a second copy of the filter.
+func matchingOffers(offers []api.MarketplaceOffer, f offerSelectFilter) []api.MarketplaceOffer {
 	gpu := gpuIdentity(f.gpuModel)
 	provider := strings.ToLower(strings.TrimSpace(f.provider))
 
@@ -72,13 +70,30 @@ func selectCheapestOffer(offers []api.MarketplaceOffer, f offerSelectFilter) (ap
 		}
 		matches = append(matches, o)
 	}
-	if len(matches) == 0 {
-		return api.MarketplaceOffer{}, fmt.Errorf("no offer matches those filters; try `aq gpus` to see what's available")
-	}
 
 	sort.SliceStable(matches, func(i, j int) bool {
 		return totalHourlyRate(matches[i]) < totalHourlyRate(matches[j])
 	})
+	return matches
+}
+
+// selectCheapestOffer filters the live marketplace by f and returns the
+// cheapest matching offer by TOTAL hourly price, matching `aq up`/`aq
+// deploy`'s own --max-price convention ("the WHOLE offer's price, not
+// per-GPU"), not `aq gpus`'s per-GPU-rate convention, since a caller renting
+// here is billed the total. --gpus matches "at least this many", the same
+// semantics `aq up`'s own flag documents.
+//
+// Deliberately NO availability gate here: `aq up --when-available`'s
+// pickQueueTemplate reuses this matcher for a SOLD-OUT row on purpose (it
+// seeds a queued request's identity fields from an offer that by construction
+// has no capacity right now). The rent-now path guards availability in
+// buildOfferSelection instead.
+func selectCheapestOffer(offers []api.MarketplaceOffer, f offerSelectFilter) (api.MarketplaceOffer, error) {
+	matches := matchingOffers(offers, f)
+	if len(matches) == 0 {
+		return api.MarketplaceOffer{}, fmt.Errorf("no offer matches those filters; try `aq gpus` to see what's available")
+	}
 	return matches[0], nil
 }
 
@@ -170,18 +185,40 @@ func normalizeOfferRegion(region string) string {
 	return trimmed
 }
 
-// buildOfferSelection resolves the cheapest offer matching f and turns it
-// into the OfferSelection Start/Move need, including a real SSH key (minted
-// if the caller has none, the same ensureSSHKey up.go/deploy.go already
-// use).
+// buildOfferSelection resolves the cheapest CONFIRMED-available offer
+// matching f and turns it into the OfferSelection Start/Move need, including
+// a real SSH key (minted if the caller has none, the same ensureSSHKey
+// up.go/deploy.go already use).
+//
+// This is the rent-now path, so it gates on positive availability: a
+// could-not-look offer (Available 0 + level UNKNOWN, e.g. akash's
+// free-capacity figure, which cannot predict a bid — workspace ticket #1438)
+// is skipped in favour of the cheapest positively-available match, and when
+// every match is unconfirmed the rent is REFUSED before anything billable
+// happens. Picking an unconfirmed offer here is exactly the console bug this
+// guards: a cheap row the feed can't vouch for wins the pick and the deploy
+// burns its bid-poll ladder (or a create 400) before failing.
 func buildOfferSelection(client *api.Client, out io.Writer, f offerSelectFilter) (api.OfferSelection, error) {
 	offers, err := client.Marketplace()
 	if err != nil {
 		return api.OfferSelection{}, fmt.Errorf("could not fetch the marketplace: %w", err)
 	}
-	offer, err := selectCheapestOffer(offers, f)
-	if err != nil {
-		return api.OfferSelection{}, err
+	matches := matchingOffers(offers, f)
+	if len(matches) == 0 {
+		return api.OfferSelection{}, fmt.Errorf("no offer matches those filters; try `aq gpus` to see what's available")
+	}
+	offer := api.MarketplaceOffer{}
+	confirmed := false
+	for _, m := range matches {
+		if positivelyAvailable(m) {
+			offer = m
+			confirmed = true
+			break
+		}
+	}
+	if !confirmed {
+		return api.OfferSelection{}, fmt.Errorf(
+			"every matching offer is unconfirmed supply (the feed cannot confirm stock it can rent right now), so nothing was rented; run `aq gpus` to compare confirmed offers")
 	}
 
 	return offerSelectionFor(client, out, offer)
